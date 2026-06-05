@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 module Main (main) where
 import Harness (check, runChecks)
 import Crucible.Json.Value (Value(..))
@@ -10,15 +11,17 @@ import Crucible.Json.Decode (Error(..), Crumb(..))
 import Crucible.Schema (Schema(..), renderSchema)
 import qualified Crucible.Codec as C
 import Crucible.Codec (Codec(..))
+import GHC.Generics (Generic)
+import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 
 -- Sample types for M3 tests
 
-data Sky = Clear | Cloudy | Storm deriving (Eq, Show)
+data Sky = Clear | Cloudy | Storm deriving (Eq, Show, Generic)
 
 skyCodec :: Codec Sky
 skyCodec = C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]
 
-data Forecast = Forecast { city :: Text, tempC :: Double, rainy :: Bool } deriving (Eq, Show)
+data Forecast = Forecast { city :: Text, tempC :: Double, rainy :: Bool } deriving (Eq, Show, Generic)
 
 forecastCodec :: Codec Forecast
 forecastCodec = C.object $
@@ -138,4 +141,9 @@ main = runChecks
   , check "sum round-trips"
       (Right (Circle 2.0))
       (D.decodeValue (codecDecode shapeCodec) (codecEncode shapeCodec (Circle 2)))
+  -- M4 Task 1: HasCodec base instances
+  , check "HasCodec Text schema"   SStr          (codecSchema (codec :: Codec Text))
+  , check "HasCodec Int encode"    (JNumber 7.0) (codecEncode (codec :: Codec Int) 7)
+  , check "HasCodec [Bool] schema" (SArr SBool)  (codecSchema (codec :: Codec [Bool]))
+  , check "HasCodec Maybe schema"  (SOpt SNum)   (codecSchema (codec :: Codec (Maybe Double)))
   ]
