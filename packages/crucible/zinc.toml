@@ -1,0 +1,13 @@
+# packages/crucible/zinc.toml — member manifest for the crucible library
+#
+# zinc new generates [build.exe.<name>] by default.
+# crucible is a library, so this uses [build.lib] instead.
+# source-dirs = ["src"] — modules auto-discovered; no hiding needed.
+
+[package]
+name = "crucible"
+version = "0.1.0"
+
+[build.lib]
+source-dirs = ["src"]
+depends = ["base"]
