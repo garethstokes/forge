@@ -4,6 +4,9 @@ import Harness (check, runChecks)
 import Crucible.Json.Value (Value(..))
 import Crucible.Json.Parse (parse)
 import Crucible.Json.Encode (encode)
+import Data.Text (Text)
+import Crucible.Json.Decode as D
+import Crucible.Json.Decode (Error(..), Crumb(..))
 
 main :: IO ()
 main = runChecks
@@ -30,4 +33,23 @@ main = runChecks
   , check "encode->parse round-trips"
       (Right (JObject [("x", JString "hi")]))
       (parse (encode (JObject [("x", JString "hi")])))
+  -- Task 5: decode checks
+  , check "decode field"
+      (Right ("Brisbane", 27.5))
+      (D.decodeString ((,) <$> D.field "city" D.string <*> D.field "tempC" D.float)
+                      "{\"city\":\"Brisbane\",\"tempC\":27.5}")
+  , check "decode list"
+      (Right [1,2,3 :: Int])
+      (D.decodeString (D.list D.int) "[1,2,3]")
+  , check "decode missing field is Left"
+      True
+      (either (const True) (const False)
+        (D.decodeString (D.field "nope" D.string) "{\"a\":1}"))
+  , check "decode error path"
+      (Left (Error [AtField "days", AtIndex 0, AtField "city"] "expected string, got number"))
+      (D.decodeString (D.field "days" (D.list (D.field "city" D.string)))
+                      "{\"days\":[{\"city\":7}]}")
+  , check "oneOf picks first match"
+      (Right (Left 5 :: Either Int Text))
+      (D.decodeString (D.oneOf [Left <$> D.int, Right <$> D.string]) "5")
   ]
