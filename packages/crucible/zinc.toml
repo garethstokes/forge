@@ -11,3 +11,8 @@ version = "0.1.0"
 [build.lib]
 source-dirs = ["src"]
 depends = ["base"]
+
+[build.test.spec]
+source-dirs = ["test"]
+main = "Spec.hs"
+depends = ["base"]
