@@ -3,6 +3,7 @@ module Main (main) where
 import Harness (check, runChecks)
 import Crucible.Json.Value (Value(..))
 import Crucible.Json.Parse (parse)
+import Crucible.Json.Encode (encode)
 
 main :: IO ()
 main = runChecks
@@ -22,4 +23,11 @@ main = runChecks
   , check "parse escape" (Right (JString "a\nb"))                                 (parse "\"a\\nb\"")
   , check "parse unicode"(Right (JString "A"))                                    (parse "\"\\u0041\"")
   , check "parse empties"(Right (JObject []))                                     (parse "{}")
+  -- Task 4: encode checks
+  , check "encode compact"
+      "{\"a\":1.0,\"b\":[true,null]}"
+      (encode (JObject [("a", JNumber 1), ("b", JArray [JBool True, JNull])]))
+  , check "encode->parse round-trips"
+      (Right (JObject [("x", JString "hi")]))
+      (parse (encode (JObject [("x", JString "hi")])))
   ]
