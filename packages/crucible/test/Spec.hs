@@ -14,6 +14,7 @@ import Crucible.Codec (Codec(..))
 import GHC.Generics (Generic)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.SAP (stripToJson, decodeLLM)
+import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
 
 -- Sample types for M3 tests
 
@@ -59,6 +60,29 @@ shapeCodec = C.oneOfC
               (uncurry Rect <$> codecDecode rectCodec)
               (\s -> case s of Rect w h -> Just (codecEncode rectCodec (w, h)); _ -> Nothing)
   ]
+
+-- Sample types for M6 tests
+data ToolCall = GetWeather Text | AddNums Int Int deriving (Eq, Show)
+newtype Answer = Answer Text deriving (Eq, Show)
+
+getWeatherCodec :: Codec Text                 -- {"city": string}
+getWeatherCodec = C.object (C.field "city" id C.str)
+
+addNumsCodec :: Codec (Int, Int)              -- {"a": int, "b": int}
+addNumsCodec = C.object ((,) <$> C.field "a" fst C.int <*> C.field "b" snd C.int)
+
+toolCallCodec :: Codec ToolCall
+toolCallCodec = C.oneOfC
+  [ C.Variant (codecSchema getWeatherCodec) (GetWeather <$> codecDecode getWeatherCodec)
+      (\tc -> case tc of GetWeather city -> Just (codecEncode getWeatherCodec city); _ -> Nothing)
+  , C.Variant (codecSchema addNumsCodec) (uncurry AddNums <$> codecDecode addNumsCodec)
+      (\tc -> case tc of AddNums a b -> Just (codecEncode addNumsCodec (a, b)); _ -> Nothing) ]
+
+answerCodec :: Codec Answer
+answerCodec = C.object (Answer <$> C.field "answer" (\(Answer t) -> t) C.str)
+
+decCodec :: Codec (Decision ToolCall Answer)
+decCodec = decisionCodec toolCallCodec answerCodec
 
 main :: IO ()
 main = runChecks
@@ -200,4 +224,21 @@ main = runChecks
   , check "decodeLLM rejects junk"
       True
       (either (const True) (const False) (decodeLLM forecastCodec "no json here"))
+  -- M6 Task 1: Decision + decisionCodec
+  , check "decode tool-call -> CallTool"
+      (Right (CallTool (GetWeather "Brisbane")))
+      (decodeLLM decCodec "{\"city\":\"Brisbane\"}")
+  , check "decode answer -> Done"
+      (Right (Done (Answer "all set")))
+      (decodeLLM decCodec "{\"answer\":\"all set\"}")
+  , check "decision round-trips (tool)"
+      (Right (CallTool (AddNums 2 3)))
+      (decodeValue (codecDecode decCodec) (codecEncode decCodec (CallTool (AddNums 2 3))))
+  -- M6 Task 2: Step + reduce
+  , check "reduce CallTool -> Continue"
+      (Continue (GetWeather "Brisbane"))
+      (reduce (CallTool (GetWeather "Brisbane") :: Decision ToolCall Answer))
+  , check "reduce Done -> Halt"
+      (Halt (Answer "all set"))
+      (reduce (Done (Answer "all set") :: Decision ToolCall Answer))
   ]
