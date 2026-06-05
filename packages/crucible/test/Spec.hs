@@ -23,6 +23,8 @@ skyCodec = C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]
 
 data Forecast = Forecast { city :: Text, tempC :: Double, rainy :: Bool } deriving (Eq, Show, Generic)
 
+instance HasCodec Forecast  -- derived via genericCodec
+
 forecastCodec :: Codec Forecast
 forecastCodec = C.object $
   Forecast
@@ -146,4 +148,12 @@ main = runChecks
   , check "HasCodec Int encode"    (JNumber 7.0) (codecEncode (codec :: Codec Int) 7)
   , check "HasCodec [Bool] schema" (SArr SBool)  (codecSchema (codec :: Codec [Bool]))
   , check "HasCodec Maybe schema"  (SOpt SNum)   (codecSchema (codec :: Codec (Maybe Double)))
+  -- M4 Task 2: derived record matches hand-written + round-trips
+  , check "derived record schema == hand-written"
+      (codecSchema forecastCodec)
+      (codecSchema (codec :: Codec Forecast))
+  , check "derived record round-trips"
+      (Right (Forecast "Cairns" 31.0 True))
+      (decodeValue (codecDecode (codec :: Codec Forecast))
+                   (codecEncode (codec :: Codec Forecast) (Forecast "Cairns" 31.0 True)))
   ]
