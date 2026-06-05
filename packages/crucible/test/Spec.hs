@@ -21,6 +21,8 @@ data Sky = Clear | Cloudy | Storm deriving (Eq, Show, Generic)
 skyCodec :: Codec Sky
 skyCodec = C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]
 
+instance HasCodec Sky  -- derived via genericCodec (capitalised constructor-name tags)
+
 data Forecast = Forecast { city :: Text, tempC :: Double, rainy :: Bool } deriving (Eq, Show, Generic)
 
 instance HasCodec Forecast  -- derived via genericCodec
@@ -156,4 +158,8 @@ main = runChecks
       (Right (Forecast "Cairns" 31.0 True))
       (decodeValue (codecDecode (codec :: Codec Forecast))
                    (codecEncode (codec :: Codec Forecast) (Forecast "Cairns" 31.0 True)))
+  -- M4 Task 3: derived enum (constructor names, capitalised — cf. lowercase skyCodec)
+  , check "derived enum schema"  (SEnum ["Clear","Cloudy","Storm"]) (codecSchema (codec :: Codec Sky))
+  , check "derived enum encode"  (JString "Storm")                  (codecEncode (codec :: Codec Sky) Storm)
+  , check "derived enum decode"  (Right Cloudy)                     (decodeValue (codecDecode (codec :: Codec Sky)) (JString "Cloudy"))
   ]
