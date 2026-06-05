@@ -34,6 +34,13 @@ forecastCodec = C.object $
     <*> C.field "tempC" tempC C.float
     <*> C.field "rainy" rainy C.bool
 
+data Station = Station { name :: Text, latest :: Forecast, conditions :: Sky }
+  deriving (Eq, Show, Generic)
+instance HasCodec Station
+
+stationVal :: Station
+stationVal = Station "Eagle Farm" (Forecast "Brisbane" 26.0 False) Cloudy
+
 data Shape = Circle Double | Rect Double Double deriving (Eq, Show)
 
 circleCodec :: Codec Double
@@ -162,4 +169,14 @@ main = runChecks
   , check "derived enum schema"  (SEnum ["Clear","Cloudy","Storm"]) (codecSchema (codec :: Codec Sky))
   , check "derived enum encode"  (JString "Storm")                  (codecEncode (codec :: Codec Sky) Storm)
   , check "derived enum decode"  (Right Cloudy)                     (decodeValue (codecDecode (codec :: Codec Sky)) (JString "Cloudy"))
+  -- M4 Task 4: nested derive (composition) — no new implementation needed
+  , check "nested derived schema"
+      (SObj [ ("name", SStr)
+            , ("latest", SObj [("city", SStr), ("tempC", SNum), ("rainy", SBool)])
+            , ("conditions", SEnum ["Clear","Cloudy","Storm"]) ])
+      (codecSchema (codec :: Codec Station))
+  , check "nested derived round-trips"
+      (Right stationVal)
+      (decodeValue (codecDecode (codec :: Codec Station))
+                   (codecEncode (codec :: Codec Station) stationVal))
   ]
