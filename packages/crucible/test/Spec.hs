@@ -13,6 +13,7 @@ import qualified Crucible.Codec as C
 import Crucible.Codec (Codec(..))
 import GHC.Generics (Generic)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
+import Crucible.SAP (stripToJson, decodeLLM)
 
 -- Sample types for M3 tests
 
@@ -179,4 +180,24 @@ main = runChecks
       (Right stationVal)
       (decodeValue (codecDecode (codec :: Codec Station))
                    (codecEncode (codec :: Codec Station) stationVal))
+  -- M5 Task 1: stripToJson
+  , check "strip bare"     "{\"a\":1}" (stripToJson "{\"a\":1}")
+  , check "strip fenced"   "{\"a\":1}" (stripToJson "```json\n{\"a\":1}\n```")
+  , check "strip prose"    "{\"a\":1}" (stripToJson "Sure, here you go: {\"a\":1} hope that helps!")
+  , check "strip array"    "[1,2]"     (stripToJson "prefix [1,2] suffix")
+  , check "strip brace-in-string"
+      "{\"msg\":\"a } b\"}"
+      (stripToJson "noise {\"msg\":\"a } b\"} more")
+  -- M5 Task 2: decodeLLM
+  , check "decodeLLM fenced"
+      (Right (Forecast "Brisbane" 27.5 False))
+      (decodeLLM forecastCodec
+        "Sure!\n```json\n{ \"city\": \"Brisbane\", \"tempC\": 27.5, \"rainy\": false }\n```\nlet me know")
+  , check "decodeLLM prose"
+      (Right (Forecast "Hobart" 9.0 True))
+      (decodeLLM forecastCodec
+        "Here is the forecast: { \"city\": \"Hobart\", \"tempC\": 9, \"rainy\": true } -- done.")
+  , check "decodeLLM rejects junk"
+      True
+      (either (const True) (const False) (decodeLLM forecastCodec "no json here"))
   ]
