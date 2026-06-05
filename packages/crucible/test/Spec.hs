@@ -7,6 +7,43 @@ import Crucible.Json.Encode (encode)
 import Data.Text (Text)
 import Crucible.Json.Decode as D
 import Crucible.Json.Decode (Error(..), Crumb(..))
+import Crucible.Schema (Schema(..), renderSchema)
+import qualified Crucible.Codec as C
+import Crucible.Codec (Codec(..))
+
+-- Sample types for M3 tests
+
+data Sky = Clear | Cloudy | Storm deriving (Eq, Show)
+
+skyCodec :: Codec Sky
+skyCodec = C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]
+
+data Forecast = Forecast { city :: Text, tempC :: Double, rainy :: Bool } deriving (Eq, Show)
+
+forecastCodec :: Codec Forecast
+forecastCodec = C.object $
+  Forecast
+    <$> C.field "city"  city  C.str
+    <*> C.field "tempC" tempC C.float
+    <*> C.field "rainy" rainy C.bool
+
+data Shape = Circle Double | Rect Double Double deriving (Eq, Show)
+
+circleCodec :: Codec Double
+circleCodec = C.object (C.field "r" id C.float)
+
+rectCodec :: Codec (Double, Double)
+rectCodec = C.object ((,) <$> C.field "w" fst C.float <*> C.field "h" snd C.float)
+
+shapeCodec :: Codec Shape
+shapeCodec = C.oneOfC
+  [ C.Variant (codecSchema circleCodec)
+              (Circle <$> codecDecode circleCodec)
+              (\s -> case s of Circle r -> Just (codecEncode circleCodec r); _ -> Nothing)
+  , C.Variant (codecSchema rectCodec)
+              (uncurry Rect <$> codecDecode rectCodec)
+              (\s -> case s of Rect w h -> Just (codecEncode rectCodec (w, h)); _ -> Nothing)
+  ]
 
 main :: IO ()
 main = runChecks
@@ -52,4 +89,53 @@ main = runChecks
   , check "oneOf picks first match"
       (Right (Left 5 :: Either Int Text))
       (D.decodeString (D.oneOf [Left <$> D.int, Right <$> D.string]) "5")
+  -- Task 1: Schema renderSchema
+  , check "render string"   "string"                             (renderSchema SStr)
+  , check "render number"   "number"                             (renderSchema SNum)
+  , check "render boolean"  "boolean"                            (renderSchema SBool)
+  , check "render optional" "string | null"                      (renderSchema (SOpt SStr))
+  , check "render array"    "[number]"                           (renderSchema (SArr SNum))
+  , check "render enum"     "\"clear\" | \"cloudy\" | \"storm\"" (renderSchema (SEnum ["clear","cloudy","storm"]))
+  , check "render object"   "{\"city\": string, \"tempC\": number}"
+      (renderSchema (SObj [("city", SStr), ("tempC", SNum)]))
+  , check "render oneOf"    "number | string"                    (renderSchema (SOneOf [SNum, SStr]))
+  -- Task 2: Codec primitives + list'/nullable'/enum
+  , check "prim schema str"  SStr            (codecSchema C.str)
+  , check "prim encode int"  (JNumber 5.0)   (codecEncode C.int 5)
+  , check "prim decode bool" (Right True)    (D.decodeValue (codecDecode C.bool) (JBool True))
+  , check "list schema"      (SArr SNum)     (codecSchema (C.list' C.float))
+  , check "list encode"      (JArray [JNumber 1.0, JNumber 2.0]) (codecEncode (C.list' C.float) [1, 2])
+  , check "nullable schema"  (SOpt SStr)     (codecSchema (C.nullable' C.str))
+  , check "nullable encode Nothing" JNull    (codecEncode (C.nullable' C.str) Nothing)
+  , check "enum schema"      (SEnum ["clear","cloudy","storm"]) (codecSchema skyCodec)
+  , check "enum encode"      (JString "storm") (codecEncode skyCodec Storm)
+  , check "enum decode"      (Right Cloudy)  (D.decodeValue (codecDecode skyCodec) (JString "cloudy"))
+  , check "enum decode bad"  True            (either (const True) (const False)
+                                                (D.decodeValue (codecDecode skyCodec) (JString "nope")))
+  -- Task 3: ObjectCodec + field/object (record round-trip)
+  , check "record schema"
+      (SObj [("city", SStr), ("tempC", SNum), ("rainy", SBool)])
+      (codecSchema forecastCodec)
+  , check "record encode"
+      (JObject [("city", JString "Brisbane"), ("tempC", JNumber 27.5), ("rainy", JBool False)])
+      (codecEncode forecastCodec (Forecast "Brisbane" 27.5 False))
+  , check "record decode"
+      (Right (Forecast "Brisbane" 27.5 False))
+      (D.decodeValue (codecDecode forecastCodec)
+        (JObject [("city", JString "Brisbane"), ("tempC", JNumber 27.5), ("rainy", JBool False)]))
+  , check "record round-trips through text"
+      (Right (Forecast "Hobart" 9.0 True))
+      (D.decodeString (codecDecode forecastCodec)
+        (encode (codecEncode forecastCodec (Forecast "Hobart" 9.0 True))))
+  -- Task 4: Variant + oneOfC (sum round-trip)
+  , check "sum schema"
+      (SOneOf [SObj [("r", SNum)], SObj [("w", SNum), ("h", SNum)]])
+      (codecSchema shapeCodec)
+  , check "sum encode circle" (JObject [("r", JNumber 2.0)]) (codecEncode shapeCodec (Circle 2))
+  , check "sum decode rect"
+      (Right (Rect 3.0 4.0))
+      (D.decodeValue (codecDecode shapeCodec) (JObject [("w", JNumber 3), ("h", JNumber 4)]))
+  , check "sum round-trips"
+      (Right (Circle 2.0))
+      (D.decodeValue (codecDecode shapeCodec) (codecEncode shapeCodec (Circle 2)))
   ]
