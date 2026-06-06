@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Crucible.Agent
-  ( AgentState(..), startAgent, runAgent
+  ( AgentState(..), startAgent, runAgent, runAgentT
   ) where
 
 import Data.Text (Text)
@@ -11,6 +11,8 @@ import Crucible.Codec (Codec(..))
 import Crucible.SAP (decodeLLM)
 import Crucible.Decision (Decision, Step(..), reduce)
 import qualified Crucible.Json.Decode as D
+import Crucible.Tool (ToolCall(..), MonadTool(..))
+import Crucible.Json.Encode (encode)
 
 -- | The agent's running context: the conversation so far.
 newtype AgentState = AgentState { transcript :: [Message] }
@@ -44,6 +46,26 @@ runAgent codec runTool = loop
           Continue tc -> do
             res <- runTool tc
             loop (append st1 (Message Tool res))
+
+-- | Like 'runAgent' but tool dispatch comes from the 'MonadTool' capability
+-- (name-based registry) rather than a supplied runner. Its type
+-- @(MonadLLM m, MonadTool m) =>@ is the capability manifest.
+runAgentT :: (MonadLLM m, MonadTool m)
+          => Codec (Decision ToolCall answer) -> AgentState -> m answer
+runAgentT codec = loop
+  where
+    loop st = do
+      raw <- complete (transcript st)
+      let st1 = append st (Message Assistant raw)
+      case decodeLLM codec raw of
+        Left err -> loop (append st1
+          (Message User ("Your reply did not parse: " <> T.pack (D.message err)
+                         <> ". Respond with valid JSON only.")))
+        Right dec -> case reduce dec of
+          Halt ans                -> pure ans
+          Continue (ToolCall n a) -> do
+            res <- callTool n a
+            loop (append st1 (Message Tool (either ("error: " <>) encode res)))
 
 append :: AgentState -> Message -> AgentState
 append (AgentState ms) m = AgentState (ms ++ [m])
