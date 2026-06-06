@@ -305,4 +305,14 @@ main = runChecks
       True
       (Data.Text.isInfixOf "pass-rate:" (renderReport (runScripted []
         (runEval id (pure . Data.Text.toUpper) [Case "abc" "c" (Exactly "ABC")]))))
+  -- M10 Task 2: LLM-as-judge (Rubric) on scripted data
+  , check "eval: LLM-as-judge passes a rubric (scripted verdict)"
+      (1.0, "looks like a greeting")
+      (let rep = runScripted ["{\"vPass\":true,\"vWhy\":\"looks like a greeting\"}"]
+                   (runEval id (pure . id) [Case "hi" "greeting" (Rubric "must be a greeting")])
+       in (passRate rep, rationale (resScore (head (results rep)))))
+  , check "eval: LLM-as-judge fails a rubric (scripted verdict)"
+      0.0
+      (passRate (runScripted ["{\"vPass\":false,\"vWhy\":\"not a greeting\"}"]
+        (runEval id (pure . id) [Case "42" "greeting" (Rubric "must be a greeting")])))
   ]
