@@ -1,0 +1,95 @@
+[[locked]]
+name = "async"
+repo = "https://github.com/simonmar/async.git"
+rev = "4a70b53c1ba90d8a59d6ec41a89337645c55b4cd"
+sha256 = "sha256:a91e121e625821cf63de254f71b2839b9de4cf814196bb7c3312b77637363aa9"
+depends = ["hashable"]
+
+[[locked]]
+name = "base-orphans"
+repo = "https://github.com/haskell-compat/base-orphans"
+rev = "14f89082857f9b96180203116e21c1f0632c8eb4"
+sha256 = "sha256:ff9b73f7dc531e836e8fba4182eb84f0108f09f6fd435c8b63d02ab7997169bf"
+depends = []
+
+[[locked]]
+name = "effectful"
+repo = "https://github.com/haskell-effectful/effectful.git"
+rev = "70f2b865e2f35cfd9f2e901fe5d2a9b1014c5e34"
+sha256 = "sha256:42a84deaf3a6432732cd4eca03846f277ecb6ea9b367558815ce834b4de57da7"
+depends = ["async", "effectful-core", "strict-mutable-base", "unliftio"]
+
+[[locked]]
+name = "effectful-core"
+repo = "https://github.com/haskell-effectful/effectful.git"
+rev = "70f2b865e2f35cfd9f2e901fe5d2a9b1014c5e34"
+sha256 = "sha256:42a84deaf3a6432732cd4eca03846f277ecb6ea9b367558815ce834b4de57da7"
+depends = ["monad-control", "primitive", "strict-mutable-base", "transformers-base", "unliftio-core"]
+
+[[locked]]
+name = "hashable"
+repo = "https://github.com/haskell-unordered-containers/hashable.git"
+rev = "92bd55d1f1251d4c5666216aa8cf84143778d5d3"
+sha256 = "sha256:5a5b6040ec090745d5882465bbff845aee233858cfb351b36bbcf37a34f33bf3"
+depends = ["os-string"]
+
+[[locked]]
+name = "monad-control"
+repo = "https://github.com/basvandijk/monad-control.git"
+rev = "378524047ba8f879133bd94e3586bac821187e9e"
+sha256 = "sha256:6b2486012c1e305fa1fb2f102b9acb8bae8f3ba1c0b77be8e670aa2f7f413ee9"
+depends = ["transformers-base", "transformers-compat"]
+
+[[locked]]
+name = "os-string"
+repo = "https://github.com/haskell/os-string"
+rev = "71f66e1af2288867becaa567dfb10c1d791b0343"
+sha256 = "sha256:af2dc7d8b4bed958d56b3ffa3381b8b289cf347f259ea4282a2f8f7710f4a4a0"
+depends = []
+
+[[locked]]
+name = "primitive"
+repo = "https://github.com/haskell/primitive"
+rev = "8ef29458e80c539261817dc057c9e784e1cbea36"
+sha256 = "sha256:61847e9b76370553c4d2a40133ad6e1f49eab863aacdb9f5e33e16e55021741a"
+depends = []
+
+[[locked]]
+name = "safe-exceptions"
+repo = "https://github.com/fpco/safe-exceptions"
+rev = "ecd362734e87eed88f03737f1bdc25ba88cb546b"
+sha256 = "sha256:e02759737b54092ef233384e6a191743c3573561b332d18fb5bd2a730563db5d"
+depends = []
+
+[[locked]]
+name = "strict-mutable-base"
+repo = "https://github.com/arybczak/strict-mutable.git#strict-mutable-base"
+rev = "beea8212f10c9b003e86b208a78de43de8f0442c"
+sha256 = "sha256:cbd052090028a56ce537d2fd701a37b24ae740ade20c0786e857052bfb7f12ed"
+depends = []
+
+[[locked]]
+name = "transformers-base"
+repo = "https://github.com/mvv/transformers-base.git"
+rev = "f2746cc4f8a2964b7884a70ac1534cd5433e1fe9"
+sha256 = "sha256:1f23bae5269b2cbec9b7a0fd8fc28f6c232de2a6ca5e5e7d500239ca684314d5"
+depends = ["base-orphans", "transformers-compat"]
+
+[[locked]]
+name = "transformers-compat"
+repo = "https://github.com/ekmett/transformers-compat.git"
+rev = "6fe07cbb7bf347f4775b13e4350789d607a0cb9b"
+sha256 = "sha256:ac820a3de3d8d57ac0861de808b5a193f34e8a7747dd3572dbbd5990550e5379"
+depends = []
+
+[[locked]]
+name = "unliftio"
+vendored = "0.2.25.1"
+sha256 = "sha256:b3c2a84e5680def7ef49ff25a8c734ec71f434c63f62ebb185a9b90d4aa65c4d"
+depends = ["async", "safe-exceptions", "unliftio-core"]
+
+[[locked]]
+name = "unliftio-core"
+vendored = "0.2.1.0"
+sha256 = "sha256:a1e52dc3d66734570e850ad8fb4f7ec794d4f74ac9c22be3f78d38994b0d9a68"
+depends = []

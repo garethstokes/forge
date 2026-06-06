@@ -39,4 +39,14 @@ ghc = "9.6.5"
 
 [dependencies]
 
-[registry]
+[dependencies.effectful]
+tag = "*"
+repo = "https://github.com/haskell-effectful/effectful.git"
+
+[dependencies.monad-control]
+rev = "378524047ba8f879133bd94e3586bac821187e9e"
+repo = "https://github.com/basvandijk/monad-control.git"
+
+[dependencies.strict-mutable-base]
+rev = "beea8212f10c9b003e86b208a78de43de8f0442c"
+repo = "https://github.com/arybczak/strict-mutable.git#strict-mutable-base"
