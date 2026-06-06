@@ -21,6 +21,7 @@ import Crucible.LLM.Scripted (ScriptedM, runScripted)
 import Crucible.Agent (AgentState, startAgent, runAgent)
 import qualified Crucible.Tool as Tl
 import Crucible.Example (demoAgent)
+import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 
 -- Sample types for M3 tests
 
@@ -289,4 +290,19 @@ main = runChecks
   , check "example agent: direct answer (no tool)"
       "hello there"
       (demoAgent [ "{\"answer\":\"hello there\"}" ])
+  -- M10 Task 1: Eval harness — exact/predicate/runEval/report
+  , check "eval: all pass (exact + predicate)"
+      (1.0, 1.0)
+      (let rep = runScripted [] (runEval id (pure . Data.Text.toUpper)
+                   [ Case "abc" "upper" (Exactly "ABC")
+                   , Case "xy"  "nonempty" (Predicate (not . Data.Text.null)) ])
+       in (passRate rep, meanScore rep))
+  , check "eval: detects a mismatch"
+      0.0
+      (passRate (runScripted []
+        (runEval id (pure . Data.Text.toUpper) [Case "abc" "wrong" (Exactly "abc")])))
+  , check "eval: report renders per-case + summary"
+      True
+      (Data.Text.isInfixOf "pass-rate:" (renderReport (runScripted []
+        (runEval id (pure . Data.Text.toUpper) [Case "abc" "c" (Exactly "ABC")]))))
   ]
