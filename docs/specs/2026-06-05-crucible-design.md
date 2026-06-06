@@ -47,7 +47,8 @@ a `CallTool`. Pure core in the middle; effects (provider HTTP, tool IO) only at 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Delivery | Embedded eDSL, no codegen | Lean into the type system |
-| Effect substrate | **effectful** | Agent's *type is a capability manifest*; least-privilege tools compiler-enforced |
+| Effect substrate | **tagless-final (hand-rolled)** | `effectful` blocked under zinc (tracked zinc-4d8); zero-dep `MonadLLM`/`MonadTool` classes give lightweight capability-typing via constraints. `mtl`/`transformers` are boot |
+| HTTP | **`curl` shell-out via `System.Process`** | A boot lib; same approach zinc itself uses. Avoids the http-client cascade entirely |
 | JSON | **Hand-rolled, zero-dep** | aeson unviable under zinc; bespoke fits an exploration vehicle |
 | Decoder style | **Elm-style decoders-as-values** | No per-type typeclass for parsing; `Functor/Applicative/Monad` on `Decoder` = Elm `map/map2/andThen` |
 | Type↔JSON | **Bidirectional `Codec a`** (schema + decode + encode) | One definition round-trips; encoder bundled (no standalone `Encoder` type) |
@@ -147,13 +148,23 @@ Derive leaves (`instance HasCodec Forecast where codec = genericCodec`); hand-wr
 ` ```json ` fences and surrounding prose. Leniency (oneOf/nullable/coercions) lives in the codecs.
 No machinery.
 
-## 8. The agent layer (unchanged from v1, now on `Codec` + `effectful`)
+## 8. The agent layer (on `Codec` + hand-rolled tagless-final effects)
 
-`Decision` codec built via `oneOfC` over tool codecs + answer codec. Pure
-`reduce :: AgentState -> Decision ToolCall answer -> Step answer`. Control loop
-`runAgent :: (LLM :> es, Tools :> es) => …` whose **type is the capability manifest**. LLM
-interpreters: `runLLMAnthropic`, `runLLMScripted`, `recordLLM` (cassettes). Tool effect with
-per-tool effect rows (authority creep = compile error). See §3–5 of v1 history; semantics intact.
+`Decision` codec via `oneOfC` (M6, done); pure `reduce` (M6, done). Effects are hand-rolled
+tagless-final classes — zero dependency:
+
+```haskell
+class Monad m => MonadLLM  m where complete :: [Message] -> m Text
+class Monad m => MonadTool m where dispatch :: ToolName -> Value -> m ToolResult
+```
+
+A function's constraints `(MonadLLM m, MonadTool m) => …` are the lightweight capability manifest.
+Carriers: `ScriptedM` (`StateT [Text]`, canned replies — tests), `AnthropicM` (real; HTTP via
+`curl` shell-out over `System.Process`), and a recording wrapper writing cassettes. The control
+loop `runAgent :: (MonadLLM m, MonadTool m) => Codec (Decision tool answer) -> AgentState -> m answer`
+renders the schema into the prompt, decodes the reply (SAP), `reduce`s, dispatches tools, loops.
+`effectful`'s row-typed manifest is parked (zinc-4d8); the loop is near-identical, so swapping later
+is cheap.
 
 ## 9. Tests vs evals (unchanged)
 
@@ -181,9 +192,9 @@ per-tool effect rows (authority creep = compile error). See §3–5 of v1 histor
 
 ## 11. Risks
 
-- **HTTP at M8** is the next unresolved dep risk (http-client cascades like aeson). Mitigation:
-  shell out to `curl`, or a minimal hand-rolled client over `network`. Decided at M8, off the
-  critical path until then.
+- **HTTP at M8** resolved: shell out to `curl` via `System.Process` (a boot lib — the approach
+  zinc itself uses), avoiding the http-client cascade. Zero-dep maintained. **effectful** parked
+  under zinc (zinc-4d8); substrate is hand-rolled tagless-final instead.
 - **Generics machinery** (`GCodec`) adds the only real type-level complexity; bounded to one
   opt-in module so it can't destabilise the core.
 - **Hand-rolled parser correctness** (string escapes, unicode `\uXXXX`, number grammar) — covered
