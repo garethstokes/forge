@@ -10,9 +10,9 @@ version = "0.1.0"
 
 [build.lib]
 source-dirs = ["src"]
-depends = ["base", "text", "mtl", "effectful"]
+depends = ["base", "text", "mtl", "effectful", "effectful-core"]
 
 [build.test.spec]
 source-dirs = ["test"]
 main = "Spec.hs"
-depends = ["base", "text", "mtl", "crucible", "effectful"]
+depends = ["base", "text", "mtl", "crucible", "effectful", "effectful-core"]

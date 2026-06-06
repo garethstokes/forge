@@ -43,6 +43,13 @@ ghc = "9.6.5"
 tag = "*"
 repo = "https://github.com/haskell-effectful/effectful.git"
 
+# effectful re-exports the `Effectful` module from effectful-core; the origin
+# package must be visible to the consumer for the reexport to resolve, so depend
+# on it explicitly (workaround pending a zinc reexport-origin-visibility fix).
+[dependencies.effectful-core]
+tag = "*"
+repo = "https://github.com/haskell-effectful/effectful.git#effectful-core"
+
 [dependencies.monad-control]
 rev = "378524047ba8f879133bd94e3586bac821187e9e"
 repo = "https://github.com/basvandijk/monad-control.git"
