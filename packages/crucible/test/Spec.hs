@@ -1,5 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Main (main) where
 import Harness (check, runChecks)
 import Crucible.Json.Value (Value(..))
@@ -16,10 +20,11 @@ import GHC.Generics (Generic)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.SAP (stripToJson, decodeLLM)
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
-import Crucible.LLM (MonadLLM(..), Message(..), Role(..))
-import Crucible.LLM.Scripted (ScriptedM, runScripted)
-import Crucible.Agent (AgentState, startAgent, runAgent)
+import Effectful (Eff, runPureEff)
+import Crucible.LLM (LLM, complete, Message(..), Role(..), runLLMScripted)
+import Crucible.Agent (startAgent, runAgent)
 import qualified Crucible.Tool as Tl
+import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 
@@ -91,16 +96,34 @@ answerCodec = C.object (Answer <$> C.field "answer" (\(Answer t) -> t) C.str)
 decCodec :: Codec (Decision ToolCall Answer)
 decCodec = decisionCodec toolCallCodec answerCodec
 
--- M7 Task 2: agent test helpers
-toolRunner :: ToolCall -> ScriptedM Text
-toolRunner (GetWeather c)  = pure ("sunny in " <> c)
-toolRunner (AddNums a b)   = pure (Data.Text.pack (show (a + b)))
+-- M7 Task 2: agent test helpers — the effectful agent runs over the LLM + Tools
+-- effects, dispatching tools by name from a toolbox via the Tools effect.
+agentCodec :: Codec (Decision Tl.ToolCall Text)
+agentCodec = decisionCodec Tl.toolCallCodec (C.object (C.field "answer" id C.str))
 
-agentRun :: Answer
-agentRun = runScripted
-  [ "{\"city\":\"Brisbane\"}"
+agentTools :: [Tl.Tool es]
+agentTools =
+  [ Tl.Tool "get_weather" (SObj [("city", SStr)]) $ \args ->
+      pure $ case decodeValue (D.field "city" D.string) args of
+               Right c -> JString ("sunny in " <> c)
+               Left _  -> JString "unknown city"
+  , Tl.Tool "add" (SObj [("a", SNum), ("b", SNum)]) $ \args ->
+      pure $ case (,) <$> decodeValue (D.field "a" D.int) args
+                      <*> decodeValue (D.field "b" D.int) args of
+               Right (a, b) -> JString (Data.Text.pack (show (a + b)))
+               Left _       -> JString "bad args"
+  ]
+
+runAgentScripted :: [Text] -> Codec (Decision Tl.ToolCall Text) -> Text -> Text
+runAgentScripted replies codec q =
+  runPureEff . runTools agentTools . runLLMScripted replies
+    $ runAgent codec (startAgent codec q)
+
+agentRun :: Text
+agentRun = runAgentScripted
+  [ "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}"
   , "{\"answer\":\"It is sunny in Brisbane\"}" ]
-  (runAgent decCodec toolRunner (startAgent decCodec "What's the weather in Brisbane?"))
+  agentCodec "What's the weather in Brisbane?"
 
 main :: IO ()
 main = runChecks
@@ -259,17 +282,17 @@ main = runChecks
   , check "reduce Done -> Halt"
       (Halt (Answer "all set"))
       (reduce (Done (Answer "all set") :: Decision ToolCall Answer))
-  -- M7 Task 1: MonadLLM + ScriptedM
+  -- M7 Task 1: LLM effect + scripted interpreter
   , check "scripted pops canned replies in order"
       ["a", "b"]
-      (runScripted ["a", "b"] ((do x <- complete ([] :: [Message]); y <- complete ([] :: [Message]); pure [x, y]) :: ScriptedM [Text]))
-  -- M7 Task 2: agent control loop
+      (runPureEff (runLLMScripted ["a", "b"]
+        ((do x <- complete ([] :: [Message]); y <- complete ([] :: [Message]); pure [x, y]) :: Eff '[LLM] [Text])))
+  -- M7 Task 2: agent control loop (over LLM + Tools effects)
   , check "agent loops tool->answer to a final Answer"
-      (Answer "It is sunny in Brisbane") agentRun
+      "It is sunny in Brisbane" agentRun
   , check "agent halts immediately on a Done reply"
-      (Answer "hi")
-      (runScripted ["{\"answer\":\"hi\"}"]
-        (runAgent decCodec toolRunner (startAgent decCodec "say hi")))
+      "hi"
+      (runAgentScripted ["{\"answer\":\"hi\"}"] agentCodec "say hi")
   -- M9 Task 1: Crucible.Tool
   , check "toolCallCodec decodes name+args"
       (Right (Tl.ToolCall "get_weather" (JObject [("city", JString "Hobart")])))
@@ -277,7 +300,7 @@ main = runChecks
         (JObject [("tool", JString "get_weather"), ("args", JObject [("city", JString "Hobart")])]))
   , check "toolsHelp lists tools"
       "- echo(args: {\"msg\": string})"
-      (Tl.toolsHelp [Tl.Tool "echo" (SObj [("msg", SStr)]) (\_ -> Just JNull)])
+      (Tl.toolsHelp [Tl.Tool "echo" (SObj [("msg", SStr)]) (\_ -> pure JNull)])
   -- M9 Task 3: Crucible.Example end-to-end agent
   , check "example agent: tool (get_weather) then answer"
       "sunny in Brisbane"
@@ -293,26 +316,31 @@ main = runChecks
   -- M10 Task 1: Eval harness — exact/predicate/runEval/report
   , check "eval: all pass (exact + predicate)"
       (1.0, 1.0)
-      (let rep = runScripted [] (runEval id (pure . Data.Text.toUpper)
+      (let rep = runPureEff (runLLMScripted [] (runEval id (pure . Data.Text.toUpper)
                    [ Case "abc" "upper" (Exactly "ABC")
-                   , Case "xy"  "nonempty" (Predicate (not . Data.Text.null)) ])
+                   , Case "xy"  "nonempty" (Predicate (not . Data.Text.null)) ]))
        in (passRate rep, meanScore rep))
   , check "eval: detects a mismatch"
       0.0
-      (passRate (runScripted []
-        (runEval id (pure . Data.Text.toUpper) [Case "abc" "wrong" (Exactly "abc")])))
+      (passRate (runPureEff (runLLMScripted []
+        (runEval id (pure . Data.Text.toUpper) [Case "abc" "wrong" (Exactly "abc")]))))
   , check "eval: report renders per-case + summary"
       True
-      (Data.Text.isInfixOf "pass-rate:" (renderReport (runScripted []
-        (runEval id (pure . Data.Text.toUpper) [Case "abc" "c" (Exactly "ABC")]))))
+      (Data.Text.isInfixOf "pass-rate:" (renderReport (runPureEff (runLLMScripted []
+        (runEval id (pure . Data.Text.toUpper) [Case "abc" "c" (Exactly "ABC")])))))
   -- M10 Task 2: LLM-as-judge (Rubric) on scripted data
   , check "eval: LLM-as-judge passes a rubric (scripted verdict)"
       (1.0, "looks like a greeting")
-      (let rep = runScripted ["{\"vPass\":true,\"vWhy\":\"looks like a greeting\"}"]
-                   (runEval id (pure . id) [Case "hi" "greeting" (Rubric "must be a greeting")])
+      (let rep = runPureEff (runLLMScripted ["{\"vPass\":true,\"vWhy\":\"looks like a greeting\"}"]
+                   (runEval id (pure . id) [Case "hi" "greeting" (Rubric "must be a greeting")]))
        in (passRate rep, rationale (resScore (head (results rep)))))
   , check "eval: LLM-as-judge fails a rubric (scripted verdict)"
       0.0
-      (passRate (runScripted ["{\"vPass\":false,\"vWhy\":\"not a greeting\"}"]
-        (runEval id (pure . id) [Case "42" "greeting" (Rubric "must be a greeting")])))
+      (passRate (runPureEff (runLLMScripted ["{\"vPass\":false,\"vWhy\":\"not a greeting\"}"]
+        (runEval id (pure . id) [Case "42" "greeting" (Rubric "must be a greeting")]))))
+  -- effectful capability manifest: agent runs end-to-end through interpreters
+  , check "effectful agent: tool then answer"
+      "sunny in Brisbane"
+      (demoAgent [ "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}"
+                 , "{\"answer\":\"sunny in Brisbane\"}" ])
   ]

@@ -1,3 +1,6 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Crucible.Eval
   ( Case(..), Expectation(..), Score(..), Verdict(..)
@@ -7,7 +10,8 @@ module Crucible.Eval
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Crucible.LLM (MonadLLM(..), Message(..), Role(..))
+import Effectful
+import Crucible.LLM (LLM, complete, Message(..), Role(..))
 import Crucible.Codec (Codec, object, field, str, bool)
 import Crucible.SAP (decodeLLM)
 import qualified Crucible.Json.Decode as D
@@ -34,7 +38,7 @@ verdictCodec :: Codec Verdict
 verdictCodec = object (Verdict <$> field "vPass" vPass bool <*> field "vWhy" vWhy str)
 
 -- | LLM-as-judge: a Codec-backed prompt grading an output against a rubric.
-judge :: MonadLLM m => (a -> Text) -> Text -> a -> m Score
+judge :: (LLM :> es) => (a -> Text) -> Text -> a -> Eff es Score
 judge render rubric actual = do
   raw <- complete
     [ Message System "You are a strict grader. Respond ONLY with JSON {\"vPass\": <bool>, \"vWhy\": <string>}."
@@ -45,7 +49,7 @@ judge render rubric actual = do
 
 -- | Score one output against its expectation. Pure for Exactly/Predicate; the
 -- model is consulted only for Rubric.
-scoreM :: (Eq a, MonadLLM m) => (a -> Text) -> Expectation a -> a -> m Score
+scoreM :: (Eq a, LLM :> es) => (a -> Text) -> Expectation a -> a -> Eff es Score
 scoreM render exp_ actual = case exp_ of
   Exactly e   -> pure (Score (ind (actual == e)) (if actual == e then "exact match" else "mismatch"))
   Predicate p -> pure (Score (ind (p actual)) (if p actual then "predicate held" else "predicate failed"))
@@ -53,7 +57,7 @@ scoreM render exp_ actual = case exp_ of
   where ind b = if b then 1.0 else 0.0
 
 -- | Run a system-under-test over a dataset and aggregate.
-runEval :: (Eq a, MonadLLM m) => (a -> Text) -> (i -> m a) -> [Case i a] -> m (Report i a)
+runEval :: (Eq a, LLM :> es) => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
 runEval render sut cases = do
   rs <- mapM run1 cases
   let vals = map (scoreValue . resScore) rs

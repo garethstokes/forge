@@ -1,18 +1,22 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Crucible.Agent
-  ( AgentState(..), startAgent, runAgent, runAgentT
+  ( AgentState(..), startAgent, runAgent
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Crucible.LLM (MonadLLM(..), Message(..), Role(..))
+import Effectful
+import Crucible.LLM (LLM, complete, Message(..), Role(..))
+import Crucible.Tool (Tools, callTool, ToolCall(..))
 import Crucible.Schema (renderSchema)
 import Crucible.Codec (Codec(..))
 import Crucible.SAP (decodeLLM)
 import Crucible.Decision (Decision, Step(..), reduce)
-import qualified Crucible.Json.Decode as D
-import Crucible.Tool (ToolCall(..), MonadTool(..))
 import Crucible.Json.Encode (encode)
+import qualified Crucible.Json.Decode as D
 
 -- | The agent's running context: the conversation so far.
 newtype AgentState = AgentState { transcript :: [Message] }
@@ -24,35 +28,11 @@ startAgent codec question = AgentState
   [ Message System ("Respond ONLY with JSON matching this schema:\n" <> renderSchema (codecSchema codec))
   , Message User question ]
 
--- | Run the agent to a final answer. The control loop: complete -> decode (SAP)
--- -> reduce -> (dispatch tool & loop | halt). @MonadLLM m =>@ is the capability
--- manifest; tool dispatch is the supplied runner (M9 upgrades it to MonadTool).
-runAgent :: MonadLLM m
-         => Codec (Decision tool answer)
-         -> (tool -> m Text)            -- ^ tool runner: returns a result string
-         -> AgentState
-         -> m answer
-runAgent codec runTool = loop
-  where
-    loop st = do
-      raw <- complete (transcript st)
-      let st1 = append st (Message Assistant raw)
-      case decodeLLM codec raw of
-        Left err -> loop (append st1
-          (Message User ("Your reply did not parse: " <> T.pack (D.message err)
-                         <> ". Respond with valid JSON only.")))
-        Right dec -> case reduce dec of
-          Halt ans    -> pure ans
-          Continue tc -> do
-            res <- runTool tc
-            loop (append st1 (Message Tool res))
-
--- | Like 'runAgent' but tool dispatch comes from the 'MonadTool' capability
--- (name-based registry) rather than a supplied runner. Its type
--- @(MonadLLM m, MonadTool m) =>@ is the capability manifest.
-runAgentT :: (MonadLLM m, MonadTool m)
-          => Codec (Decision ToolCall answer) -> AgentState -> m answer
-runAgentT codec = loop
+-- | The control loop. Its type IS the capability manifest: it may talk to the
+-- model (@LLM :> es@) and dispatch tools (@Tools :> es@), and nothing else.
+runAgent :: (LLM :> es, Tools :> es)
+         => Codec (Decision ToolCall answer) -> AgentState -> Eff es answer
+runAgent codec = loop
   where
     loop st = do
       raw <- complete (transcript st)
