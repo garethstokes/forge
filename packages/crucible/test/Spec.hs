@@ -20,6 +20,7 @@ import Crucible.LLM (MonadLLM(..), Message(..), Role(..))
 import Crucible.LLM.Scripted (ScriptedM, runScripted)
 import Crucible.Agent (AgentState, startAgent, runAgent)
 import qualified Crucible.Tool as Tl
+import Crucible.Example (demoAgent)
 
 -- Sample types for M3 tests
 
@@ -276,4 +277,16 @@ main = runChecks
   , check "toolsHelp lists tools"
       "- echo(args: {\"msg\": string})"
       (Tl.toolsHelp [Tl.Tool "echo" (SObj [("msg", SStr)]) (\_ -> Just JNull)])
+  -- M9 Task 3: Crucible.Example end-to-end agent
+  , check "example agent: tool (get_weather) then answer"
+      "sunny in Brisbane"
+      (demoAgent [ "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}"
+                 , "{\"answer\":\"sunny in Brisbane\"}" ])
+  , check "example agent: add tool then answer"
+      "the sum is 7"
+      (demoAgent [ "{\"tool\":\"add\",\"args\":{\"a\":3,\"b\":4}}"
+                 , "{\"answer\":\"the sum is 7\"}" ])
+  , check "example agent: direct answer (no tool)"
+      "hello there"
+      (demoAgent [ "{\"answer\":\"hello there\"}" ])
   ]
