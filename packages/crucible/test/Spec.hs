@@ -15,6 +15,8 @@ import GHC.Generics (Generic)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.SAP (stripToJson, decodeLLM)
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
+import Crucible.LLM (MonadLLM(..), Message(..), Role(..))
+import Crucible.LLM.Scripted (ScriptedM, runScripted)
 
 -- Sample types for M3 tests
 
@@ -241,4 +243,8 @@ main = runChecks
   , check "reduce Done -> Halt"
       (Halt (Answer "all set"))
       (reduce (Done (Answer "all set") :: Decision ToolCall Answer))
+  -- M7 Task 1: MonadLLM + ScriptedM
+  , check "scripted pops canned replies in order"
+      ["a", "b"]
+      (runScripted ["a", "b"] ((do x <- complete ([] :: [Message]); y <- complete ([] :: [Message]); pure [x, y]) :: ScriptedM [Text]))
   ]
