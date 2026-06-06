@@ -6,6 +6,7 @@ import Crucible.Json.Value (Value(..))
 import Crucible.Json.Parse (parse)
 import Crucible.Json.Encode (encode)
 import Data.Text (Text)
+import qualified Data.Text
 import Crucible.Json.Decode as D
 import Crucible.Json.Decode (Error(..), Crumb(..))
 import Crucible.Schema (Schema(..), renderSchema)
@@ -17,6 +18,7 @@ import Crucible.SAP (stripToJson, decodeLLM)
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
 import Crucible.LLM (MonadLLM(..), Message(..), Role(..))
 import Crucible.LLM.Scripted (ScriptedM, runScripted)
+import Crucible.Agent (AgentState, startAgent, runAgent)
 
 -- Sample types for M3 tests
 
@@ -85,6 +87,17 @@ answerCodec = C.object (Answer <$> C.field "answer" (\(Answer t) -> t) C.str)
 
 decCodec :: Codec (Decision ToolCall Answer)
 decCodec = decisionCodec toolCallCodec answerCodec
+
+-- M7 Task 2: agent test helpers
+toolRunner :: ToolCall -> ScriptedM Text
+toolRunner (GetWeather c)  = pure ("sunny in " <> c)
+toolRunner (AddNums a b)   = pure (Data.Text.pack (show (a + b)))
+
+agentRun :: Answer
+agentRun = runScripted
+  [ "{\"city\":\"Brisbane\"}"
+  , "{\"answer\":\"It is sunny in Brisbane\"}" ]
+  (runAgent decCodec toolRunner (startAgent decCodec "What's the weather in Brisbane?"))
 
 main :: IO ()
 main = runChecks
@@ -247,4 +260,11 @@ main = runChecks
   , check "scripted pops canned replies in order"
       ["a", "b"]
       (runScripted ["a", "b"] ((do x <- complete ([] :: [Message]); y <- complete ([] :: [Message]); pure [x, y]) :: ScriptedM [Text]))
+  -- M7 Task 2: agent control loop
+  , check "agent loops tool->answer to a final Answer"
+      (Answer "It is sunny in Brisbane") agentRun
+  , check "agent halts immediately on a Done reply"
+      (Answer "hi")
+      (runScripted ["{\"answer\":\"hi\"}"]
+        (runAgent decCodec toolRunner (startAgent decCodec "say hi")))
   ]
