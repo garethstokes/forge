@@ -14,6 +14,7 @@ data Schema
   | SNum
   | SBool
   | SOpt   Schema
+  | SAny
   deriving (Eq, Show)
 
 -- | Compact, deterministic, single-line rendering (multi-line pretty is a later refinement).
@@ -21,6 +22,7 @@ renderSchema :: Schema -> Text
 renderSchema SStr        = "string"
 renderSchema SNum        = "number"
 renderSchema SBool       = "boolean"
+renderSchema SAny        = "any"
 renderSchema (SOpt s)    = renderSchema s <> " | null"
 renderSchema (SArr s)    = "[" <> renderSchema s <> "]"
 renderSchema (SEnum xs)  = T.intercalate " | " (map quote xs)

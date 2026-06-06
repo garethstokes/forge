@@ -19,6 +19,7 @@ import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
 import Crucible.LLM (MonadLLM(..), Message(..), Role(..))
 import Crucible.LLM.Scripted (ScriptedM, runScripted)
 import Crucible.Agent (AgentState, startAgent, runAgent)
+import qualified Crucible.Tool as Tl
 
 -- Sample types for M3 tests
 
@@ -267,4 +268,12 @@ main = runChecks
       (Answer "hi")
       (runScripted ["{\"answer\":\"hi\"}"]
         (runAgent decCodec toolRunner (startAgent decCodec "say hi")))
+  -- M9 Task 1: Crucible.Tool
+  , check "toolCallCodec decodes name+args"
+      (Right (Tl.ToolCall "get_weather" (JObject [("city", JString "Hobart")])))
+      (D.decodeValue (codecDecode Tl.toolCallCodec)
+        (JObject [("tool", JString "get_weather"), ("args", JObject [("city", JString "Hobart")])]))
+  , check "toolsHelp lists tools"
+      "- echo(args: {\"msg\": string})"
+      (Tl.toolsHelp [Tl.Tool "echo" (SObj [("msg", SStr)]) (\_ -> Just JNull)])
   ]
