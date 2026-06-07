@@ -47,4 +47,15 @@ tests = group "SelfRef"
           pure (fmap employeeName m1, fmap employeeName m2)
         assertEqual "report's manager" (Just "Boss") mgrOfReport
         assertEqual "boss's manager"   Nothing        mgrOfBoss
+  , test "load #manager on a NULL self-FK short-circuits — issues NO query" $
+      withTestDb $ \pool -> do
+        (mgr, nEmployeeSelects) <- withSession pool $ do
+          boss <- add (Employee { employeeId = 0, employeeManager = Nothing, employeeName = "Boss" } :: Employee)
+          m    <- load #manager boss   -- NULL FK → Nothing WITHOUT a round-trip
+          l    <- statementLog
+          -- the add is an INSERT (no "SELECT"); a non-short-circuiting loader would
+          -- emit "SELECT ... FROM employees WHERE employee_id = $1" → count 1.
+          pure (fmap employeeName m, length (filter (\s -> "SELECT" `isInfixOf` s && "employees" `isInfixOf` s) (stmts l)))
+        assertEqual "no manager" Nothing mgr
+        assertEqual "short-circuit issued zero employee SELECTs" 0 nEmployeeSelects
   ]
