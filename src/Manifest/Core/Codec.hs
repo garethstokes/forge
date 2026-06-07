@@ -4,7 +4,7 @@ module Manifest.Core.Codec
   ( SqlParam
   , ToField(..)
   , FromField(..)
-  , RowDecoder
+  , RowDecoder(..)
   , field
   , decodeRow
   ) where
