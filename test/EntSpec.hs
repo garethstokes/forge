@@ -33,6 +33,14 @@ tests = group "Ent"
           e1 <- with (selectin #posts) e0
           pure (Map.keys (entRels e1))
         assertEqual "loaded key" ["posts"] keys
+  , test "rel #posts reads the loaded relation" $
+      withTestDb $ \pool -> do
+        titles <- withSession pool $ do
+          u  <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          _  <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)
+          e1 <- with (selectin #posts) (manage u)
+          pure (map postTitle (rel #posts e1))
+        assertEqual "titles" ["P1"] titles
   ]
   where
     withTestDbSeedAndGet pool = withSession pool $ do
