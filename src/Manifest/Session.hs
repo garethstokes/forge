@@ -18,20 +18,26 @@ module Manifest.Session
   , lookupBaseline
   , get
   , selectWhere
+  , withTransaction
+  , flush
+  , add
+  , save
+  , delete
   ) where
 
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Exception (throwIO)
+import Control.Exception (SomeException, throwIO, try)
 import Control.Monad.Trans.Reader (ReaderT(..), ask, runReaderT)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BC
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Type.Reflection (SomeTypeRep)
 import Manifest.Core.Codec (SqlParam, ToField(..), decodeRow)
-import Manifest.Core.Meta (pkColumn, cmName)
+import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), pkColumn, cmName, cmIsSerial, cmIsPK)
 import Manifest.Core.Query (Cond(..), Op(..))
-import Manifest.Core.Sql (renderSelect)
+import Manifest.Core.Sql (renderSelect, renderInsert, renderUpdate, renderDelete)
 import Manifest.Entity
 import Manifest.Error (DbError(..), DbException(..))
 import Manifest.Postgres (Connection, Pool, execText, withConnection)
@@ -102,10 +108,11 @@ decodeRowDb row = case decodeRow (rowDecoder @a) row of
   Right a  -> pure a
   Left err -> Db (liftIO (throwIO (DbException (DecodeFailure err))))
 
--- | flush hook — the real implementation is added in Task 10. Until then,
--- autoflush is a no-op (no writes can be pending yet).
+-- | flush hook — flushes pending writes before each query when autoflush is on.
 autoflushHook :: Db ()
-autoflushHook = pure ()
+autoflushHook = do
+  on <- Db (cfgAutoflush . sessConfig <$> ask)
+  if on then flush else pure ()
 
 -- | Load by primary key; records a baseline snapshot for the loaded entity.
 get :: forall a. (Entity a, ToField (PrimKey a)) => Key a -> Db (Maybe a)
@@ -130,3 +137,91 @@ selectWhere conds = do
       ps  = [ v | Cond _ _ v <- conds ]
   rows <- execDb sql ps
   mapM (\row -> do a <- decodeRowDb @a row; setBaseline a; pure a) rows
+
+-- Write path ------------------------------------------------------------------
+
+-- | Append a deferred op to the session's pending queue.
+pushPending :: PendingOp -> Db ()
+pushPending op = Db $ do
+  sess <- ask
+  liftIO $ modifyIORef' (sessPending sess) (++ [op])
+
+-- | Queue a save (UPDATE on flush, snapshot-diffed against the baseline).
+save :: Entity a => a -> Db ()
+save a = pushPending (OpSave a)
+
+-- | Queue a delete (DELETE on flush).
+delete :: Entity a => a -> Db ()
+delete a = pushPending (OpDelete a)
+
+-- | Insert a new row EAGERLY (documented SP1 choice): issues the INSERT
+-- immediately, decodes the RETURNING row into the persistent record (PK
+-- filled), records its baseline, and returns it.
+add :: forall a. Entity a => a -> Db a
+add a = do
+  let tm      = tableMeta @a
+      insCols = filter (not . cmIsSerial) (tmColumns tm)
+      vals    = [ v | (c, v) <- zip (tmColumns tm) (rowEncode a), not (cmIsSerial c) ]
+      sql     = renderInsert tm insCols
+  rows <- execDb sql vals
+  case rows of
+    (row : _) -> do
+      a' <- decodeRowDb @a row
+      setBaseline a'
+      pure a'
+    [] -> Db (liftIO (throwIO (DbException (OtherError "add: INSERT returned no row"))))
+
+-- | Flush all pending writes: take & clear the queue, run all saves then deletes.
+flush :: Db ()
+flush = do
+  ops <- Db $ do
+    sess <- ask
+    liftIO $ atomicModifyIORef' (sessPending sess) (\os -> ([], os))
+  mapM_ (\op -> case op of OpSave a -> flushSave a; _ -> pure ()) ops
+  mapM_ (\op -> case op of OpDelete a -> flushDelete a; _ -> pure ()) ops
+
+-- | Emit a MINIMAL UPDATE: diff the record against its baseline column-by-column
+-- and update only the changed (non-PK) columns. No baseline → 'UnmanagedSave'.
+flushSave :: forall a. Entity a => a -> Db ()
+flushSave a = do
+  let tm = tableMeta @a
+  mb <- lookupBaseline (identityKey a)
+  case mb of
+    Nothing -> Db (liftIO (throwIO (DbException (UnmanagedSave (BC.unpack (tmTable tm))))))
+    Just baseline -> do
+      let changed = [ (cmName c, v)
+                    | (c, v, b) <- zip3 (tmColumns tm) (rowEncode a) baseline
+                    , not (cmIsPK c)
+                    , v /= b ]
+      if null changed
+        then pure ()
+        else do
+          _ <- execDb (renderUpdate tm (map fst changed) (cmName (pkColumn tm)))
+                      (map snd changed ++ [pkParam a])
+          setBaseline a
+
+-- | Emit a DELETE for the record and drop it from the identity map.
+flushDelete :: forall a. Entity a => a -> Db ()
+flushDelete a = do
+  let tm = tableMeta @a
+  _ <- execDb (renderDelete tm (cmName (pkColumn tm))) [pkParam a]
+  Db $ do
+    sess <- ask
+    liftIO $ modifyIORef' (sessIdentity sess) (Map.delete (identityKey a))
+
+-- | Run a block inside a database transaction. BEGIN/COMMIT/ROLLBACK are issued
+-- raw (NOT logged) so the statement log shows only data statements. On exception
+-- the transaction is rolled back and the exception re-thrown.
+withTransaction :: Db a -> Db a
+withTransaction (Db body) = Db $ do
+  sess <- ask
+  let conn = sessConn sess
+  _ <- liftIO $ execText conn "BEGIN" []
+  r <- liftIO (try (runReaderT (body >>= \x -> unDb flush >> pure x) sess))
+  case r of
+    Left (e :: SomeException) -> do
+      _ <- liftIO $ execText conn "ROLLBACK" []
+      liftIO (throwIO e)
+    Right a -> do
+      _ <- liftIO $ execText conn "COMMIT" []
+      pure a
