@@ -10,6 +10,7 @@ module Fixtures
   , postsDDL
   , profileDDL
   , tagsDDL
+  , employeesDDL
   , UserT(..)
   , User
   , PostT(..)
@@ -18,6 +19,8 @@ module Fixtures
   , Profile
   , TagT(..)
   , Tag
+  , EmployeeT(..)
+  , Employee
   ) where
 
 import Control.Exception (SomeException, finally, try)
@@ -105,6 +108,35 @@ instance Entity Tag where
   rowEncode  = genericRowEncode
   primKey    = tagId
 
+-- Employees: a self-referential table. employee_manager is a nullable self-FK
+-- referencing employee_id, so an employee can have a manager (forward FK) and
+-- reports (reverse FK), both targeting the same table — needs aliased joins.
+data EmployeeT f = Employee
+  { employeeId      :: Col f (PrimaryKey (Serial Int))
+  , employeeManager :: Col f (Maybe Int)   -- nullable self-FK → employee_id
+  , employeeName    :: Col f Text
+  } deriving Generic
+type Employee = EmployeeT Identity
+
+instance Entity Employee where
+  type PrimKey Employee = Int
+  tableMeta  = genericTableMeta @EmployeeT "employees"
+  rowDecoder = genericRowDecoder
+  rowEncode  = genericRowEncode
+  primKey    = employeeId
+
+-- forward FK (belongs-to self): the manager is the employee whose PK = self.employee_manager
+instance HasRelation Employee "manager" where
+  type Target      Employee "manager" = Employee
+  type Cardinality Employee "manager" = 'One
+  relSpec = belongsTo (Proxy @"employeeManager")
+
+-- reverse FK (has-many self): reports are employees whose employee_manager = self.PK
+instance HasRelation Employee "reports" where
+  type Target      Employee "reports" = [Employee]
+  type Cardinality Employee "reports" = 'Many
+  relSpec = hasMany (Proxy @"employeeManager")
+
 instance HasRelation User "posts" where
   type Target      User "posts" = [Post]
   type Cardinality User "posts" = 'Many
@@ -150,6 +182,13 @@ tagsDDL =
   \, tag_user  BIGINT NOT NULL \
   \, tag_label TEXT NOT NULL )"
 
+employeesDDL :: ByteString
+employeesDDL =
+  "CREATE TABLE employees \
+  \( employee_id      BIGSERIAL PRIMARY KEY \
+  \, employee_manager BIGINT \
+  \, employee_name    TEXT NOT NULL )"
+
 -- | Spin up an ephemeral, isolated Postgres for the action: initdb + pg_ctl on a
 -- private unix socket, create the schema, hand over a 2-connection pool, tear down.
 withTestDb :: (Pool -> IO a) -> IO a
@@ -167,5 +206,5 @@ withTestDb body = do
     _ <- readProcess "initdb" ["-D", dataDir, "-U", "postgres", "-A", "trust", "--no-sync"] ""
     callProcess "pg_ctl" ["start", "-D", dataDir, "-w", "-l", base ++ "/postgres.log", "-o", pgOpts]
     pool <- newPool conninfo 2
-    (do withConnection pool (\c -> mapM_ (\s -> execText c s []) [usersDDL, postsDDL, profileDDL, tagsDDL])
+    (do withConnection pool (\c -> mapM_ (\s -> execText c s []) [usersDDL, postsDDL, profileDDL, tagsDDL, employeesDDL])
         body pool) `finally` closePool pool
