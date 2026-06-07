@@ -49,8 +49,13 @@ tests = group "Joined"
   , test "joined #author (One, belongs-to) loads the target via LEFT JOIN" $
       withTestDb $ \pool -> do
         (nm, log') <- withSession pool $ do
-          u  <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
-          p  <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)
+          -- Decoys so the real post's PK (3) /= its FK (post_author=2): the
+          -- joined forward-FK must key the JOIN on post_author, not post_id.
+          d  <- add (User { userId = 0, userName = "Decoy", userEmail = Nothing } :: User)  -- user_id 1
+          u  <- add (User { userId = 0, userName = "Ada",   userEmail = Nothing } :: User)  -- user_id 2
+          _  <- add (Post { postId = 0, postAuthor = userId d, postTitle = "D1" } :: Post)  -- post_id 1
+          _  <- add (Post { postId = 0, postAuthor = userId d, postTitle = "D2" } :: Post)  -- post_id 2
+          p  <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)  -- post_id 3, author 2
           e1 <- with (joined #author) (manage p)
           l  <- statementLog
           pure (userName (rel #author e1), l)

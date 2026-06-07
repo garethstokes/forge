@@ -26,11 +26,16 @@ tests = group "Relation"
       case relSpec @Post @"author" of
         RelOne fk -> assertEqual "fk" "post_author" fk
         _         -> assertBool "expected RelOne" False
-  , test "load #author returns the post's author (belongs-to)" $
+  , test "load #author returns the post's author (belongs-to; post_id /= post_author)" $
       withTestDb $ \pool -> do
+        -- Decoys make the real post's PK (post_id=3) differ from its FK
+        -- (post_author=2), so this fails if the loader keys on the PK not the FK.
         nm <- withSession pool $ do
-          u <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
-          p <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)
+          d <- add (User { userId = 0, userName = "Decoy", userEmail = Nothing } :: User)  -- user_id 1
+          u <- add (User { userId = 0, userName = "Ada",   userEmail = Nothing } :: User)  -- user_id 2
+          _ <- add (Post { postId = 0, postAuthor = userId d, postTitle = "D1" } :: Post)  -- post_id 1
+          _ <- add (Post { postId = 0, postAuthor = userId d, postTitle = "D2" } :: Post)  -- post_id 2
+          p <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)  -- post_id 3, author 2
           a <- load #author p
           pure (userName a)
         assertEqual "author name" "Ada" nm
