@@ -28,7 +28,7 @@ import System.Directory (removeDirectoryRecursive)
 import System.Process (callProcess, readProcess)
 import Manifest.Core.Table (Col, PrimaryKey, Serial)
 import Manifest.Core.Meta (genericTableMeta)
-import Manifest.Core.Relation (Card(..), HasRelation(..), hasMany, hasOpt)
+import Manifest.Core.Relation (Card(..), HasRelation(..), belongsTo, hasMany, hasOpt)
 import Manifest.Entity (Entity (..), genericRowDecoder, genericRowEncode)
 import Manifest.Postgres (Pool, closePool, execText, newPool, withConnection)
 
@@ -89,6 +89,11 @@ instance HasRelation User "profile" where
   type Target      User "profile" = Maybe Profile
   type Cardinality User "profile" = 'Opt
   relSpec = hasOpt (Proxy @"profileUser")
+
+instance HasRelation Post "author" where
+  type Target      Post "author" = User
+  type Cardinality Post "author" = 'One
+  relSpec = belongsTo (Proxy @"postAuthor")
 
 -- | DDL for the example table. Column order matches UserT's field order; names
 -- are camelCase→snake_case with no prefix stripping (see plan §"Resolved open questions").

@@ -11,6 +11,7 @@ module Manifest.Core.Relation
   ( Card(..)
   , HasRelation(..)
   , RelSpec(..)
+  , belongsTo
   , hasMany
   , hasOpt
   ) where
@@ -39,6 +40,7 @@ class (Entity a, KnownSymbol name) => HasRelation a (name :: Symbol) where
 data RelSpec t where
   RelMany :: Entity c => ByteString -> RelSpec [c]
   RelOpt  :: Entity c => ByteString -> RelSpec (Maybe c)
+  RelOne  :: Entity c => ByteString -> RelSpec c   -- forward FK: target.pk = self.<fk>
 
 -- | @hasMany #childFk@ — a to-many relationship whose child rows are those
 -- with @child_fk = parent_pk@. The child type comes from the 'Target'.
@@ -49,3 +51,8 @@ hasMany _ = RelMany (camelToSnake (symbolVal (Proxy @fk)))
 -- @child_fk = parent_pk@.
 hasOpt :: forall c fk. (Entity c, KnownSymbol fk) => Proxy fk -> RelSpec (Maybe c)
 hasOpt _ = RelOpt (camelToSnake (symbolVal (Proxy @fk)))
+
+-- | @belongsTo #selfFk@ — a to-one whose target is the row with
+-- @target.pk = self.<selfFk>@ (a forward foreign key on the owning entity).
+belongsTo :: forall c fk. (Entity c, KnownSymbol fk) => Proxy fk -> RelSpec c
+belongsTo _ = RelOne (camelToSnake (symbolVal (Proxy @fk)))

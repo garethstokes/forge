@@ -22,6 +22,18 @@ tests = group "Relation"
       case relSpec @User @"profile" of
         RelOpt fk -> assertEqual "fk" "profile_user" fk
         _         -> assertBool "expected RelOpt" False
+  , test "relSpec for Post \"author\" is RelOne on post_author" $
+      case relSpec @Post @"author" of
+        RelOne fk -> assertEqual "fk" "post_author" fk
+        _         -> assertBool "expected RelOne" False
+  , test "load #author returns the post's author (belongs-to)" $
+      withTestDb $ \pool -> do
+        nm <- withSession pool $ do
+          u <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          p <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)
+          a <- load #author p
+          pure (userName a)
+        assertEqual "author name" "Ada" nm
   , test "load #posts returns the user's posts (managed)" $
       withTestDb $ \pool -> do
         titles <- withSession pool $ do
