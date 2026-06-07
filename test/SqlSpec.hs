@@ -48,16 +48,16 @@ tests = group "Query"
                             , Cond "user_id"   OpGt (Just (BC.pack "3")) ]))
   , test "renderJoined (reverse FK: User has-many Posts)" $
       assertEqual "join"
-        "SELECT posts.post_id, posts.post_author, posts.post_title \
-        \FROM users LEFT JOIN posts ON posts.post_author = users.user_id \
-        \WHERE users.user_id = $1"
+        "SELECT rel_t.post_id, rel_t.post_author, rel_t.post_title \
+        \FROM users AS self_t LEFT JOIN posts AS rel_t \
+        \ON rel_t.post_author = self_t.user_id WHERE self_t.user_id = $1"
         (renderJoined "users" "user_id" "posts"
            ["post_id", "post_author", "post_title"] "post_author" "user_id")
   , test "renderJoined (forward FK: Post belongs-to User)" $
       assertEqual "join"
-        "SELECT users.user_id, users.user_name, users.user_email \
-        \FROM posts LEFT JOIN users ON users.user_id = posts.post_author \
-        \WHERE posts.post_id = $1"
+        "SELECT rel_t.user_id, rel_t.user_name, rel_t.user_email \
+        \FROM posts AS self_t LEFT JOIN users AS rel_t \
+        \ON rel_t.user_id = self_t.post_author WHERE self_t.post_id = $1"
         (renderJoined "posts" "post_id" "users"
            ["user_id", "user_name", "user_email"] "user_id" "post_author")
   ]

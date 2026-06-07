@@ -69,9 +69,13 @@ renderDelete tm pkCol =
 -- | A single LEFT JOIN that selects only the CHILD/target columns (qualified),
 -- for loading one entity's relation. The owning row is pinned by its PK.
 --
---   SELECT <child>.<c1>, <child>.<c2>, ...
---   FROM <self> LEFT JOIN <child> ON <child>.<onChild> = <self>.<onSelf>
---   WHERE <self>.<selfPk> = $1
+--   SELECT rel_t.<c1>, rel_t.<c2>, ...
+--   FROM <self> AS self_t LEFT JOIN <child> AS rel_t
+--   ON rel_t.<onChild> = self_t.<onSelf>
+--   WHERE self_t.<selfPk> = $1
+--
+-- The two tables are aliased (@self_t@/@rel_t@) so a self-join
+-- (@employees AS self_t LEFT JOIN employees AS rel_t@) is unambiguous.
 renderJoined
   :: ByteString    -- ^ self (owning) table
   -> ByteString    -- ^ self PK column (the WHERE pin)
@@ -81,8 +85,8 @@ renderJoined
   -> ByteString    -- ^ join: self-side column
   -> ByteString
 renderJoined selfT selfPk childT childCols onChild onSelf =
-  "SELECT " <> bcIntercalate ", " [childT <> "." <> c | c <- childCols]
-    <> " FROM " <> selfT
-    <> " LEFT JOIN " <> childT
-    <> " ON " <> childT <> "." <> onChild <> " = " <> selfT <> "." <> onSelf
-    <> " WHERE " <> selfT <> "." <> selfPk <> " = $1"
+  "SELECT " <> bcIntercalate ", " ["rel_t." <> c | c <- childCols]
+    <> " FROM " <> selfT <> " AS self_t"
+    <> " LEFT JOIN " <> childT <> " AS rel_t"
+    <> " ON rel_t." <> onChild <> " = self_t." <> onSelf
+    <> " WHERE self_t." <> selfPk <> " = $1"
