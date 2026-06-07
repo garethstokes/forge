@@ -11,6 +11,7 @@ module Fixtures
   , profileDDL
   , tagsDDL
   , employeesDDL
+  , commentsDDL
   , UserT(..)
   , User
   , PostT(..)
@@ -21,6 +22,8 @@ module Fixtures
   , Tag
   , EmployeeT(..)
   , Employee
+  , CommentT(..)
+  , Comment
   ) where
 
 import Control.Exception (SomeException, finally, try)
@@ -138,6 +141,26 @@ instance HasRelation Employee "reports" where
   type Cardinality Employee "reports" = 'Many
   relSpec = hasMany (Proxy @"employeeManager")
 
+-- Comments: each belongs to a post via comment_post = posts.post_id (to-many from Post).
+data CommentT f = Comment
+  { commentId   :: Col f (PrimaryKey (Serial Int))
+  , commentPost :: Col f Int          -- FK → post_id
+  , commentBody :: Col f Text
+  } deriving Generic
+type Comment = CommentT Identity
+
+instance Entity Comment where
+  type PrimKey Comment = Int
+  tableMeta  = genericTableMeta @CommentT "comments"
+  rowDecoder = genericRowDecoder
+  rowEncode  = genericRowEncode
+  primKey    = commentId
+
+instance HasRelation Post "comments" where
+  type Target      Post "comments" = [Comment]
+  type Cardinality Post "comments" = 'Many
+  relSpec = hasMany (Proxy @"commentPost")
+
 instance HasRelation User "posts" where
   type Target      User "posts" = [Post]
   type Cardinality User "posts" = 'Many
@@ -190,6 +213,13 @@ employeesDDL =
   \, employee_manager BIGINT \
   \, employee_name    TEXT NOT NULL )"
 
+commentsDDL :: ByteString
+commentsDDL =
+  "CREATE TABLE comments \
+  \( comment_id   BIGSERIAL PRIMARY KEY \
+  \, comment_post BIGINT NOT NULL \
+  \, comment_body TEXT NOT NULL )"
+
 -- | Spin up an ephemeral, isolated Postgres for the action: initdb + pg_ctl on a
 -- private unix socket, create the schema, hand over a 2-connection pool, tear down.
 withTestDb :: (Pool -> IO a) -> IO a
@@ -207,5 +237,5 @@ withTestDb body = do
     _ <- readProcess "initdb" ["-D", dataDir, "-U", "postgres", "-A", "trust", "--no-sync"] ""
     callProcess "pg_ctl" ["start", "-D", dataDir, "-w", "-l", base ++ "/postgres.log", "-o", pgOpts]
     pool <- newPool conninfo 2
-    (do withConnection pool (\c -> mapM_ (\s -> execText c s []) [usersDDL, postsDDL, profileDDL, tagsDDL, employeesDDL])
+    (do withConnection pool (\c -> mapM_ (\s -> execText c s []) [usersDDL, postsDDL, profileDDL, tagsDDL, employeesDDL, commentsDDL])
         body pool) `finally` closePool pool

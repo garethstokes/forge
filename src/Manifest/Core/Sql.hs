@@ -1,5 +1,6 @@
 module Manifest.Core.Sql
-  ( renderConds
+  ( bcIntercalate
+  , renderConds
   , renderSelect
   , renderInsert
   , renderUpdate
