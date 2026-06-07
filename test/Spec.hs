@@ -10,6 +10,7 @@ import qualified FlushSpec
 import qualified CommandSpec
 import qualified EndToEndSpec
 import qualified RelationSpec
+import qualified EntSpec
 
 main :: IO ()
-main = runTests (CodecSpec.tests ++ PostgresSpec.tests ++ MetaSpec.tests ++ SqlSpec.tests ++ SessionSpec.tests ++ FlushSpec.tests ++ CommandSpec.tests ++ EndToEndSpec.tests ++ RelationSpec.tests)
+main = runTests (CodecSpec.tests ++ PostgresSpec.tests ++ MetaSpec.tests ++ SqlSpec.tests ++ SessionSpec.tests ++ FlushSpec.tests ++ CommandSpec.tests ++ EndToEndSpec.tests ++ RelationSpec.tests ++ EntSpec.tests)
