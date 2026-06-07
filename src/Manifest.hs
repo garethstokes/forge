@@ -25,6 +25,7 @@ module Manifest
   , Key(..)
     -- * Query DSL
   , Column(..)
+  , Rel(..)
   , Cond(..)
   , Assign(..)
   , (==.)
@@ -32,6 +33,18 @@ module Manifest
   , (>.)
   , (<.)
   , (=.)
+    -- * Relationships (A path)
+  , load
+  , HasRelation(..)
+  , Card(..)
+    -- * Relationships (D path)
+  , Ent(..)
+  , manage
+  , getEnt
+  , with
+  , selectin
+  , rel
+  , Member
     -- * Table metadata
   , Serial
   , PrimaryKey
@@ -43,6 +56,7 @@ module Manifest
 
 import Manifest.Core.Query
   ( Column(..)
+  , Rel(..)
   , Cond(..)
   , Assign(..)
   , (==.)
@@ -50,6 +64,22 @@ import Manifest.Core.Query
   , (>.)
   , (<.)
   , (=.)
+  )
+import Manifest.Core.Relation
+  ( HasRelation(..)
+  , Card(..)
+  )
+import Manifest.Relation
+  ( load
+  )
+import Manifest.Relation.Loaded
+  ( Ent(..)
+  , manage
+  , getEnt
+  , with
+  , selectin
+  , rel
+  , Member
   )
 import Manifest.Core.Table
   ( Serial
