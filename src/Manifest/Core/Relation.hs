@@ -12,6 +12,7 @@ module Manifest.Core.Relation
   , HasRelation(..)
   , RelSpec(..)
   , belongsTo
+  , cascade
   , hasMany
   , hasOpt
   ) where
@@ -20,8 +21,9 @@ import Data.ByteString (ByteString)
 import Data.Kind (Type)
 import Data.Proxy (Proxy(..))
 import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
-import Manifest.Core.Meta (camelToSnake)
-import Manifest.Entity (Entity)
+import Manifest.Core.Cascade (CascadeRule(..), OnDelete)
+import Manifest.Core.Meta (camelToSnake, tmTable)
+import Manifest.Entity (Entity, tableMeta)
 
 -- | Relationship cardinality (promoted to a kind via DataKinds).
 data Card = Many | One | Opt
@@ -56,3 +58,11 @@ hasOpt _ = RelOpt (camelToSnake (symbolVal (Proxy @fk)))
 -- @target.pk = self.<selfFk>@ (a forward foreign key on the owning entity).
 belongsTo :: forall c fk. (Entity c, KnownSymbol fk) => Proxy fk -> RelSpec c
 belongsTo _ = RelOne (camelToSnake (symbolVal (Proxy @fk)))
+
+-- | Declare a cascade rule for a reverse-FK relation: the @Child@ rows whose
+-- @selfFk@ column references this entity's PK get @policy@ on delete. Derives
+-- the child table from @Entity Child@ and the FK column name from the label.
+cascade :: forall c fk. (Entity c, KnownSymbol fk)
+        => Proxy c -> Proxy fk -> OnDelete -> CascadeRule
+cascade _ _ policy =
+  CascadeRule (tmTable (tableMeta @c)) (camelToSnake (symbolVal (Proxy @fk))) policy

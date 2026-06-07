@@ -24,6 +24,7 @@ import Data.Maybe (fromMaybe)
 import Type.Reflection (Typeable, SomeTypeRep, someTypeRep)
 import Data.Proxy (Proxy(..))
 import GHC.Generics
+import Manifest.Core.Cascade (CascadeRule)
 import Manifest.Core.Codec (FromField, RowDecoder, SqlParam, ToField(..), field)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..))
 
@@ -35,6 +36,10 @@ class Typeable a => Entity a where
   rowDecoder :: RowDecoder a
   rowEncode  :: a -> [SqlParam]
   primKey    :: a -> PrimKey a
+  -- | onDelete cascade rules applied when a value of this type is deleted.
+  -- Default: none. Override with the 'cascade' builder.
+  cascadeRules :: [CascadeRule]
+  cascadeRules = []
 
 -- | A row's identity: a newtype over its primary-key value.
 newtype Key a = Key { unKey :: PrimKey a }
