@@ -6,6 +6,8 @@ module MetaSpec (tests) where
 import Data.Functor.Identity (Identity)
 import Data.Text (Text)
 import Manifest.Core.Table (Base, Col, FieldMeta (..), PrimaryKey, Serial)
+import Manifest.Core.Meta (ColumnMeta (..), TableMeta (..), genericTableMeta)
+import Fixtures (UserT)
 import Harness
 
 -- Compile-time proofs that Base/Col reduce as intended (won't compile otherwise).
@@ -27,4 +29,13 @@ tests = group "Table"
       assertBool "Text is not serial"          (not (fieldIsSerial @Text))
       assertBool "Serial Int is serial"        (fieldIsSerial @(Serial Int))
       assertBool "Serial Int is not pk"        (not (fieldIsPK @(Serial Int)))
+  , test "genericTableMeta derives ordered columns with PK/serial flags from UserT" $ do
+      let tm = genericTableMeta @UserT "users"
+      assertEqual "table name" "users" (tmTable tm)
+      assertEqual "columns"
+        [ ColumnMeta "user_id"    True  True
+        , ColumnMeta "user_name"  False False
+        , ColumnMeta "user_email" False False
+        ]
+        (tmColumns tm)
   ]
