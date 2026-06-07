@@ -6,7 +6,7 @@ module RelE2ESpec (tests) where
 
 import qualified Data.ByteString.Char8 as BC
 import Data.List (isInfixOf, isPrefixOf)
-import Fixtures (Post, PostT (..), User, UserT (..), withTestDb)
+import Fixtures (Comment, CommentT (..), Employee, EmployeeT (..), Post, PostT (..), User, UserT (..), withTestDb)
 import Manifest
 import Harness
 
@@ -54,4 +54,16 @@ tests = group "RelE2E"
           withTransaction $ delete u            -- User's cascadeRules cascade-delete posts
           length <$> selectWhere ([] :: [Cond Post])
         assertEqual "posts cascaded" 0 n
+  , test "nested loading + nullable manager through the public API" $
+      withTestDb $ \pool -> do
+        (shape, topMgr) <- withSession pool $ do
+          u  <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          p1 <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)
+          _  <- add (Comment { commentId = 0, commentPost = postId p1, commentBody = "c1" } :: Comment)
+          nested <- loadNested (#posts ./ #comments) u
+          boss   <- add (Employee { employeeId = 0, employeeManager = Nothing, employeeName = "Boss" } :: Employee)
+          mgr    <- load #manager boss      -- Nothing
+          pure ([ (postTitle p, map commentBody cs) | (p, cs) <- nested ], fmap employeeName mgr)
+        assertEqual "nested" [("P1", ["c1"])] shape
+        assertEqual "top has no manager" Nothing topMgr
   ]

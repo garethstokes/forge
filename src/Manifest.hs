@@ -35,6 +35,9 @@ module Manifest
   , (=.)
     -- * Relationships (A path)
   , load
+  , loadNested
+  , (./)
+  , Path
   , HasRelation(..)
   , Card(..)
     -- * Cascades (onDelete)
@@ -81,6 +84,9 @@ import Manifest.Core.Cascade
   )
 import Manifest.Relation
   ( load
+  , loadNested
+  , (./)
+  , Path
   )
 import Manifest.Relation.Loaded
   ( Ent(..)
