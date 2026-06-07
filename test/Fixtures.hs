@@ -1,11 +1,30 @@
-module Fixtures (withTestDb, usersDDL) where
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
+
+module Fixtures (withTestDb, usersDDL, UserT(..), User) where
 
 import Control.Exception (SomeException, finally, try)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Data.Functor.Identity (Identity)
+import Data.Text (Text)
+import GHC.Generics (Generic)
 import System.Directory (removeDirectoryRecursive)
 import System.Process (callProcess, readProcess)
+import Manifest.Core.Table (Col, PrimaryKey, Serial)
 import Manifest.Postgres (Pool, closePool, execText, newPool, withConnection)
+
+-- | The example higher-kinded table. One declaration; @UserT Identity@ is the
+-- clean runtime value, @UserT Exposed@ carries markers for the deriver.
+data UserT f = User
+  { userId    :: Col f (PrimaryKey (Serial Int))
+  , userName  :: Col f Text
+  , userEmail :: Col f (Maybe Text)
+  } deriving Generic
+
+-- | The runtime row type: @userId :: Int, userName :: Text, userEmail :: Maybe Text@.
+type User = UserT Identity
 
 -- | DDL for the example table. Column order matches UserT's field order; names
 -- are camelCase→snake_case with no prefix stripping (see plan §"Resolved open questions").
