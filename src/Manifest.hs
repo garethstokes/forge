@@ -43,6 +43,7 @@ module Manifest
   , getEnt
   , with
   , selectin
+  , joined
   , rel
   , Member
     -- * Table metadata
@@ -78,6 +79,7 @@ import Manifest.Relation.Loaded
   , getEnt
   , with
   , selectin
+  , joined
   , rel
   , Member
   )
