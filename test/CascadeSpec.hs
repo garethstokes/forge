@@ -44,6 +44,27 @@ tests = group "Cascade"
         (res, remaining) <- withTestDbBody pool
         assertBool "delete was rejected" (either (const True) (const False) res)
         assertEqual "user still there" 1 remaining
+  , test "Restrict aborts BEFORE any Cascade mutates (no child partially deleted)" $
+      -- Flush the delete OUTSIDE withTransaction (autoflush at the next query) so
+      -- transaction rollback can NOT mask the in-flushDelete ordering: if a Cascade
+      -- ran before the Restrict check, the cascaded DELETE would auto-commit and the
+      -- posts would be gone even though the parent delete is rejected.
+      withTestDb $ \pool -> do
+        (res, posts, users) <- do
+          r <- (try :: IO a -> IO (Either SomeException a)) $ withSession pool $ do
+            u <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+            _ <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)
+            _ <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P2" } :: Post)
+            _ <- add (Tag  { tagId = 0, tagUser = userId u, tagLabel = "vip" } :: Tag)
+            delete u                                    -- queued; flushed by next query
+            _ <- selectWhere ([] :: [Cond User])        -- autoflush -> flushDelete (no txn)
+            pure ()
+          ps <- withSession pool (length <$> selectWhere ([] :: [Cond Post]))
+          us <- withSession pool (length <$> selectWhere ([] :: [Cond User]))
+          pure (r, ps, us)
+        assertBool "delete was rejected" (either (const True) (const False) res)
+        assertEqual "posts NOT cascaded (Restrict aborted before any mutation)" 2 posts
+        assertEqual "user survives" 1 users
   ]
   where
     withTestDbBody pool = do
