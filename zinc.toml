@@ -1,0 +1,40 @@
+[workspace]
+members = ["."]
+ghc = "9.6.5"
+
+[package]
+name = "manifest"
+version = "0.1.0.0"
+
+[build.lib]
+source-dirs = ["src"]
+ghc-options = [
+  "-Wall",
+  "-XOverloadedStrings", "-XScopedTypeVariables", "-XTypeApplications",
+  "-XLambdaCase", "-XTupleSections"
+]
+depends = [
+  "base", "bytestring", "containers", "stm", "text", "time", "transformers",
+  "postgresql-libpq"
+]
+
+[build.test.spec]
+source-dirs = ["test"]
+main = "Spec.hs"
+ghc-options = [
+  "-XOverloadedStrings", "-XScopedTypeVariables", "-XTypeApplications",
+  "-XLambdaCase",
+  "-lpq"   # link libpq into the test exe (libpq libdir is on LIBRARY_PATH via the flake)
+]
+depends = [
+  "base", "bytestring", "containers", "stm", "text", "time", "transformers",
+  "process", "directory", "filepath",
+  "postgresql-libpq", "manifest"
+]
+
+[dependencies]
+
+[dependencies.postgresql-libpq]
+rev = "240147a5225b4e19e20abb9d1103e66b1b55b5a2"   # v0.11.0.0
+repo = "https://github.com/haskellari/postgresql-libpq"
+flags = { use-pkg-config = true }                 # Simple pkgconfig provider (avoids build-type Configure)

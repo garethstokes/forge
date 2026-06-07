@@ -1,0 +1,14 @@
+[[locked]]
+name = "postgresql-libpq"
+repo = "https://github.com/haskellari/postgresql-libpq"
+rev = "a9122f8ecc11365a26a5489b3a2e1cdf64c0c661"
+sha256 = "sha256:c6207346aa8be1c0495bd3b62e5a3c1ba107bd7d09093b0fd12bd57eac5d4e2e"
+depends = ["postgresql-libpq-pkgconfig"]
+flags = { use-pkg-config = true }
+
+[[locked]]
+name = "postgresql-libpq-pkgconfig"
+repo = "https://github.com/haskellari/postgresql-libpq#postgresql-libpq-pkgconfig"
+rev = "a9122f8ecc11365a26a5489b3a2e1cdf64c0c661"
+sha256 = "sha256:c6207346aa8be1c0495bd3b62e5a3c1ba107bd7d09093b0fd12bd57eac5d4e2e"
+depends = []

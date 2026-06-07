@@ -1,0 +1,6 @@
+.zinc/
+.direnv/
+result
+result-*
+*.hi
+*.o
