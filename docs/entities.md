@@ -172,12 +172,11 @@ The same `#label` syntax names relations (`#posts :: Rel User "posts"`); see
 a `Rel`'s phantom is the relation-name `Symbol`. The label elaborates to whichever
 the context expects.
 
-> **Planned:** the design's full query DSL, `select $ from @User & where_ (…)` with
-> joins and aggregates, lives in Core Sub-project 4 and is **not built**. What works
-> today is single-table reads (`get`, `selectWhere [Cond …]`), the command path
-> (`update`, `deleteWhere`), and the condition operators (`==.`, `/=.`, `>.`, `<.`).
-> Relationship loading uses a `LEFT JOIN` internally (the `joined` strategy), but
-> that is a separate, working path, not the general-purpose Core join surface.
+> The query builder (joins, ordering, pagination, aggregates) is built; see
+> [Queries](queries.md). It binds columns to a table through handles
+> (`u ^. #userName`). Still Planned: outer joins, `HAVING`, subqueries, and CTEs.
+> Relationship loading uses a `LEFT JOIN` internally (the `joined` strategy); that is
+> a separate path.
 
 ## Adding a table
 

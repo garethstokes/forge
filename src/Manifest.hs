@@ -33,6 +33,30 @@ module Manifest
   , (>.)
   , (<.)
   , (=.)
+    -- * Query builder (table-handle)
+  , QueryM
+  , Handle
+  , Expr
+  , from
+  , innerJoin
+  , (^.)
+  , val
+  , (.==), (./=), (.>), (.<), (.&&)
+  , where_
+  , orderBy
+  , asc
+  , desc
+  , limit
+  , offset
+  , groupBy
+  , countRows
+  , sum_
+  , avg_
+  , min_
+  , max_
+  , OrderTerm
+  , Selectable (Result)
+  , runQuery
     -- * Relationships (A path)
   , load
   , loadNested
@@ -95,6 +119,11 @@ import Manifest.Core.Query
   , (<.)
   , (=.)
   )
+import Manifest.Query
+  ( QueryM, Handle, Expr, from, innerJoin, (^.), val
+  , (.==), (./=), (.>), (.<), (.&&), where_, orderBy, asc, desc
+  , limit, offset, groupBy, countRows, sum_, avg_, min_, max_
+  , OrderTerm, Selectable (Result), runQuery )
 import Manifest.Core.Relation
   ( HasRelation(..)
   , Card(..)

@@ -51,6 +51,8 @@ insert/update/delete flush, relationship loading (two strategies, `selectin` and
   `with` / `rel`), `selectin` vs `joined`, and one-level nesting.
 - [Cascades](cascades.md) and [Migrations](migrations.md): onDelete policies, and
   records as the schema source of truth.
+- [Queries](queries.md): the query builder, ordering, pagination, inner joins, and
+  aggregates.
 - [Tutorials](tutorials/index.md): literate Haskell pages that are also runnable
   tests in the suite.
 
@@ -63,13 +65,9 @@ the code that runs. Start with
 
 ## Status
 
-The Unit of Work, relationships, cascades, migrations, and the Template Haskell
-entity front-end are built and tested (the parts the reference pages document).
-One surface named in the design is **Planned**, not built:
-
-- **Joins and aggregates in the query Core.** The standalone query AST does not
-  yet expose joins or aggregates. Relationship loading does use a `LEFT JOIN`
-  internally; that is a separate, working path.
+The Unit of Work, relationships, cascades, migrations, the Template Haskell entity
+front-end, and the query builder (joins, ordering, pagination, and aggregates) are
+built and tested. See the reference pages, and [Queries](queries.md) for the builder.
 
 The `mkEntity` macro generates the record, `deriving Generic`, and the `Entity`
 instance from one block (see [Entities](entities.md)). It builds the core entity;
