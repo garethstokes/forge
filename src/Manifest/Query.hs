@@ -12,6 +12,7 @@ module Manifest.Query
   , Handle
   , Expr
   , from
+  , withCte, fromCte, CteRef
   , innerJoin
   , leftJoin, OptHandle, Projectable
   , (^.)
@@ -51,10 +52,13 @@ data QueryState = QueryState
   , qsGroup  :: [ByteString]
   , qsLimit  :: Maybe Int
   , qsOffset :: Maybe Int
+  , qsWith   :: [ByteString]     -- rendered "cteN AS (subsql)" fragments
+  , qsWithP  :: [SqlParam]       -- subquery params, in order (render before SELECT)
+  , qsCte    :: Int              -- next CTE index
   }
 
 emptyState :: QueryState
-emptyState = QueryState 0 "" [] [] [] [] [] Nothing Nothing
+emptyState = QueryState 0 "" [] [] [] [] [] Nothing Nothing [] [] 0
 
 newtype Handle e = Handle ByteString
 data    Expr t   = Expr ByteString [SqlParam]
@@ -100,6 +104,33 @@ from = QueryM $ do
   let i  = qsAlias st
       al = "t" <> BC.pack (show i)
   put st { qsAlias = i + 1, qsFrom = tmTable (tableMeta @e) <> " AS " <> al }
+  pure (Handle al)
+
+-- | A reference to a registered CTE producing rows of entity @e@.
+newtype CteRef e = CteRef ByteString
+
+-- | Register a subquery (which selects a whole entity) as a non-recursive CTE,
+-- returning a reference. Use 'fromCte' to read from it.
+withCte :: forall e. Entity e => QueryM (Handle e) -> QueryM (CteRef e)
+withCte sub = QueryM $ do
+  st <- get
+  let i              = qsCte st
+      name           = "cte" <> BC.pack (show i)
+      (subRaw, subP) = renderRaw sub
+  put st { qsCte   = i + 1
+         , qsWith  = qsWith st ++ [name <> " AS (" <> subRaw <> ")"]
+         , qsWithP = qsWithP st ++ subP
+         }
+  pure (CteRef name)
+
+-- | Read from a CTE as if it were a table. The CTE's columns are @e@'s columns
+-- (the subquery selected a whole entity), so the returned 'Handle' projects them.
+fromCte :: forall e. CteRef e -> QueryM (Handle e)
+fromCte (CteRef name) = QueryM $ do
+  st <- get
+  let i  = qsAlias st
+      al = "t" <> BC.pack (show i)
+  put st { qsAlias = i + 1, qsFrom = name <> " AS " <> al }
   pure (Handle al)
 
 -- | INNER JOIN table @e@. The function receives the new handle and returns the
@@ -226,17 +257,24 @@ numberPlaceholders = go (1 :: Int)
         Nothing        -> pre
         Just (_, more) -> pre <> "$" <> BC.pack (show n) <> go (n + 1) more
 
-renderQueryM :: Selectable s => QueryM s -> (ByteString, [SqlParam])
-renderQueryM qm =
+-- | Assemble SQL with '?' placeholders (un-numbered) and params in textual order.
+renderRaw :: Selectable s => QueryM s -> (ByteString, [SqlParam])
+renderRaw qm =
   let (sel, st) = runQueryM qm
+      withTxt  = if null (qsWith st) then ""
+                 else "WITH " <> bcIntercalate ", " (qsWith st) <> " "
       whereTxt = if null (qsWhere st) then "" else " WHERE " <> bcIntercalate " AND " (qsWhere st)
       groupTxt = if null (qsGroup st) then "" else " GROUP BY " <> bcIntercalate ", " (qsGroup st)
       orderTxt = if null (qsOrder st) then "" else " ORDER BY " <> bcIntercalate ", " (qsOrder st)
-      limTxt = maybe "" (\n -> " LIMIT "  <> BC.pack (show n)) (qsLimit st)
-      offTxt = maybe "" (\n -> " OFFSET " <> BC.pack (show n)) (qsOffset st)
-      raw = "SELECT " <> selCols sel <> " FROM " <> qsFrom st
+      limTxt   = maybe "" (\n -> " LIMIT "  <> BC.pack (show n)) (qsLimit st)
+      offTxt   = maybe "" (\n -> " OFFSET " <> BC.pack (show n)) (qsOffset st)
+      raw = withTxt <> "SELECT " <> selCols sel <> " FROM " <> qsFrom st
               <> whereTxt <> groupTxt <> orderTxt <> limTxt <> offTxt
-  in (numberPlaceholders raw, selParams sel ++ qsFromP st ++ qsWhereP st)
+      params = qsWithP st ++ selParams sel ++ qsFromP st ++ qsWhereP st
+  in (raw, params)
+
+renderQueryM :: Selectable s => QueryM s -> (ByteString, [SqlParam])
+renderQueryM qm = let (raw, ps) = renderRaw qm in (numberPlaceholders raw, ps)
 
 decodeRowAs :: RowDecoder x -> [SqlParam] -> Db x
 decodeRowAs dec row =

@@ -127,4 +127,37 @@ tests = group "QueryBuilder"
         assertEqual "Ada has no post, Bob has B1"
           [("Ada", Nothing), ("Bob", Just "B1")]
           [ (userName u, fmap postTitle mp) | (u, mp) <- rows ]
+  , test "withCte + fromCte render a WITH clause and select from it" $
+      assertEqual "sql"
+        ( "WITH cte0 AS (SELECT t0.user_id, t0.user_name, t0.user_email FROM users AS t0"
+       <> " WHERE t0.user_name = $1) SELECT t0.user_id, t0.user_name, t0.user_email FROM cte0 AS t0" )
+        (fst (renderQueryM (do c <- withCte (do u <- from @User
+                                                where_ (u ^. #userName .== val ("Bob" :: String))
+                                                pure u)
+                               h <- fromCte c
+                               pure h)))
+  , test "CTE param numbers before the outer WHERE param" $
+      assertEqual "params + numbering"
+        ( "WITH cte0 AS (SELECT t0.user_id, t0.user_name, t0.user_email FROM users AS t0"
+       <> " WHERE t0.user_name > $1) SELECT t0.user_id, t0.user_name, t0.user_email FROM cte0 AS t0"
+       <> " WHERE t0.user_name < $2"
+        , [Just "A", Just "C"] )
+        (renderQueryM (do c <- withCte (do u <- from @User
+                                           where_ (u ^. #userName .> val ("A" :: String))
+                                           pure u)
+                          h <- fromCte c
+                          where_ (h ^. #userName .< val ("C" :: String))
+                          pure h))
+  , test "fromCte over a filtered CTE returns the filtered rows" $
+      withTestDb $ \pool -> do
+        names <- withSession pool $ do
+          mapM_ (\n -> add (User { userId = 0, userName = n, userEmail = Nothing } :: User))
+                ["Ada","Bob","Cay"]
+          runQuery (do c <- withCte (do u <- from @User
+                                        where_ (u ^. #userName .> val ("Ada" :: String))
+                                        pure u)
+                       h <- fromCte c
+                       orderBy [asc (h ^. #userName)]
+                       pure h)
+        assertEqual "names > Ada" ["Bob","Cay"] (map userName names)
   ]
