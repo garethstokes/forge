@@ -88,8 +88,8 @@ rollback on exception); the flush runs on commit.
 
 ```haskell
 withSession pool $ do
-  -- add: a Transient value -> Pending; flush emits INSERT ... RETURNING pk and
-  -- hands the value back with its assigned primary key.
+  -- add: a Transient value -> Persistent; issues INSERT ... RETURNING pk eagerly
+  -- and hands the value back with its assigned primary key.
   u <- add (User { userId = 0, userName = "Ada", userEmail = Just "ada@x.io" } :: User)
 
   -- get: load by primary key; the row becomes Persistent and a snapshot is taken.
