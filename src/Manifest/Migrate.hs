@@ -10,8 +10,15 @@ module Manifest.Migrate
   , tableExists
   , TableDiff(..)
   , diffTable
+  , MigrationPlan(..)
+  , migrate
+  , migrateUp
+  , runMigrate
   ) where
 
+import Control.Exception (throwIO)
+import Control.Monad (forM_, unless, void)
+import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy)
@@ -19,7 +26,10 @@ import qualified Data.ByteString.Char8 as BC
 import Manifest.Core.Codec (SqlParam)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), sqlTypeDDL, sqlTypeLive)
 import Manifest.Entity (Entity, tableMeta)
-import Manifest.Session (Db, execDb)
+import Manifest.Error (DbError(OtherError), DbException(..))
+import Manifest.Postgres (Pool)
+import Manifest.Session (Db, execDb, withSession, withTransaction)
+import System.IO (hPutStrLn, stderr)
 
 -- | A table the migration engine manages: its name + its columns (with SQL types).
 data ManagedTable = ManagedTable
@@ -93,3 +103,61 @@ diffTable mt@(ManagedTable name cols) = do
             , sqlTypeLive (cmSqlType c) /= lt
             ]
       pure $ if null missing && null destructive then UpToDate else AlterTable name missing destructive
+
+-- | The pending plan across all managed tables: additive DDL to apply, and
+-- destructive issues that need human review (NEVER auto-applied).
+data MigrationPlan = MigrationPlan
+  { planAdditive    :: [ByteString]   -- CREATE TABLE / ADD COLUMN statements, in order
+  , planDestructive :: [String]       -- "table.column type mismatch …" — review only
+  } deriving (Eq, Show)
+
+-- | Compute the additive plan + destructive issues for the managed tables.
+migrate :: [ManagedTable] -> Db MigrationPlan
+migrate tables = do
+  diffs <- mapM diffTable tables
+  let additive = concatMap toAdditive (zip tables diffs)
+      destr    = concatMap toDestr diffs
+  pure (MigrationPlan additive destr)
+  where
+    toAdditive (mt, CreateTable _)       = [renderCreateTable mt]
+    toAdditive (_,  AlterTable t adds _) = [renderAddColumn t c | c <- adds]
+    toAdditive (_,  UpToDate)            = []
+    toDestr (AlterTable _ _ d) = d
+    toDestr _                  = []
+
+-- | Bootstrap the tracking table.
+ensureSchemaMigrations :: Db ()
+ensureSchemaMigrations = void $ execDb
+  "CREATE TABLE IF NOT EXISTS schema_migrations \
+  \( id BIGSERIAL PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), statements BIGINT NOT NULL )" []
+
+-- | Apply the additive plan in a transaction; record a row in schema_migrations.
+-- Destructive diffs ABORT (never silently applied) — fix them by hand / a future
+-- destructive migration. Returns the plan that was (attempted to be) applied.
+migrateUp :: [ManagedTable] -> Db MigrationPlan
+migrateUp tables = do
+  ensureSchemaMigrations
+  plan <- migrate tables
+  unless (null (planDestructive plan)) $
+    liftIO (throwIO (DbException (OtherError
+      ("migrate up aborted: destructive changes need review: " <> show (planDestructive plan)))))
+  unless (null (planAdditive plan)) $
+    withTransaction $ do
+      forM_ (planAdditive plan) $ \stmt -> void (execDb stmt [])
+      void $ execDb "INSERT INTO schema_migrations (statements) VALUES ($1)"
+                    [Just (BC.pack (show (length (planAdditive plan))))]
+  pure plan
+
+-- | The CLI dispatcher: @diff@ prints the plan; @up@ applies it. @args@ is argv.
+runMigrate :: [ManagedTable] -> Pool -> [String] -> IO ()
+runMigrate tables pool args = case args of
+  ["diff"] -> do
+    plan <- withSession pool (do ensureSchemaMigrations; migrate tables)
+    mapM_ BC.putStrLn (planAdditive plan)
+    unless (null (planDestructive plan)) $ do
+      hPutStrLn stderr "-- destructive (review, not applied):"
+      mapM_ (hPutStrLn stderr . ("--   " <>)) (planDestructive plan)
+  ["up"] -> do
+    plan <- withSession pool (migrateUp tables)
+    hPutStrLn stderr ("applied " <> show (length (planAdditive plan)) <> " statement(s)")
+  _ -> hPutStrLn stderr "usage: manifest migrate (diff|up)"
