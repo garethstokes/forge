@@ -96,4 +96,15 @@ tests = group "QueryBuilder"
           _ <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P2" } :: Post)
           runQuery (do p <- from @Post; pure (sum_ (p ^. #postAuthor)))
         assertEqual "sum of author ids" [Just (2 :: Int)] total
+  , test "a val in the selection numbers before the WHERE param" $
+      let (sql, params) =
+            renderQueryM (do u <- from @User
+                             where_ (u ^. #userName .== val ("Bob" :: String))
+                             pure (u, val (5 :: Int)))
+      in do
+        assertEqual "select val is $1, where val is $2"
+          "SELECT t0.user_id, t0.user_name, t0.user_email, $1 FROM users AS t0 WHERE t0.user_name = $2"
+          sql
+        assertEqual "params in SQL order: selection then where"
+          [Just "5", Just "Bob"] params
   ]

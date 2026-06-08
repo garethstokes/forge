@@ -144,6 +144,11 @@ class Selectable s where
   type Result s
   selCols :: s -> ByteString
   selDec  :: s -> RowDecoder (Result s)
+  -- | Parameters carried by the selection itself (e.g. a 'val' inside a selected
+  -- expression). The SELECT clause renders first, so these are numbered before the
+  -- FROM/JOIN and WHERE params. Most selections are param-free (the default).
+  selParams :: s -> [SqlParam]
+  selParams _ = []
 
 instance Entity e => Selectable (Handle e) where
   type Result (Handle e) = e
@@ -155,11 +160,13 @@ instance FromField t => Selectable (Expr t) where
   type Result (Expr t) = t
   selCols (Expr t _) = t
   selDec  _ = field
+  selParams (Expr _ p) = p
 
 instance (Selectable a, Selectable b) => Selectable (a, b) where
   type Result (a, b) = (Result a, Result b)
   selCols (a, b) = selCols a <> ", " <> selCols b
   selDec  (a, b) = (,) <$> selDec a <*> selDec b
+  selParams (a, b) = selParams a ++ selParams b
 
 runQueryM :: QueryM a -> (a, QueryState)
 runQueryM (QueryM m) = runState m emptyState
@@ -182,7 +189,7 @@ renderQueryM qm =
       offTxt = maybe "" (\n -> " OFFSET " <> BC.pack (show n)) (qsOffset st)
       raw = "SELECT " <> selCols sel <> " FROM " <> qsFrom st
               <> whereTxt <> groupTxt <> orderTxt <> limTxt <> offTxt
-  in (numberPlaceholders raw, qsFromP st ++ qsWhereP st)
+  in (numberPlaceholders raw, selParams sel ++ qsFromP st ++ qsWhereP st)
 
 decodeRowAs :: RowDecoder x -> [SqlParam] -> Db x
 decodeRowAs dec row =
