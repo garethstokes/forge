@@ -12,6 +12,7 @@ module Manifest.Query
   , Handle
   , Expr
   , from
+  , innerJoin
   , (^.)
   , val
   , (.==), (./=), (.>), (.<), (.&&)
@@ -88,6 +89,22 @@ from = QueryM $ do
   put st { qsAlias = i + 1, qsFrom = tmTable (tableMeta @e) <> " AS " <> al }
   pure (Handle al)
 
+-- | INNER JOIN table @e@. The function receives the new handle and returns the
+-- ON condition; handles bound earlier in the do-block are captured by the closure.
+innerJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (Handle e)
+innerJoin onf = QueryM $ do
+  st <- get
+  let i  = qsAlias st
+      al = "t" <> BC.pack (show i)
+      h  = Handle al
+      Expr onTxt onPs = onf h
+  put st { qsAlias  = i + 1
+         , qsFrom   = qsFrom st <> " INNER JOIN " <> tmTable (tableMeta @e)
+                        <> " AS " <> al <> " ON " <> onTxt
+         , qsFromP  = qsFromP st ++ onPs
+         }
+  pure h
+
 where_ :: Expr Bool -> QueryM ()
 where_ (Expr t ps) = QueryM $ modify' $ \st ->
   st { qsWhere = qsWhere st ++ [t], qsWhereP = qsWhereP st ++ ps }
@@ -117,6 +134,11 @@ instance Entity e => Selectable (Handle e) where
   selCols (Handle al) =
     bcIntercalate ", " [ al <> "." <> cmName c | c <- tmColumns (tableMeta @e) ]
   selDec _ = rowDecoder @e
+
+instance (Selectable a, Selectable b) => Selectable (a, b) where
+  type Result (a, b) = (Result a, Result b)
+  selCols (a, b) = selCols a <> ", " <> selCols b
+  selDec  (a, b) = (,) <$> selDec a <*> selDec b
 
 runQueryM :: QueryM a -> (a, QueryState)
 runQueryM (QueryM m) = runState m emptyState

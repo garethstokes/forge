@@ -60,4 +60,22 @@ tests = group "QueryBuilder"
                              pure u)
           pure (map userName us)
         assertEqual "first two by name" ["Ada","Bob"] names
+  , test "innerJoin renders an aliased INNER JOIN selecting both tables" $
+      assertEqual "sql"
+        ( "SELECT t0.user_id, t0.user_name, t0.user_email, t1.post_id, t1.post_author, t1.post_title"
+       <> " FROM users AS t0 INNER JOIN posts AS t1 ON t0.user_id = t1.post_author" )
+        (fst (renderQueryM (do u <- from @User
+                               p <- innerJoin @Post (\p -> u ^. #userId .== p ^. #postAuthor)
+                               pure (u, p))))
+  , test "innerJoin returns (User, Post) pairs" $
+      withTestDb $ \pool -> do
+        pairs <- withSession pool $ do
+          u <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          _ <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P1" } :: Post)
+          _ <- add (Post { postId = 0, postAuthor = userId u, postTitle = "P2" } :: Post)
+          rows <- runQuery (do usr <- from @User
+                               pst <- innerJoin @Post (\pst -> usr ^. #userId .== pst ^. #postAuthor)
+                               pure (usr, pst))
+          pure [ (userName a, postTitle b) | (a, b) <- rows ]
+        assertEqual "pairs" [("Ada","P1"),("Ada","P2")] pairs
   ]
