@@ -25,6 +25,7 @@ depends = [
   "time",
   "transformers",
   "postgresql-libpq",
+  "template-haskell",
 ]
 
 [build.test.spec]
