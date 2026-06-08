@@ -9,8 +9,10 @@ An *entity* is a table, expressed as one Haskell record. That single declaration
 serves three jobs: the clean runtime value you read and edit, the typed column
 references the query layer uses, and — via `deriving Generic` plus an `Entity`
 instance — the table metadata, the row codec, and the generic CRUD the session
-drives. No Template Haskell, no per-table boilerplate beyond the record and the
-instance.
+drives. You can write that record-plus-instance by hand, or generate it from one
+block with the `mkEntity` Template Haskell macro (see
+[Deriving entities with Template Haskell](#deriving-entities-with-template-haskell)
+below) — either way there is no per-table boilerplate beyond declaring the fields.
 
 This page covers the shape of that record (Higher-Kinded Data), how `Col` erases
 its markers in `Identity` context, what the `Entity` instance derives, and how
@@ -230,3 +232,37 @@ compiles and runs against Postgres, so the entities on the page are the entities
 that round-trip. Start with [Getting started](getting-started.md) for a first
 `add` / `get` / `save`, then [Unit of Work](unit-of-work.md) for how editing a
 value becomes a minimal `UPDATE`.
+
+## Deriving entities with Template Haskell
+
+Writing the HKD record, the `type` synonym, and the `Entity` instance by hand is
+mechanical. The `mkEntity` macro generates all three from one block:
+
+```haskell
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
+
+import Manifest (mkEntity, field)
+import Manifest.Core.Table (PrimaryKey, Serial)
+import Data.Text (Text)
+
+mkEntity "Widget" "widgets"
+  [ field "id"   [t| PrimaryKey (Serial Int) |]
+  , field "name" [t| Text |]
+  , field "size" [t| Maybe Int |]
+  ]
+```
+
+This is exactly equivalent to writing `data WidgetT f = Widget { widgetId :: …, … }
+deriving Generic`, `type Widget = WidgetT Identity`, and the `Entity Widget`
+instance by hand. Field selectors are the lowercased entity name plus the
+capitalised short name (`widgetId`, `widgetName`), and column names are their
+`snake_case` form (`widget_id`). Exactly one field must be a `PrimaryKey`; it
+becomes `primKey`.
+
+> **Scope:** `mkEntity` generates the core entity only. Relationships
+> (`HasRelation` instances) and `onDelete` cascade rules are declared separately,
+> the same way as for a hand-written entity.

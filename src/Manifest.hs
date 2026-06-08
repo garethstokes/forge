@@ -60,6 +60,9 @@ module Manifest
   , genericTableMeta
   , genericRowDecoder
   , genericRowEncode
+    -- * Template Haskell front-end
+  , mkEntity
+  , field
     -- * Connection pool
   , newPool
   , closePool
@@ -130,6 +133,10 @@ import Manifest.Entity
   , Key(..)
   , genericRowDecoder
   , genericRowEncode
+  )
+import Manifest.Derive.TH
+  ( mkEntity
+  , field
   )
 import Manifest.Postgres
   ( newPool
