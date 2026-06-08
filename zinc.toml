@@ -52,6 +52,12 @@ depends = [
   "manifest",
 ]
 
+[build.exe.manifest-migrate]
+source-dirs = ["app"]
+main = "Main.hs"
+ghc-options = ["-lpq"]
+depends = ["base", "bytestring", "text", "manifest"]
+
 [dependencies]
 
 [dependencies.postgresql-libpq]

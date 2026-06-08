@@ -68,4 +68,10 @@ tests = group "Migrate"
         res <- (try :: IO a -> IO (Either SomeException a))
                  (withSession pool (migrateUp [managed (Proxy @User)]))
         assertBool "aborted" (either (const True) (const False) res)
+  , test "end-to-end: migrate empty DB up, then everything is UpToDate" $
+      withEmptyDb $ \pool -> do
+        let tbls = [managed (Proxy @User)]
+        _ <- withSession pool (migrateUp tbls)
+        d <- withSession pool (diffTable (managed (Proxy @User)))
+        assertEqual "up to date after migrate up" UpToDate d
   ]

@@ -57,6 +57,25 @@ module Manifest
   , Serial
   , PrimaryKey
   , Col
+  , genericTableMeta
+  , genericRowDecoder
+  , genericRowEncode
+    -- * Connection pool
+  , newPool
+  , closePool
+    -- * Migrations
+  , ManagedTable(..)
+  , managed
+  , migrate
+  , migrateUp
+  , runMigrate
+  , MigrationPlan(..)
+  , TableDiff(..)
+  , diffTable
+  , renderCreateTable
+  , renderAddColumn
+  , liveColumns
+  , tableExists
     -- * Errors
   , DbError(..)
   , DbException(..)
@@ -103,9 +122,32 @@ import Manifest.Core.Table
   , PrimaryKey
   , Col
   )
+import Manifest.Core.Meta
+  ( genericTableMeta
+  )
 import Manifest.Entity
   ( Entity(..)
   , Key(..)
+  , genericRowDecoder
+  , genericRowEncode
+  )
+import Manifest.Postgres
+  ( newPool
+  , closePool
+  )
+import Manifest.Migrate
+  ( ManagedTable(..)
+  , managed
+  , migrate
+  , migrateUp
+  , runMigrate
+  , MigrationPlan(..)
+  , TableDiff(..)
+  , diffTable
+  , renderCreateTable
+  , renderAddColumn
+  , liveColumns
+  , tableExists
   )
 import Manifest.Error
   ( DbError(..)
