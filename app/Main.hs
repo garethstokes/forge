@@ -21,8 +21,12 @@ import Crucible.LLM (Message (..), Role (..), complete)
 import Crucible.LLM.Anthropic
   ( defaultAnthropicConfig
   , recordLLMAnthropic
+  , runLLMAnthropic
   , runLLMCassette
   )
+import Crucible.Function (llmFn, call)
+import Crucible.Codec (str)
+import qualified Crucible.Json.Decode as D
 
 prompt :: [Message]
 prompt =
@@ -46,3 +50,9 @@ main = do
       if live == replayed
         then TIO.putStrLn "OK: cassette replay matches live"
         else TIO.putStrLn "MISMATCH" >> exitFailure
+      let classify = llmFn "classify" str str
+            (\s -> "Reply with one word — positive, negative, or neutral — for: " <> s)
+      typed <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
+      case typed of
+        Right o  -> TIO.putStrLn ("typed fn: " <> o)
+        Left err -> TIO.putStrLn ("typed fn decode error: " <> T.pack (D.message err))
