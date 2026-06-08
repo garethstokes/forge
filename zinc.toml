@@ -28,13 +28,14 @@ depends = [
 ]
 
 [build.test.spec]
-source-dirs = ["test"]
+source-dirs = ["test", "docs/tutorials"]
 main = "Spec.hs"
 ghc-options = [
   "-XOverloadedStrings",
   "-XScopedTypeVariables",
   "-XTypeApplications",
   "-XLambdaCase",
+  "-pgmL", "markdown-unlit",  # run literate .lhs tutorials through markdown-unlit (```haskell blocks); .hs unaffected
   "-lpq",  # link libpq into the test exe (libpq libdir is on LIBRARY_PATH via the flake)
 ]
 depends = [

@@ -15,6 +15,7 @@
               pkgs.git
               pkgs.haskellPackages.alex
               pkgs.haskellPackages.happy
+              pkgs.haskellPackages.markdown-unlit  # -pgmL: compiles ```haskell blocks of .lhs tutorials
               pkgs.pkg-config
               pkgs.postgresql      # libpq headers + initdb/postgres/pg_ctl
               pkgs.zlib
