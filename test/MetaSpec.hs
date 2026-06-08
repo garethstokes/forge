@@ -6,7 +6,7 @@ module MetaSpec (tests) where
 import Data.Functor.Identity (Identity)
 import Data.Text (Text)
 import Manifest.Core.Table (Base, Col, FieldMeta (..), PrimaryKey, Serial)
-import Manifest.Core.Meta (ColumnMeta (..), TableMeta (..), genericTableMeta)
+import Manifest.Core.Meta (ColumnMeta (..), SqlType (..), TableMeta (..), genericTableMeta)
 import Fixtures (User, UserT (..))
 import Manifest.Entity (Entity (..), pkParam)
 import Manifest.Core.Codec (decodeRow)
@@ -36,9 +36,9 @@ tests = group "Table"
       let tm = genericTableMeta @UserT "users"
       assertEqual "table name" "users" (tmTable tm)
       assertEqual "columns"
-        [ ColumnMeta "user_id"    True  True
-        , ColumnMeta "user_name"  False False
-        , ColumnMeta "user_email" False False
+        [ ColumnMeta "user_id"    True  True  SqlBigSerial False
+        , ColumnMeta "user_name"  False False SqlText      False
+        , ColumnMeta "user_email" False False SqlText      True
         ]
         (tmColumns tm)
   , test "rowEncode encodes a User to its column vector in table order" $ do

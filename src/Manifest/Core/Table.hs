@@ -11,11 +11,14 @@ module Manifest.Core.Table
   , Exposed
   , Base
   , Col
+  , ScalarMeta(..)
   , FieldMeta(..)
   ) where
 
 import Data.Functor.Identity (Identity)
 import Data.Kind (Type)
+import Data.Text (Text)
+import Manifest.Core.SqlType (SqlType(..))
 
 -- | Marker: an auto-incrementing serial column whose runtime type is @a@.
 data Serial a
@@ -39,19 +42,40 @@ type family Col (f :: Type -> Type) (a :: Type) :: Type where
   Col Identity a = Base a
   Col Exposed  a = Exposed a
 
--- | Reflect a field's PK/serial flags from its marker structure (used by the deriver).
+-- | Map a base scalar to its column type + nullability.
+class ScalarMeta a where
+  scalarType     :: SqlType
+  scalarNullable :: Bool
+
+instance ScalarMeta Int  where { scalarType = SqlBigInt; scalarNullable = False }
+instance ScalarMeta Text where { scalarType = SqlText;   scalarNullable = False }
+instance ScalarMeta Bool where { scalarType = SqlBool;   scalarNullable = False }
+instance ScalarMeta a => ScalarMeta (Maybe a) where
+  scalarType     = scalarType @a
+  scalarNullable = True
+
+-- | Reflect a field's PK/serial flags + SQL type/nullability from its marker
+-- structure (used by the deriver).
 class FieldMeta a where
   fieldIsPK     :: Bool
   fieldIsSerial :: Bool
+  fieldSqlType  :: SqlType
+  fieldNullable :: Bool
 
 instance FieldMeta a => FieldMeta (PrimaryKey a) where
   fieldIsPK     = True
   fieldIsSerial = fieldIsSerial @a
+  fieldSqlType  = fieldSqlType @a
+  fieldNullable = False                      -- a PK is NOT NULL
 
 instance FieldMeta (Serial a) where
   fieldIsPK     = False
   fieldIsSerial = True
+  fieldSqlType  = SqlBigSerial
+  fieldNullable = False
 
-instance {-# OVERLAPPABLE #-} FieldMeta a where
+instance {-# OVERLAPPABLE #-} ScalarMeta a => FieldMeta a where
   fieldIsPK     = False
   fieldIsSerial = False
+  fieldSqlType  = scalarType @a
+  fieldNullable = scalarNullable @a

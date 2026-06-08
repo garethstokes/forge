@@ -10,6 +10,9 @@
 module Manifest.Core.Meta
   ( ColumnMeta(..)
   , TableMeta(..)
+  , SqlType(..)
+  , sqlTypeDDL
+  , sqlTypeLive
   , camelToSnake
   , pkColumn
   , GColumns(..)
@@ -23,6 +26,7 @@ import Data.Functor.Identity (Identity)
 import Data.Kind (Type)
 import Data.List (find)
 import GHC.Generics
+import Manifest.Core.SqlType (SqlType(..), sqlTypeDDL, sqlTypeLive)
 import Manifest.Core.Table (Exposed, FieldMeta(..))
 
 -- | One column's persistence metadata.
@@ -30,6 +34,8 @@ data ColumnMeta = ColumnMeta
   { cmName     :: ByteString
   , cmIsPK     :: Bool
   , cmIsSerial :: Bool
+  , cmSqlType  :: SqlType
+  , cmNullable :: Bool
   } deriving (Eq, Show)
 
 -- | A table's metadata. Phantom @a@ ties it to the runtime row type.
@@ -68,6 +74,8 @@ instance (Selector m, FieldMeta t) => GColumns (S1 m (Rec0 (Exposed t))) where
         { cmName     = camelToSnake (selName (undefined :: S1 m (Rec0 (Exposed t)) p))
         , cmIsPK     = fieldIsPK @t
         , cmIsSerial = fieldIsSerial @t
+        , cmSqlType  = fieldSqlType  @t
+        , cmNullable = fieldNullable @t
         }
     ]
 
