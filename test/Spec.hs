@@ -376,4 +376,11 @@ main = runChecks
          (_ : Message User u : _) ->
            T.isInfixOf "Classify the sentiment of: hi" u && T.isInfixOf "\"hi\"" u
          _ -> False)
+  , check "llmFn: retries on a bad reply then succeeds"
+      (Right "positive")
+      (runPureEff (runLLMScripted ["not json", "\"positive\""] (call classifyFn "I love it")))
+  , check "llmFn: exhausts retries -> Left"
+      True
+      (either (const True) (const False)
+        (runPureEff (runLLMScripted ["bad", "bad"] (call (withRetries 1 classifyFn) "x"))))
   ]

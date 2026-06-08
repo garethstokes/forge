@@ -55,9 +55,26 @@ fnPrompt fn input =
   , Message User (fnInstruction fn input <> "\n\nInput:\n" <> encode (codecEncode (fnInput fn) input))
   ]
 
--- | Run a typed function: build the prompt, call the model once, and decode the
--- reply against the output codec. (Retry-on-failure is added in a later task.)
+-- | Run a typed function: build the prompt, call the model, and decode the reply
+-- against the output codec. On a decode failure, re-ask with the parse error fed
+-- back (up to 'fnRetries' times); on exhaustion return 'Left'.
 call :: (LLM :> es) => LlmFn i o -> i -> Eff es (Either D.Error o)
-call fn input = do
-  raw <- complete (fnPrompt fn input)
-  pure (decodeLLM (fnOutput fn) raw)
+call fn input = loop (fnRetries fn) (fnPrompt fn input)
+  where
+    loop n msgs = do
+      raw <- complete msgs
+      case decodeLLM (fnOutput fn) raw of
+        Right o -> pure (Right o)
+        Left err
+          | n <= 0    -> pure (Left err)
+          | otherwise ->
+              loop (n - 1)
+                ( msgs
+                    ++ [ Message Assistant raw
+                       , Message User
+                           ( "Your reply did not parse: "
+                               <> T.pack (D.message err)
+                               <> ". Respond with valid JSON only."
+                           )
+                       ]
+                )
