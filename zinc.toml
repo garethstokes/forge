@@ -46,6 +46,7 @@ repo = "https://github.com/haskell-effectful/effectful.git"
 # effectful re-exports the `Effectful` module from effectful-core; the origin
 # package must be visible to the consumer for the reexport to resolve, so depend
 # on it explicitly (workaround pending a zinc reexport-origin-visibility fix).
+
 [dependencies.effectful-core]
 tag = "*"
 repo = "https://github.com/haskell-effectful/effectful.git#effectful-core"
@@ -57,3 +58,12 @@ repo = "https://github.com/basvandijk/monad-control.git"
 [dependencies.strict-mutable-base]
 rev = "beea8212f10c9b003e86b208a78de43de8f0442c"
 repo = "https://github.com/arybczak/strict-mutable.git#strict-mutable-base"
+
+[dependencies.hpke]
+vendored = "0.1.0"
+
+[dependencies.mlkem]
+vendored = "0.2.1.0"
+
+[dependencies.http-client-tls]
+repo = "https://github.com/snoyberg/http-client"

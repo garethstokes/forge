@@ -10,7 +10,12 @@ version = "0.1.0"
 
 [build.lib]
 source-dirs = ["src"]
-depends = ["base", "text", "mtl", "effectful", "effectful-core"]
+depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls"]
+
+[build.exe.crucible-anthropic]
+source-dirs = ["app"]
+main = "Main.hs"
+depends = ["base", "text", "crucible", "effectful", "effectful-core"]
 
 [build.test.spec]
 source-dirs = ["test"]

@@ -145,11 +145,16 @@ main = runChecks
   , check "parse empties"(Right (JObject []))                                     (parse "{}")
   -- Task 4: encode checks
   , check "encode compact"
-      "{\"a\":1.0,\"b\":[true,null]}"
+      "{\"a\":1,\"b\":[true,null]}"
       (encode (JObject [("a", JNumber 1), ("b", JArray [JBool True, JNull])]))
   , check "encode->parse round-trips"
       (Right (JObject [("x", JString "hi")]))
       (parse (encode (JObject [("x", JString "hi")])))
+  -- whole numbers render as integers (Anthropic max_tokens rejects 1024.0); a
+  -- fractional value keeps its point, and the value still round-trips.
+  , check "encode integer (no .0)"     "1024"            (encode (JNumber 1024))
+  , check "encode fractional"          "1.5"             (encode (JNumber 1.5))
+  , check "integer encode round-trips" (Right (JNumber 1024)) (parse (encode (JNumber 1024)))
   -- Task 5: decode checks
   , check "decode field"
       (Right ("Brisbane", 27.5))
