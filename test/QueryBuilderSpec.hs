@@ -107,4 +107,24 @@ tests = group "QueryBuilder"
           sql
         assertEqual "params in SQL order: selection then where"
           [Just "5", Just "Bob"] params
+  , test "leftJoin renders a LEFT JOIN selecting both tables" $
+      assertEqual "sql"
+        ( "SELECT t0.user_id, t0.user_name, t0.user_email, t1.post_id, t1.post_author, t1.post_title"
+       <> " FROM users AS t0 LEFT JOIN posts AS t1 ON t1.post_author = t0.user_id" )
+        (fst (renderQueryM (do u <- from @User
+                               mp <- leftJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                               pure (u, mp))))
+  , test "leftJoin yields Nothing for unmatched rows, Just for matched" $
+      withTestDb $ \pool -> do
+        rows <- withSession pool $ do
+          _   <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)  -- no posts
+          bob <- add (User { userId = 0, userName = "Bob", userEmail = Nothing } :: User)
+          _   <- add (Post { postId = 0, postAuthor = userId bob, postTitle = "B1" } :: Post)
+          runQuery (do u  <- from @User
+                       mp <- leftJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                       orderBy [asc (u ^. #userName)]
+                       pure (u, mp))
+        assertEqual "Ada has no post, Bob has B1"
+          [("Ada", Nothing), ("Bob", Just "B1")]
+          [ (userName u, fmap postTitle mp) | (u, mp) <- rows ]
   ]

@@ -13,6 +13,7 @@ module Manifest.Query
   , Expr
   , from
   , innerJoin
+  , leftJoin, OptHandle, Projectable
   , (^.)
   , val
   , (.==), (./=), (.>), (.<), (.&&)
@@ -29,12 +30,12 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (State, get, modify', put, runState)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
-import Manifest.Core.Codec (FromField, RowDecoder, SqlParam, ToField (..), decodeRow, field)
+import Manifest.Core.Codec (FromField, RowDecoder (..), SqlParam, ToField (..), decodeRow, field)
 import Manifest.Core.Meta (ColumnMeta (..), TableMeta (..))
 import Manifest.Core.Query (Column (..))
 import Manifest.Core.Sql (bcIntercalate)
-import Manifest.Entity (Entity (..))
-import Manifest.Error (DbError (..), DbException (..))
+import Manifest.Entity (Entity (..), pkIndex)
+import Manifest.Error (DecodeError (..), DbError (..), DbException (..))
 import Manifest.Session (Db, execDb)
 
 newtype QueryM a = QueryM (State QueryState a)
@@ -58,12 +59,23 @@ emptyState = QueryState 0 "" [] [] [] [] [] Nothing Nothing
 newtype Handle e = Handle ByteString
 data    Expr t   = Expr ByteString [SqlParam]
 
--- | Project a column from a handle. The handle's entity @e@ unifies with the
--- (otherwise table-polymorphic) label column @Column e t@, binding the label to
--- the entity; the result is qualified by the handle's alias.
-(^.) :: Handle e -> Column e t -> Expr t
-Handle al ^. Column c = Expr (al <> "." <> c) []
+-- | A handle to the right side of a LEFT JOIN: its columns may be NULL, so it
+-- selects as @Maybe e@.
+newtype OptHandle e = OptHandle ByteString
+
+-- | Things you can project a column from (a 'Handle', or a left-joined 'OptHandle').
+-- The handle's entity @e@ unifies with the (otherwise table-polymorphic) label
+-- column @Column e t@, binding the label to the entity; the result is qualified
+-- by the handle's alias.
+class Projectable h where
+  (^.) :: h e -> Column e t -> Expr t
 infixl 8 ^.
+
+instance Projectable Handle where
+  Handle al ^. Column c = Expr (al <> "." <> c) []
+
+instance Projectable OptHandle where
+  OptHandle al ^. Column c = Expr (al <> "." <> c) []
 
 val :: ToField t => t -> Expr t
 val x = Expr "?" [toField x]
@@ -105,6 +117,21 @@ innerJoin onf = QueryM $ do
          , qsFromP  = qsFromP st ++ onPs
          }
   pure h
+
+-- | LEFT JOIN table @e@. Like 'innerJoin', but selects as @Maybe e@: rows with no
+-- match decode to 'Nothing'. The ON closure gets a plain 'Handle e'.
+leftJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (OptHandle e)
+leftJoin onf = QueryM $ do
+  st <- get
+  let i  = qsAlias st
+      al = "t" <> BC.pack (show i)
+      Expr onTxt onPs = onf (Handle al)
+  put st { qsAlias  = i + 1
+         , qsFrom   = qsFrom st <> " LEFT JOIN " <> tmTable (tableMeta @e)
+                        <> " AS " <> al <> " ON " <> onTxt
+         , qsFromP  = qsFromP st ++ onPs
+         }
+  pure (OptHandle al)
 
 where_ :: Expr Bool -> QueryM ()
 where_ (Expr t ps) = QueryM $ modify' $ \st ->
@@ -155,6 +182,26 @@ instance Entity e => Selectable (Handle e) where
   selCols (Handle al) =
     bcIntercalate ", " [ al <> "." <> cmName c | c <- tmColumns (tableMeta @e) ]
   selDec _ = rowDecoder @e
+
+-- | Decode @e@'s columns, but yield 'Nothing' when the LEFT JOIN had no match
+-- (its primary-key column is NULL). Consumes @e@'s columns either way.
+optDecoder :: forall e. Entity e => RowDecoder (Maybe e)
+optDecoder = RowDecoder $ \cols ->
+  let n             = length (tmColumns (tableMeta @e))
+      (these, rest) = splitAt n cols
+  in if length these < n
+       then Left (DecodeError "optDecoder: ran out of columns")
+       else if these !! pkIndex @e == Nothing
+              then Right (Nothing, rest)
+              else case decodeRow (rowDecoder @e) these of
+                     Right v  -> Right (Just v, rest)
+                     Left err -> Left err
+
+instance Entity e => Selectable (OptHandle e) where
+  type Result (OptHandle e) = Maybe e
+  selCols (OptHandle al) =
+    bcIntercalate ", " [ al <> "." <> cmName c | c <- tmColumns (tableMeta @e) ]
+  selDec _ = optDecoder @e
 
 instance FromField t => Selectable (Expr t) where
   type Result (Expr t) = t
