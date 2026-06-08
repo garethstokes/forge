@@ -1,51 +1,34 @@
-# zinc.toml — workspace manifest (root of the crucible git repo)
-#
-# DISCOVERED SCHEMA (empirical, from `zinc new` + zinc self-hosting source):
-#
-# WORKSPACE FILE (this file, repo root):
-#   [workspace]
-#     members = [<relative-path>, ...]   # list of package dirs; "." = root itself
-#     ghc = "<version>"                  # e.g. "9.6.5" — toolchain pin
-#   [dependencies]
-#     <name> = { rev = "<sha>", repo = "<url>[#<subpath>]" }
-#     # boot libs (base, Cabal, etc.) need no entry — GHC ships them
-#     # optional: ghc-options = [...]
-#   [registry]
-#     <name> = "<url>"                   # shorthand for repo URL (no rev override)
-#
-# MEMBER FILE (packages/crucible/zinc.toml):
-#   [package]
-#     name = "<name>"
-#     version = "<semver>"
-#   [build.lib]                          # LIBRARY target (unnamed, only one allowed)
-#     source-dirs = ["src"]              # dirs auto-discovered for modules (no hiding)
-#     depends = [<boot-or-dep-names>]    # package names from [dependencies] or GHC boot
-#   [build.exe.<name>]                   # EXECUTABLE target (named)
-#     source-dirs = ["app"]
-#     main = "Main.hs"
-#     ghc-options = [...]                # optional
-#     depends = [...]
-#   [build.test.<name>]                  # TEST target (named)
-#     source-dirs = ["test"]
-#     main = "Spec.hs"
-#     depends = [...]
-#
-# NOTE: `zinc new` scaffolds an exe target by default.
-# crucible is a library — member zinc.toml uses [build.lib] instead.
+# zinc.toml — crucible workspace + package in one file (single member, the repo
+# root). [workspace], [package], [build.*], and [dependencies]/[registry]
+# coexist here (member ".") — a flat single-package layout: src/, app/, test/.
 
 [workspace]
-members = ["packages/crucible"]
+members = ["."]
 ghc = "9.6.5"
+
+[package]
+name = "crucible"
+version = "0.1.0"
+
+[build.lib]
+source-dirs = ["src"]
+depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls"]
+
+[build.exe.crucible-anthropic]
+source-dirs = ["app"]
+main = "Main.hs"
+depends = ["base", "text", "crucible", "effectful", "effectful-core"]
+
+[build.test.spec]
+source-dirs = ["test"]
+main = "Spec.hs"
+depends = ["base", "text", "mtl", "crucible", "effectful", "effectful-core"]
 
 [dependencies]
 
 [dependencies.effectful]
 tag = "*"
 repo = "https://github.com/haskell-effectful/effectful.git"
-
-# effectful re-exports the `Effectful` module from effectful-core; the origin
-# package must be visible to the consumer for the reexport to resolve, so depend
-# on it explicitly (workaround pending a zinc reexport-origin-visibility fix).
 
 [dependencies.effectful-core]
 tag = "*"
