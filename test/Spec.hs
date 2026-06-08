@@ -361,7 +361,7 @@ main = runChecks
   , check "llmFn: single bad reply -> Left"
       True
       (either (const True) (const False)
-        (runPureEff (runLLMScripted ["not json"] (call classifyFn "x"))))
+        (runPureEff (runLLMScripted ["not json"] (call (withRetries 0 classifyFn) "x"))))
   , check "llmFn: fnName is stored" "classify" (fnName classifyFn)
   , check "fnPrompt: system message carries the output schema"
       True

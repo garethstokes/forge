@@ -28,7 +28,7 @@ tool-calling — those are separate directions.
 
 ## API
 
-New module `Crucible.Function` (re-exported from `Crucible`):
+New module `Crucible.Function` (imported directly, like the other `Crucible.*` modules — the umbrella `Crucible` module exports nothing):
 
 ```haskell
 data LlmFn i o = LlmFn
