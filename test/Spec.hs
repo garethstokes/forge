@@ -9,13 +9,15 @@ import Harness (check, runChecks)
 import Crucible.Json.Value (Value(..))
 import Crucible.Json.Parse (parse)
 import Crucible.Json.Encode (encode)
+import Crucible.Function (LlmFn, llmFn, withRetries, fnPrompt, call, fnOutput, fnName)
 import Data.Text (Text)
 import qualified Data.Text
+import qualified Data.Text as T
 import Crucible.Json.Decode as D
 import Crucible.Json.Decode (Error(..), Crumb(..))
 import Crucible.Schema (Schema(..), renderSchema)
 import qualified Crucible.Codec as C
-import Crucible.Codec (Codec(..))
+import Crucible.Codec (Codec(..), str, codecSchema)
 import GHC.Generics (Generic)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.SAP (stripToJson, decodeLLM)
@@ -95,6 +97,10 @@ answerCodec = C.object (Answer <$> C.field "answer" (\(Answer t) -> t) C.str)
 
 decCodec :: Codec (Decision ToolCall Answer)
 decCodec = decisionCodec toolCallCodec answerCodec
+
+-- M11 Task 1: Crucible.Function fixtures
+classifyFn :: LlmFn T.Text T.Text
+classifyFn = llmFn "classify" str str (\s -> "Classify the sentiment of: " <> s)
 
 -- M7 Task 2: agent test helpers — the effectful agent runs over the LLM + Tools
 -- effects, dispatching tools by name from a toolbox via the Tools effect.
@@ -348,4 +354,26 @@ main = runChecks
       "sunny in Brisbane"
       (demoAgent [ "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}"
                  , "{\"answer\":\"sunny in Brisbane\"}" ])
+  -- M11 Task 1: Crucible.Function — LlmFn + single-shot call + fnPrompt
+  , check "llmFn: happy path decodes the reply"
+      (Right "positive")
+      (runPureEff (runLLMScripted ["\"positive\""] (call classifyFn "I love it")))
+  , check "llmFn: single bad reply -> Left"
+      True
+      (either (const True) (const False)
+        (runPureEff (runLLMScripted ["not json"] (call classifyFn "x"))))
+  , check "llmFn: fnName is stored" "classify" (fnName classifyFn)
+  , check "fnPrompt: system message carries the output schema"
+      True
+      (case fnPrompt classifyFn "hi" of
+         (Message System s : _) ->
+           T.isPrefixOf "Respond ONLY with JSON" s
+             && T.isInfixOf (renderSchema (codecSchema (fnOutput classifyFn))) s
+         _ -> False)
+  , check "fnPrompt: user message carries instruction + rendered input"
+      True
+      (case fnPrompt classifyFn "hi" of
+         (_ : Message User u : _) ->
+           T.isInfixOf "Classify the sentiment of: hi" u && T.isInfixOf "\"hi\"" u
+         _ -> False)
   ]
