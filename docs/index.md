@@ -53,6 +53,8 @@ insert/update/delete flush, relationship loading (two strategies, `selectin` and
   records as the schema source of truth.
 - [Queries](queries.md): the query builder, ordering, pagination, inner joins, and
   aggregates.
+- [Row-level security](rls.md): declarative tenant policies, declarative migration,
+  and `withRlsContext` for the per-request context.
 - [Tutorials](tutorials/index.md): literate Haskell pages that are also runnable
   tests in the suite.
 

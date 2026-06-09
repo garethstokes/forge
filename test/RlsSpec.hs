@@ -86,4 +86,25 @@ tests = group "Rls"
         _    <- migrateUp [managed (Proxy @Secret)]
         plan <- migrate  [managed (Proxy @Secret)]
         liftIO $ assertEqual "idempotent RLS plan" [] (planRls plan)
+  , test "RLS hides other tenants' rows within a Manifest session" $
+      withEmptyDb $ \pool -> withSession pool $ do
+        execDb_ secretsDDL
+        -- seed both tenants (as superuser, before the role switch)
+        _ <- add (Secret { secretId = 0, secretOrg = "acme",   secretBody = "a1" } :: Secret)
+        _ <- add (Secret { secretId = 0, secretOrg = "globex", secretBody = "g1" } :: Secret)
+        _ <- migrateUp [managed (Proxy @Secret)]            -- enable RLS + create policy
+        -- a non-superuser role so RLS actually applies
+        execDb_ "DROP ROLE IF EXISTS rls_tenant"
+        execDb_ "CREATE ROLE rls_tenant NOLOGIN"
+        execDb_ "GRANT SELECT ON secrets TO rls_tenant"
+        let visibleFor org = withTransaction $ do
+              execDb_ "SET LOCAL ROLE rls_tenant"
+              withRlsContext [("app.current_org", org)] $ do
+                rows <- execDb "SELECT secret_body FROM secrets ORDER BY secret_body" []
+                pure [ b | [Just b] <- rows ]
+        acme   <- visibleFor "acme"
+        globex <- visibleFor "globex"
+        liftIO $ do
+          assertEqual "acme sees only its row"   ["a1"] acme
+          assertEqual "globex sees only its row" ["g1"] globex
   ]
