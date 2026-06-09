@@ -31,7 +31,7 @@ import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn)
 import Crucible.Chat
-  (Chat, converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
+  (converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 
 -- Sample types for M3 tests
 

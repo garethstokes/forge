@@ -10,7 +10,7 @@
 -- | Native tool-calling as a block-based conversation capability, separate from
 -- the text-only 'Crucible.LLM' path. A 'Chat' interpreter turns a conversation
 -- (content blocks) plus tool specs into the assistant's 'Turn' (text + any
--- tool_use requests); 'runToolAgent' (later task) drives the request/run/result loop.
+-- tool_use requests); 'runToolAgent' drives the request/run/result loop.
 module Crucible.Chat
   ( ToolUseId
   , ToolUse (..)
