@@ -30,6 +30,8 @@ import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable)
+import Crucible.Chat
+  (Chat, converse, runChatScripted, Turn(..), ChatMsg(..), Block(..), ToolUse(..))
 
 -- Sample types for M3 tests
 
@@ -408,4 +410,9 @@ main = runChecks
   , check "isRetryable: 401"        False (isRetryable (AnthropicStatusError 401 ""))
   , check "isRetryable: 404"        False (isRetryable (AnthropicStatusError 404 ""))
   , check "isRetryable: no-content" False (isRetryable (AnthropicNoContent ""))
+  -- M12 Task 2: Chat effect + block types + scripted interpreter
+  , check "runChatScripted: pops the canned turn"
+      (Turn "hello" [])
+      (runPureEff (runChatScripted [Turn "hello" []]
+        (converse [] [ChatMsg User [TextBlock "hi"]])))
   ]
