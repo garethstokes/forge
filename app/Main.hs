@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | M8 smoke executable. Proves the effectful substrate talks to the real
@@ -25,8 +26,10 @@ import Crucible.LLM.Anthropic
   , runLLMAnthropic
   , runLLMCassette
   )
-import Crucible.Function (llmFn, call)
+import GHC.Generics (Generic)
+import Crucible.Function (LlmFn, llmFn, call)
 import Crucible.Codec (str)
+import Crucible.Codec.Generic (HasCodec (codec))
 import qualified Crucible.Json.Decode as D
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -36,6 +39,9 @@ import Crucible.Json.Value (Value (JString))
 import Crucible.Emit (runEmitIO)
 import Crucible.LLM.Anthropic.Stream (runLLMAnthropicStream, runChatAnthropicStream)
 import System.IO (hFlush, stdout)
+
+data Sentiment = Sentiment { sentLabel :: T.Text } deriving (Show, Generic)
+instance HasCodec Sentiment   -- default genericCodec
 
 prompt :: [Message]
 prompt =
@@ -59,11 +65,12 @@ main = do
       if live == replayed
         then TIO.putStrLn "OK: cassette replay matches live"
         else TIO.putStrLn "MISMATCH" >> exitFailure
-      let classify = llmFn "classify" str str
-            (\s -> "Reply with one word — positive, negative, or neutral — for: " <> s)
+      let classify :: LlmFn T.Text Sentiment
+          classify = llmFn "classify" str codec
+            (\s -> "Classify the sentiment as positive, negative, or neutral for: " <> s)
       typed <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
       case typed of
-        Right o  -> TIO.putStrLn ("typed fn: " <> o)
+        Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
         Left err -> TIO.putStrLn ("typed fn decode error: " <> T.pack (D.message err))
       let weatherTool = Tl.Tool "get_weather" (SObj [("city", SStr)])
             (\_ -> pure (JString "It is 26C and sunny."))
