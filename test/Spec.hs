@@ -36,7 +36,9 @@ import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.Text.Encoding as TE
-import Crucible.LLM.Anthropic.Stream (splitFrames, StreamEvent(..), parseEvent)
+import Crucible.LLM.Anthropic.Stream
+  (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc)
+import Data.List (foldl')
 
 -- Sample types for M3 tests
 
@@ -543,4 +545,17 @@ main = runChecks
       (EvBlockStop 1)
       (parseEvent (sseFrame (JObject
         [ ("type", JString "content_block_stop"), ("index", JNumber 1) ])))
+  -- A#3: stepAcc fold
+  , check "stepAcc: text stream assembles text + usage"
+      ("Hello", Usage 25 2)
+      (let a = foldl' stepAcc emptyAcc [EvUsageIn 25, EvText "Hel", EvText "lo", EvUsageOut 2]
+       in (saText a, saUsage a))
+  , check "stepAcc: tool stream reassembles tool_use args"
+      ([ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])], Usage 40 12)
+      (let a = foldl' stepAcc emptyAcc
+                 [ EvUsageIn 40
+                 , EvToolStart 0 "tu_1" "get_weather"
+                 , EvToolJson 0 "{\"city\":", EvToolJson 0 "\"Brisbane\"}"
+                 , EvBlockStop 0, EvUsageOut 12 ]
+       in (saTools a, saUsage a))
   ]

@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | SSE streaming for the live Anthropic path: a pure event core
@@ -6,6 +7,10 @@ module Crucible.LLM.Anthropic.Stream
   ( splitFrames
   , StreamEvent (..)
   , parseEvent
+  , StreamAcc (..)
+  , PartialTool (..)
+  , emptyAcc
+  , stepAcc
   ) where
 
 import Data.ByteString (ByteString)
@@ -16,10 +21,12 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 
 import Data.Maybe (fromMaybe)
+import Crucible.Chat (ToolUse (..))
 import Crucible.Json.Decode (Decoder, at, decodeValue, field, int, string)
 import Crucible.Json.Parse (parse)
-import Crucible.Json.Value (Value)
+import Crucible.Json.Value (Value (JObject))
 import Crucible.Tool (ToolName)
+import Crucible.Usage (Usage (..))
 
 -- | Split complete SSE frames (blank-line @\\n\\n@-delimited) off the buffer,
 -- returning the frames and the unconsumed remainder. With no blank line yet the
@@ -86,3 +93,40 @@ classify v = case dv (field "type" string) of
     idx = fromMaybe 0 (dv (field "index" int))
     dv :: Decoder a -> Maybe a
     dv d = either (const Nothing) Just (decodeValue d v)
+
+-- | An in-progress tool_use block: id, name, and accumulated argument JSON.
+data PartialTool = PartialTool ToolUseId ToolName Text
+  deriving (Eq, Show)
+
+-- | Running accumulation across one streamed response.
+data StreamAcc = StreamAcc
+  { saText    :: Text                 -- concatenated text deltas
+  , saPartial :: [(Int, PartialTool)] -- in-progress tool_use blocks, by index
+  , saTools   :: [ToolUse]            -- completed tool_uses, in completion order
+  , saUsage   :: Usage
+  }
+  deriving (Eq, Show)
+
+emptyAcc :: StreamAcc
+emptyAcc = StreamAcc "" [] [] mempty
+
+-- | Fold one event into the accumulator (and the IO loop 'emit's text deltas).
+stepAcc :: StreamAcc -> StreamEvent -> StreamAcc
+stepAcc acc = \case
+  EvText t            -> acc { saText = saText acc <> t }
+  EvToolStart i tid n -> acc { saPartial = (i, PartialTool tid n "") : saPartial acc }
+  EvToolJson i frag   -> acc { saPartial = map (bump i frag) (saPartial acc) }
+  EvBlockStop i       -> case lookup i (saPartial acc) of
+    Nothing                       -> acc
+    Just (PartialTool tid n js) -> acc
+      { saPartial = filter ((/= i) . fst) (saPartial acc)
+      , saTools   = saTools acc ++ [ToolUse tid n (parseArgs js)]
+      }
+  EvUsageIn n  -> acc { saUsage = (saUsage acc) { usInputTokens  = n } }
+  EvUsageOut n -> acc { saUsage = (saUsage acc) { usOutputTokens = n } }
+  EvOther      -> acc
+  where
+    bump i frag (j, pt@(PartialTool tid n js))
+      | i == j    = (j, PartialTool tid n (js <> frag))
+      | otherwise = (j, pt)
+    parseArgs js = either (const (JObject [])) id (parse js)
