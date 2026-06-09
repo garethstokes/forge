@@ -36,8 +36,10 @@ import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.Text.Encoding as TE
+import Control.Concurrent (threadDelay)
+import Control.Exception (try)
 import Crucible.LLM.Anthropic.Stream
-  (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc)
+  (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
 
 -- Sample types for M3 tests
@@ -609,4 +611,14 @@ main = runChecks
                  , JObject [("type", JString "content_block_stop"), ("index", JNumber 0)]
                  , JObject [("type", JString "message_delta"), ("delta", JObject []), ("usage", JObject [("output_tokens", JNumber 12)])] ])
        in (saText a, saTools a, saUsage a))
+  -- crucible-mgs: timedRead
+  , do r <- timedRead 200000 (pure (BC.pack "hi"))
+       check "timedRead: fast read passes through" (BC.pack "hi") r
+  , do r <- try (timedRead 1000 (threadDelay 50000 >> pure (BC.pack "x")))
+            :: IO (Either AnthropicError BC.ByteString)
+       check "timedRead: idle timeout fires"
+         (Just 1000)
+         (case r of Left (AnthropicStreamTimeout n) -> Just (n :: Int); _ -> Nothing)
+  , do r <- timedRead 0 (pure (BC.pack "x"))
+       check "timedRead: non-positive disables the guard" (BC.pack "x") r
   ]

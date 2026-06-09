@@ -16,6 +16,7 @@ module Crucible.LLM.Anthropic.Stream
   , PartialTool (..)
   , emptyAcc
   , stepAcc
+  , timedRead
   , runLLMAnthropicStream
   , runChatAnthropicStream
   ) where
@@ -36,6 +37,7 @@ import Effectful.Exception (bracket)
 import Effectful.State.Static.Local (modify, runState)
 
 import Control.Exception (handle, throwIO)
+import System.Timeout (timeout)
 import Network.HTTP.Client
   ( BodyReader, HttpException, Manager, Response
   , brRead, requestHeaders, responseBody
@@ -187,14 +189,22 @@ drainBody br = go []
       chunk <- brRead br
       if BS.null chunk then pure (BS.concat (reverse acc)) else go (chunk : acc)
 
+-- | Read one chunk, bounding the wait by @micros@. A non-positive @micros@
+-- disables the guard. On timeout, throw 'AnthropicStreamTimeout'.
+timedRead :: Int -> IO ByteString -> IO ByteString
+timedRead micros readChunk
+  | micros <= 0 = readChunk
+  | otherwise   =
+      timeout micros readChunk >>= maybe (throwIO (AnthropicStreamTimeout micros)) pure
+
 -- | Stream an open response: read chunks, split frames, 'emit' text deltas live,
 -- and fold the whole stream into a 'StreamAcc'.
-streamLoop :: (IOE :> es, Emit :> es) => Response BodyReader -> Eff es StreamAcc
-streamLoop resp = go emptyAcc BS.empty
+streamLoop :: (IOE :> es, Emit :> es) => Int -> Response BodyReader -> Eff es StreamAcc
+streamLoop idleMicros resp = go emptyAcc BS.empty
   where
     br = responseBody resp
     go acc buf = do
-      chunk <- liftIO (brRead br)
+      chunk <- liftIO (timedRead idleMicros (brRead br))
       if BS.null chunk
         then if BS.all isWs buf then pure acc else emitFrames acc [buf]
         else do
@@ -223,7 +233,7 @@ runLLMAnthropicStream cfg action = do
         acc <- bracket
                  (liftIO (openStream cfg mgr (addStream (requestJson cfg msgs))))
                  (liftIO . responseClose)
-                 streamLoop
+                 (streamLoop (acStreamIdleSecs cfg * 1000000))
         modify (<> saUsage acc)
         pure (saText acc))
     action
@@ -241,7 +251,7 @@ runChatAnthropicStream cfg action = do
         acc <- bracket
                  (liftIO (openStream cfg mgr (addStream (chatRequestJson cfg specs msgs))))
                  (liftIO . responseClose)
-                 streamLoop
+                 (streamLoop (acStreamIdleSecs cfg * 1000000))
         modify (<> saUsage acc)
         pure (Turn (saText acc) (saTools acc)))
     action
