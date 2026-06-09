@@ -29,6 +29,8 @@ module Crucible.LLM.Anthropic
   , parseTurn
   , parseUsage
   , runChatAnthropic
+  , runLLMAnthropicUsage
+  , runChatAnthropicUsage
   ) where
 
 import Data.List (partition)
@@ -41,7 +43,7 @@ import qualified Data.ByteString.Lazy as LBS
 
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret)
-import Effectful.State.Static.Local (evalState, get, put)
+import Effectful.State.Static.Local (evalState, get, modify, put, runState)
 
 import Control.Exception (Exception, handle, throwIO)
 import Control.Monad.Catch (Handler (Handler))
@@ -170,6 +172,15 @@ runLLMCassette path action = do
         []       -> pure "")
     action
 
+-- | One chat round-trip, with usage: POST the conversation + tool specs, parse
+-- the assistant 'Turn' (throwing 'AnthropicNoContent' if malformed), and read
+-- the usage from the same body.
+converseOnce :: AnthropicConfig -> Manager -> [(ToolName, Schema)] -> [ChatMsg] -> IO (Turn, Usage)
+converseOnce cfg mgr specs msgs = do
+  body <- postMessages cfg mgr (chatRequestJson cfg specs msgs)
+  turn <- either (\_ -> throwIO (AnthropicNoContent body)) pure (parseTurn body)
+  pure (turn, parseUsage body)
+
 -- | Interpret 'Chat' against the live Anthropic Messages API with native
 -- tool-calling. One shared TLS manager is created up front; each 'Converse'
 -- POSTs the conversation + tool specs and parses the assistant's 'Turn'.
@@ -178,9 +189,33 @@ runChatAnthropic :: (IOE :> es) => AnthropicConfig -> Eff (Chat : es) a -> Eff e
 runChatAnthropic cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   interpret
-    (\_ (Converse specs msgs) -> liftIO $ do
-        body <- postMessages cfg mgr (chatRequestJson cfg specs msgs)
-        either (\_ -> throwIO (AnthropicNoContent body)) pure (parseTurn body))
+    (\_ (Converse specs msgs) -> liftIO (fst <$> converseOnce cfg mgr specs msgs))
+    action
+
+-- | Like 'runLLMAnthropic', but sum the token usage across every 'Complete' and
+-- return the total alongside the result. Additive opt-in; the underlying API
+-- calls are identical to 'runLLMAnthropic'.
+runLLMAnthropicUsage :: (IOE :> es) => AnthropicConfig -> Eff (LLM : es) a -> Eff es (a, Usage)
+runLLMAnthropicUsage cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  reinterpret (runState mempty)
+    (\_ (Complete msgs) -> do
+        (text, u) <- liftIO (anthropicCompleteUsage cfg mgr msgs)
+        modify (<> u)
+        pure text)
+    action
+
+-- | Like 'runChatAnthropic', but sum the token usage across every 'Converse'
+-- (e.g. each step of a 'runToolAgent' loop) and return the total alongside the
+-- result. Additive opt-in.
+runChatAnthropicUsage :: (IOE :> es) => AnthropicConfig -> Eff (Chat : es) a -> Eff es (a, Usage)
+runChatAnthropicUsage cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  reinterpret (runState mempty)
+    (\_ (Converse specs msgs) -> do
+        (turn, u) <- liftIO (converseOnce cfg mgr specs msgs)
+        modify (<> u)
+        pure turn)
     action
 
 -- | POST a JSON request body to @/v1/messages@ and return the raw 2xx response
@@ -217,12 +252,18 @@ postMessages cfg mgr bodyJson =
         then pure body
         else throwIO (AnthropicStatusError code body)
 
--- | One text round-trip: POST the messages, then extract @content[0].text@; a
--- 2xx body without that shape throws 'AnthropicNoContent'.
-anthropicComplete :: AnthropicConfig -> Manager -> [Message] -> IO Text
-anthropicComplete cfg mgr msgs = do
+-- | One text round-trip, with usage: POST the messages, extract
+-- @content[0].text@ (throwing 'AnthropicNoContent' if absent), and read the
+-- usage from the same body.
+anthropicCompleteUsage :: AnthropicConfig -> Manager -> [Message] -> IO (Text, Usage)
+anthropicCompleteUsage cfg mgr msgs = do
   body <- postMessages cfg mgr (requestJson cfg msgs)
-  either (\_ -> throwIO (AnthropicNoContent body)) pure (extractText body)
+  text <- either (\_ -> throwIO (AnthropicNoContent body)) pure (extractText body)
+  pure (text, parseUsage body)
+
+-- | One text round-trip, discarding usage (the original behaviour).
+anthropicComplete :: AnthropicConfig -> Manager -> [Message] -> IO Text
+anthropicComplete cfg mgr msgs = fst <$> anthropicCompleteUsage cfg mgr msgs
 
 -- | The Anthropic request body. System turns are concatenated into the
 -- top-level @system@ field; the remaining turns become the @messages@ array.
