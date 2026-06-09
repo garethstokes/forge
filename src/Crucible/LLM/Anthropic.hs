@@ -162,12 +162,13 @@ runLLMCassette path action = do
         []       -> pure "")
     action
 
--- | One robust round-trip: retry transient failures (network/timeout, 429, 5xx)
--- with jittered exponential backoff up to 'acMaxRetries', then rethrow a typed
--- 'AnthropicError'. A non-retryable failure (other 4xx, or a 2xx with no text
--- content) is thrown immediately.
-anthropicComplete :: AnthropicConfig -> Manager -> [Message] -> IO Text
-anthropicComplete cfg mgr msgs =
+-- | POST a JSON request body to @/v1/messages@ and return the raw 2xx response
+-- body, retrying transient failures (network/timeout, 429, 5xx) with jittered
+-- exponential backoff up to 'acMaxRetries'. A non-2xx response throws
+-- 'AnthropicStatusError'; a network/timeout failure throws 'AnthropicHttpError'.
+-- Shared by the text completion and the chat interpreter.
+postMessages :: AnthropicConfig -> Manager -> Value -> IO Text
+postMessages cfg mgr bodyJson =
   recovering
     (capDelay maxBackoffMicros (fullJitterBackoff (acBaseDelayMicros cfg))
        <> limitRetries (acMaxRetries cfg))
@@ -186,14 +187,21 @@ anthropicComplete cfg mgr msgs =
                   , ("content-type", "application/json")
                   ]
               , requestBody =
-                  RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode (requestJson cfg msgs))))
+                  RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode bodyJson)))
               }
       resp <- httpLbs req mgr
       let body = TE.decodeUtf8Lenient (LBS.toStrict (responseBody resp))
           code = statusCode (responseStatus resp)
       if code >= 200 && code < 300
-        then either (\_ -> throwIO (AnthropicNoContent body)) pure (extractText body)
+        then pure body
         else throwIO (AnthropicStatusError code body)
+
+-- | One text round-trip: POST the messages, then extract @content[0].text@; a
+-- 2xx body without that shape throws 'AnthropicNoContent'.
+anthropicComplete :: AnthropicConfig -> Manager -> [Message] -> IO Text
+anthropicComplete cfg mgr msgs = do
+  body <- postMessages cfg mgr (requestJson cfg msgs)
+  either (\_ -> throwIO (AnthropicNoContent body)) pure (extractText body)
 
 -- | The Anthropic request body. System turns are concatenated into the
 -- top-level @system@ field; the remaining turns become the @messages@ array.
