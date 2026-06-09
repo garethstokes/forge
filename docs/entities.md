@@ -178,6 +178,52 @@ the context expects.
 > Relationship loading uses a `LEFT JOIN` internally (the `joined` strategy); that is
 > a separate path.
 
+## Typed fields
+
+Fields do not have to be bare base types. Any newtype over a supported base type
+(`Int`, `Text`, `Bool`) is a first-class column once it derives the three column
+capabilities, in one clause:
+
+```haskell
+newtype Email = Email Text
+  deriving newtype (ToField, FromField, ScalarMeta)
+```
+
+`ToField`/`FromField` are the codec; `ScalarMeta` supplies the SQL type and
+nullability. The same pattern gives type-safe identifiers. Use the newtype as the
+primary key and as foreign keys that point at it:
+
+```haskell
+newtype UserId = UserId Int deriving newtype (ToField, FromField, ScalarMeta)
+newtype PostId = PostId Int deriving newtype (ToField, FromField, ScalarMeta)
+
+data UserT f = User
+  { userId   :: Col f (PrimaryKey (Serial UserId))   -- runtime UserId; column BIGSERIAL
+  , userName :: Col f Text
+  } deriving Generic
+
+data PostT f = Post
+  { postId     :: Col f (PrimaryKey (Serial PostId))
+  , postAuthor :: Col f UserId                        -- typed foreign key to users.user_id
+  , postTitle  :: Col f Text
+  } deriving Generic
+
+instance Entity User where
+  type PrimKey User = UserId
+  -- … tableMeta / rowDecoder / rowEncode / primKey = userId
+```
+
+Now `userId :: UserId`, `Key User` wraps a `UserId`, and `postAuthor` is a `UserId`
+you cannot fill from a `PostId`. The id flows through `add` (the `RETURNING` serial is
+decoded back into `UserId`), `get (Key (UserId 1))`, and the query builder
+(`#postAuthor ==. val someUserId`). The column is still `BIGSERIAL`/`BIGINT`, so the
+schema and migrations are unchanged.
+
+> The field type is what gives the safety. Manifest does not yet check, at the
+> relationship level, that a foreign key points at the right entity's id type (so a
+> mis-declared relationship is not rejected), and it does not auto-generate id
+> newtypes. Both are planned follow-ups.
+
 ## Adding a table
 
 The full recipe for adding a table:

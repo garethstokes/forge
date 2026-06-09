@@ -26,6 +26,7 @@ import qualified Tutorial.UnitOfWork
 import qualified Tutorial.Relationships
 import qualified Tutorial.Cascades
 import qualified RlsSpec
+import qualified TypedFieldsSpec
 
 main :: IO ()
-main = runTests (CodecSpec.tests ++ PostgresSpec.tests ++ MetaSpec.tests ++ MigrateMetaSpec.tests ++ MigrateSqlSpec.tests ++ MigrateSpec.tests ++ SqlSpec.tests ++ SessionSpec.tests ++ FlushSpec.tests ++ CommandSpec.tests ++ EndToEndSpec.tests ++ RelationSpec.tests ++ EntSpec.tests ++ RelationErrorSpec.tests ++ RelE2ESpec.tests ++ JoinedSpec.tests ++ CascadeSpec.tests ++ SelfRefSpec.tests ++ NestedSpec.tests ++ THSpec.tests ++ QueryBuilderSpec.tests ++ Tutorial.UnitOfWork.tests ++ Tutorial.Relationships.tests ++ Tutorial.Cascades.tests ++ RlsSpec.tests)
+main = runTests (CodecSpec.tests ++ PostgresSpec.tests ++ MetaSpec.tests ++ MigrateMetaSpec.tests ++ MigrateSqlSpec.tests ++ MigrateSpec.tests ++ SqlSpec.tests ++ SessionSpec.tests ++ FlushSpec.tests ++ CommandSpec.tests ++ EndToEndSpec.tests ++ RelationSpec.tests ++ EntSpec.tests ++ RelationErrorSpec.tests ++ RelE2ESpec.tests ++ JoinedSpec.tests ++ CascadeSpec.tests ++ SelfRefSpec.tests ++ NestedSpec.tests ++ THSpec.tests ++ QueryBuilderSpec.tests ++ Tutorial.UnitOfWork.tests ++ Tutorial.Relationships.tests ++ Tutorial.Cascades.tests ++ RlsSpec.tests ++ TypedFieldsSpec.tests)
