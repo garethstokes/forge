@@ -8,6 +8,7 @@ module Manifest.Core.Codec
   , decodeRow
   , Codec(..)
   , DbType(..)
+  , Profunctor
   , dimap
   , lmap
   , rmap
@@ -19,6 +20,7 @@ module Manifest.Core.Codec
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Data.Profunctor (Profunctor(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -65,17 +67,12 @@ data Codec a b = Codec
   , cNullable :: Bool
   }
 
--- | Profunctor 'dimap': pre-compose on the encode side, post-compose on decode.
-dimap :: (a' -> a) -> (b -> b') -> Codec a b -> Codec a' b'
-dimap f g (Codec e d s n) = Codec (e . f) (fmap g . d) s n
-
--- | Map the contravariant (encode) side only.
-lmap :: (a' -> a) -> Codec a b -> Codec a' b
-lmap f = dimap f id
-
--- | Map the covariant (decode) side only.
-rmap :: (b -> b') -> Codec a b -> Codec a b'
-rmap = dimap id
+-- | 'dimap' pre-composes on the encode side, post-composes on decode; the SQL
+-- type and nullability ride along unchanged (so a newtype reuses its base
+-- column type). 'lmap'/'rmap' come from the class. Re-exported from
+-- "Data.Profunctor".
+instance Profunctor Codec where
+  dimap f g (Codec e d s n) = Codec (e . f) (fmap g . d) s n
 
 -- | Refine the decoded value with a partial function that may reject.
 refine :: (b -> Either DecodeError c) -> Codec a b -> Codec a c

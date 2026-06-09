@@ -32,6 +32,11 @@ isRight :: Either a b -> Bool
 isRight (Right _) = True
 isRight (Left _)  = False
 
+-- Used polymorphically over the 'Profunctor' class to prove 'Codec' is a real
+-- instance (this would not typecheck if 'dimap' were merely a local function).
+idVia :: Profunctor p => p a b -> p a b
+idVia = dimap id id
+
 tests :: [Test]
 tests = group "Codec"
   [ test "encodes scalars to text params" $ do
@@ -73,4 +78,9 @@ tests = group "Codec"
         (isRight (cDecode (dbType @Age) (Just (pack "5"))))
       assertBool "decoding -1 fails"
         (not (isRight (cDecode (dbType @Age) (Just (pack "-1")))))
+  , test "Codec is a real Profunctor instance (class methods + polymorphic use)" $ do
+      let c = rmap (+ (1 :: Int)) (dbType @Int)   -- rmap is a class method (no local def)
+      assertEqual "rmap post-composes decode" (Right (43 :: Int)) (cDecode c (Just (BC.pack "42")))
+      assertEqual "rmap leaves sqltype" (cSqlType (dbType @Int)) (cSqlType c)
+      assertEqual "used through Profunctor p =>" (encode (5 :: Int)) (cEncode (idVia (dbType @Int)) 5)
   ]

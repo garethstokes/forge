@@ -1,4 +1,52 @@
 [[locked]]
+name = "StateVar"
+vendored = "1.2.2"
+sha256 = "sha256:a2594fd3e5616272a3a57f79fea0745c6e026ed47ad6f2d00d7bdd8e875df9a8"
+depends = []
+
+[[locked]]
+name = "assoc"
+vendored = "1.1.1"
+sha256 = "sha256:8cd0ee44f2adee2deefee89cc57a0aeca0a37e6ce5e15cfe9b3b011260063606"
+depends = []
+
+[[locked]]
+name = "base-orphans"
+vendored = "0.9.4"
+sha256 = "sha256:d144b6dc9be81f222f77b463a13a07779482a9a25fd823c836587344bb6a2eb8"
+depends = []
+
+[[locked]]
+name = "bifunctors"
+vendored = "5.6.3"
+sha256 = "sha256:5691f963cef6d38e5081326607d3f38ecad26f9d9d2b07938136ee82665bca9f"
+depends = ["assoc", "comonad", "tagged", "th-abstraction"]
+
+[[locked]]
+name = "comonad"
+vendored = "5.0.10"
+sha256 = "sha256:eb029eb5e2a9a143ce864d674421d7d8e06c61dbe3c71a81122ed1883f7b967e"
+depends = ["distributive", "indexed-traversable", "tagged"]
+
+[[locked]]
+name = "contravariant"
+vendored = "1.5.6"
+sha256 = "sha256:f0ea7f39aa485b8a3b55a70061bac4e25802c6d35aa06e1f697a75ee34a80092"
+depends = ["StateVar"]
+
+[[locked]]
+name = "distributive"
+vendored = "0.6.3"
+sha256 = "sha256:5f354e2dab8d51e22d9e25b90b05b21981eb3df1419242743535f85246c60a14"
+depends = ["tagged"]
+
+[[locked]]
+name = "indexed-traversable"
+vendored = "0.1.5"
+sha256 = "sha256:c57267ddd2db5f81b2134b57b8371e019d3cb83a8790b0241275257bfc049f40"
+depends = []
+
+[[locked]]
 name = "postgresql-libpq"
 repo = "https://github.com/haskellari/postgresql-libpq"
 rev = "a9122f8ecc11365a26a5489b3a2e1cdf64c0c661"
@@ -8,8 +56,25 @@ flags = { use-pkg-config = true }
 
 [[locked]]
 name = "postgresql-libpq-pkgconfig"
-repo = "https://github.com/haskellari/postgresql-libpq#postgresql-libpq-pkgconfig"
-rev = "a9122f8ecc11365a26a5489b3a2e1cdf64c0c661"
-sha256 = "sha256:c6207346aa8be1c0495bd3b62e5a3c1ba107bd7d09093b0fd12bd57eac5d4e2e"
+vendored = "0.11"
+sha256 = "sha256:1e17fa82796625d3872fd3d068d108d8769fa107487fc6d6c23cb19cdb5f045e"
 depends = []
 system-libs = ["postgresql"]
+
+[[locked]]
+name = "profunctors"
+vendored = "5.6.3"
+sha256 = "sha256:85706b286334a9c981be2d5769bcd32b45796a6b289f1f12b16c20318f4fd938"
+depends = ["base-orphans", "bifunctors", "comonad", "contravariant", "distributive", "tagged"]
+
+[[locked]]
+name = "tagged"
+vendored = "0.8.10"
+sha256 = "sha256:a7edbbc13e05a0b95106d080878dc14a648e740197b953ebfb579b2bba10f0f8"
+depends = []
+
+[[locked]]
+name = "th-abstraction"
+vendored = "0.7.2.0"
+sha256 = "sha256:b28d0fa4403181ec355e69746808bfbad454bbf0aacf6e0c6e9d9512c84d5fdd"
+depends = []

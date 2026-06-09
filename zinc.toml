@@ -25,6 +25,7 @@ depends = [
   "time",
   "transformers",
   "postgresql-libpq",
+  "profunctors",
 ]
 
 [build.test.spec]
@@ -65,3 +66,6 @@ depends = ["base", "bytestring", "text", "manifest"]
 rev = "240147a5225b4e19e20abb9d1103e66b1b55b5a2"  # v0.11.0.0
 repo = "https://github.com/haskellari/postgresql-libpq"
 flags = { use-pkg-config = true }  # Simple pkgconfig provider (avoids build-type Configure)
+
+[dependencies.profunctors]
+repo = "https://github.com/ekmett/profunctors.git"
