@@ -21,7 +21,6 @@ import Crucible.LLM (Message (..), Role (..), complete)
 import Crucible.LLM.Anthropic
   ( defaultAnthropicConfig
   , recordLLMAnthropic
-  , runChatAnthropic
   , runChatAnthropicUsage
   , runLLMAnthropic
   , runLLMCassette
@@ -70,6 +69,7 @@ main = do
         Right a  -> TIO.putStrLn ("tool agent: " <> a)
         Left err -> TIO.putStrLn ("tool agent error: " <> T.pack (show err))
       -- Illustrative per-MTok rates (not authoritative pricing).
+      -- (show on a small Double prints scientific notation, e.g. 6.1e-4)
       let rates = Rates 1.0 5.0
       TIO.putStrLn
         ( "usage: " <> T.pack (show (usInputTokens usage)) <> " in + "
