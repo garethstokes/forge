@@ -305,7 +305,7 @@ rblock = D.field "type" D.string >>= \ty -> case ty of
       <*> D.field "input" D.value
   _ -> D.succeed RSkip
 
--- | Read the @usage@ object from a /v1/messages response body. A body without
+-- | Read the @usage@ object from a @\/v1\/messages@ response body. A body without
 -- a well-formed @usage@ yields 'mempty' — usage is telemetry, not correctness.
 parseUsage :: Text -> Usage
 parseUsage =

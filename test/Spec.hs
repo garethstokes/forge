@@ -482,4 +482,7 @@ main = runChecks
   , check "parseUsage: missing usage -> mempty"
       (mempty :: Usage)
       (parseUsage "{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}")
+  , check "parseUsage: malformed token field -> mempty"
+      (mempty :: Usage)
+      (parseUsage "{\"usage\":{\"input_tokens\":\"twelve\",\"output_tokens\":7}}")
   ]
