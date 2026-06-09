@@ -20,6 +20,7 @@ module Manifest.Session
   , get
   , selectWhere
   , withTransaction
+  , withRlsContext
   , flush
   , add
   , save
@@ -35,6 +36,8 @@ import qualified Data.ByteString.Char8 as BC
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
+import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
 import Type.Reflection (SomeTypeRep)
 import Manifest.Core.Cascade (OnDelete(..), CascadeRule(..))
 import Manifest.Core.Codec (SqlParam, ToField(..), decodeRow)
@@ -237,6 +240,18 @@ applyMutating parent (CascadeRule childT fk policy) = case policy of
   Cascade  -> void $ execDb ("DELETE FROM " <> childT <> " WHERE " <> fk <> " = $1") [parent]
   SetNull  -> void $ execDb ("UPDATE " <> childT <> " SET " <> fk <> " = NULL WHERE " <> fk <> " = $1") [parent]
   Restrict -> pure ()  -- handled in restrictCheck
+
+-- | Set GUC variables for the enclosing transaction (LOCAL-scoped via set_config,
+-- so they auto-clear at COMMIT/ROLLBACK and never leak to the next pool checkout).
+-- Use inside 'withTransaction'. RLS policies read these with @current_setting(...)@.
+withRlsContext :: [(Text, Text)] -> Db a -> Db a
+withRlsContext settings body = do
+  mapM_ setLocal settings
+  body
+  where
+    setLocal (k, v) =
+      void $ execDb "SELECT set_config($1, $2, true)"
+                    [Just (TE.encodeUtf8 k), Just (TE.encodeUtf8 v)]
 
 -- | Run a block inside a database transaction. BEGIN/COMMIT/ROLLBACK are issued
 -- raw (NOT logged) so the statement log shows only data statements. On exception

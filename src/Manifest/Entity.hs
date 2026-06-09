@@ -25,6 +25,7 @@ import Type.Reflection (Typeable, SomeTypeRep, someTypeRep)
 import Data.Proxy (Proxy(..))
 import GHC.Generics
 import Manifest.Core.Cascade (CascadeRule)
+import Manifest.Core.Rls (Policy)
 import Manifest.Core.Codec (FromField, RowDecoder, SqlParam, ToField(..), field)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..))
 
@@ -40,6 +41,10 @@ class Typeable a => Entity a where
   -- Default: none. Override with the 'cascade' builder.
   cascadeRules :: [CascadeRule]
   cascadeRules = []
+  -- | Row-level-security policies for this entity (default: none). Built with the
+  -- "Manifest.Rls" DSL; applied by the migration engine.
+  rlsPolicies :: [Policy a]
+  rlsPolicies = []
 
 -- | A row's identity: a newtype over its primary-key value.
 newtype Key a = Key { unKey :: PrimKey a }

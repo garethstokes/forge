@@ -14,6 +14,9 @@ module Manifest.Migrate
   , migrate
   , migrateUp
   , runMigrate
+  , renderCreatePolicy
+  , renderDropPolicy
+  , rlsPlan
   ) where
 
 import Control.Exception (throwIO)
@@ -25,21 +28,25 @@ import Data.Proxy (Proxy)
 import qualified Data.ByteString.Char8 as BC
 import Manifest.Core.Codec (SqlParam)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), sqlTypeDDL, sqlTypeLive)
-import Manifest.Entity (Entity, tableMeta)
+import Manifest.Core.Rls (PolicyDef (..), PolicyCmd (..), policyDef)
+import Manifest.Entity (Entity, tableMeta, rlsPolicies)
 import Manifest.Error (DbError(OtherError), DbException(..))
 import Manifest.Postgres (Pool)
 import Manifest.Session (Db, execDb, withSession, withTransaction)
 import System.IO (hPutStrLn, stderr)
 
--- | A table the migration engine manages: its name + its columns (with SQL types).
+-- | A table the migration engine manages: its name, its columns (with SQL
+-- types), and its declared RLS policies.
 data ManagedTable = ManagedTable
-  { mtName    :: ByteString
-  , mtColumns :: [ColumnMeta]
+  { mtName     :: ByteString
+  , mtColumns  :: [ColumnMeta]
+  , mtPolicies :: [PolicyDef]
   } deriving (Eq, Show)
 
 -- | Reflect an entity's managed schema. @managed (Proxy @User)@.
 managed :: forall a. Entity a => Proxy a -> ManagedTable
-managed _ = let tm = tableMeta @a in ManagedTable (tmTable tm) (tmColumns tm)
+managed _ = ManagedTable (tmTable tm) (tmColumns tm) (map policyDef (rlsPolicies @a))
+  where tm = tableMeta @a
 
 -- | One column's DDL fragment: @name TYPE [NOT NULL]@. A serial PK column is
 -- @name BIGSERIAL PRIMARY KEY@; a non-serial PK gets @PRIMARY KEY@ too.
@@ -50,7 +57,7 @@ columnDDL c =
 
 -- | @CREATE TABLE name (col1 …, col2 …, …)@ from the managed schema.
 renderCreateTable :: ManagedTable -> ByteString
-renderCreateTable (ManagedTable name cols) =
+renderCreateTable (ManagedTable name cols _) =
   "CREATE TABLE " <> name <> " (" <> BC.intercalate ", " (map columnDDL cols) <> ")"
 
 -- | @ALTER TABLE name ADD COLUMN col …@ (additive). Added columns are never PK.
@@ -86,7 +93,7 @@ data TableDiff
   deriving (Eq, Show)
 
 diffTable :: ManagedTable -> Db TableDiff
-diffTable mt@(ManagedTable name cols) = do
+diffTable mt@(ManagedTable name cols _) = do
   exists <- tableExists name
   if not exists
     then pure (CreateTable mt)
@@ -104,11 +111,71 @@ diffTable mt@(ManagedTable name cols) = do
             ]
       pure $ if null missing && null destructive then UpToDate else AlterTable name missing destructive
 
--- | The pending plan across all managed tables: additive DDL to apply, and
--- destructive issues that need human review (NEVER auto-applied).
+-- RLS DDL ---------------------------------------------------------------------
+
+-- | The SQL keyword for a policy's command scope.
+cmdSql :: PolicyCmd -> ByteString
+cmdSql CmdAll    = "ALL"
+cmdSql CmdSelect = "SELECT"
+cmdSql CmdInsert = "INSERT"
+cmdSql CmdUpdate = "UPDATE"
+cmdSql CmdDelete = "DELETE"
+
+-- | @CREATE POLICY name ON table [FOR cmd] [USING (…)] [WITH CHECK (…)]@.
+renderCreatePolicy :: ByteString -> PolicyDef -> ByteString
+renderCreatePolicy table pd =
+  "CREATE POLICY " <> pdName pd <> " ON " <> table
+    <> (if pdCmd pd == CmdAll then "" else " FOR " <> cmdSql (pdCmd pd))
+    <> maybe "" (\u -> " USING (" <> u <> ")") (pdUsing pd)
+    <> maybe "" (\c -> " WITH CHECK (" <> c <> ")") (pdCheck pd)
+
+-- | @DROP POLICY name ON table@.
+renderDropPolicy :: ByteString -> ByteString -> ByteString
+renderDropPolicy table name = "DROP POLICY " <> name <> " ON " <> table
+
+-- | The policy names live on a table (in the @public@ schema).
+livePolicies :: ByteString -> Db [ByteString]
+livePolicies table = do
+  rows <- execDb "SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename=$1" [Just table]
+  pure [ n | [Just n] <- rows ]
+
+-- | A table's live (rowsecurity, forcerowsecurity) flags.
+liveRlsFlags :: ByteString -> Db (Bool, Bool)
+liveRlsFlags table = do
+  rows <- execDb "SELECT relrowsecurity, relforcerowsecurity FROM pg_class \
+                 \WHERE oid = ('public.' || $1)::regclass" [Just table]
+  pure $ case rows of
+    ([Just a, Just b] : _) -> (a == "t", b == "t")
+    _                      -> (False, False)
+
+-- | DDL to make one table's live RLS match its declarations. Empty if the table
+-- has no policies or does not exist yet (it will be reconciled after creation).
+rlsForTable :: ManagedTable -> Db [ByteString]
+rlsForTable (ManagedTable name _ pols)
+  | null pols = pure []
+  | otherwise = do
+      exists <- tableExists name
+      if not exists then pure [] else do
+        (rls, frc) <- liveRlsFlags name
+        live       <- livePolicies name
+        let declNames = map pdName pols
+            enable = [ "ALTER TABLE " <> name <> " ENABLE ROW LEVEL SECURITY" | not rls ]
+            force  = [ "ALTER TABLE " <> name <> " FORCE ROW LEVEL SECURITY"  | not frc ]
+            create = [ renderCreatePolicy name pd | pd <- pols, pdName pd `notElem` live ]
+            drop_  = [ renderDropPolicy name n    | n  <- live, n `notElem` declNames ]
+        pure (enable ++ force ++ drop_ ++ create)
+
+-- | The RLS reconciliation DDL across all managed tables.
+rlsPlan :: [ManagedTable] -> Db [ByteString]
+rlsPlan = fmap concat . mapM rlsForTable
+
+-- | The pending plan across all managed tables: additive DDL to apply,
+-- destructive issues that need human review (NEVER auto-applied), and the RLS
+-- reconciliation DDL.
 data MigrationPlan = MigrationPlan
   { planAdditive    :: [ByteString]   -- CREATE TABLE / ADD COLUMN statements, in order
   , planDestructive :: [String]       -- "table.column type mismatch …" — review only
+  , planRls         :: [ByteString]   -- ENABLE/FORCE RLS + CREATE/DROP POLICY, reconciled
   } deriving (Eq, Show)
 
 -- | Compute the additive plan + destructive issues for the managed tables.
@@ -117,7 +184,8 @@ migrate tables = do
   diffs <- mapM diffTable tables
   let additive = concatMap toAdditive (zip tables diffs)
       destr    = concatMap toDestr diffs
-  pure (MigrationPlan additive destr)
+  rls <- rlsPlan tables
+  pure (MigrationPlan additive destr rls)
   where
     toAdditive (mt, CreateTable _)       = [renderCreateTable mt]
     toAdditive (_,  AlterTable t adds _) = [renderAddColumn t c | c <- adds]
@@ -141,11 +209,15 @@ migrateUp tables = do
   unless (null (planDestructive plan)) $
     liftIO (throwIO (DbException (OtherError
       ("migrate up aborted: destructive changes need review: " <> show (planDestructive plan)))))
-  unless (null (planAdditive plan)) $
+  let additive = planAdditive plan
+  rls0 <- rlsPlan tables                          -- for the empty-work guard (tables that already exist)
+  unless (null additive && null rls0) $
     withTransaction $ do
-      forM_ (planAdditive plan) $ \stmt -> void (execDb stmt [])
+      forM_ additive $ \s -> void (execDb s [])
+      rls <- rlsPlan tables                        -- recompute: any just-created table now exists
+      forM_ rls $ \s -> void (execDb s [])
       void $ execDb "INSERT INTO schema_migrations (statements) VALUES ($1)"
-                    [Just (BC.pack (show (length (planAdditive plan))))]
+                    [Just (BC.pack (show (length additive + length rls)))]
   pure plan
 
 -- | The CLI dispatcher: @diff@ prints the plan; @up@ applies it. @args@ is argv.
@@ -154,6 +226,9 @@ runMigrate tables pool args = case args of
   ["diff"] -> do
     plan <- withSession pool (do ensureSchemaMigrations; migrate tables)
     mapM_ BC.putStrLn (planAdditive plan)
+    unless (null (planRls plan)) $ do
+      BC.putStrLn "-- rls:"
+      mapM_ BC.putStrLn (planRls plan)
     unless (null (planDestructive plan)) $ do
       hPutStrLn stderr "-- destructive (review, not applied):"
       mapM_ (hPutStrLn stderr . ("--   " <>)) (planDestructive plan)

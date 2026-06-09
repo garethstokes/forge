@@ -10,7 +10,8 @@ the runtime value and the query column references also carries the table metadat
 table name, columns, SQL types, nullability, and the primary key. The migration
 engine reflects that metadata, compares it against the live database, and produces
 the additive DDL to bring the database into line. You don't keep a separate schema
-file in sync by hand; the records are the single source of truth.
+file in sync by hand; the records are the single source of truth. Migrations also
+reconcile row-level-security policies; see [Row-level security](rls.md).
 
 This page covers reflecting an entity's schema with `managed`, computing and
 applying plans with `migrate` / `migrateUp`, the `manifest-migrate` CLI, the
