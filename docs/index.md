@@ -30,8 +30,8 @@ One record declaration serves three roles. A higher-kinded record `UserT f`
 becomes, in `Identity` context, the runtime value `type User = UserT Identity`;
 in query context the same fields become typed column references (`#userName`).
 `deriving Generic` and an `Entity` instance provide the table metadata, the row
-codec, and the generic CRUD the session drives. You can write the record and
-instance by hand or generate them with the `mkEntity` Template Haskell macro.
+codec, and the generic CRUD the session drives. For a plain entity the `Entity`
+instance is one `deriving via` line.
 
 On top of the Core sits the session: an identity map, the four entity states
 (transient, pending, persistent, deleted), snapshot-diff change tracking, an
@@ -43,8 +43,8 @@ insert/update/delete flush, relationship loading (two strategies, `selectin` and
 - [Getting started](getting-started.md): define a table, open a session, do a
   first round-trip (`add` / `get` / `save`).
 - [Entities](entities.md): HKD records, `Col`/`Identity` erasure, `deriving
-  Generic` and the `Entity` instance, keys, `#label` column references, and the
-  `mkEntity` macro.
+  Generic` and deriving the `Entity` instance, keys, and `#label` column
+  references.
 - [Unit of Work](unit-of-work.md): the `Db` monad, the identity map, the four
   states, snapshot-diff, and the flush algorithm.
 - [Relationships](relationships.md): the A-path (`load`) and D-path (`Ent` /
@@ -67,14 +67,15 @@ the code that runs. Start with
 
 ## Status
 
-The Unit of Work, relationships, cascades, migrations, the Template Haskell entity
-front-end, and the query builder (joins, ordering, pagination, and aggregates) are
-built and tested. See the reference pages, and [Queries](queries.md) for the builder.
+The Unit of Work, relationships, cascades, migrations, and the query builder
+(joins, ordering, pagination, and aggregates) are built and tested. See the
+reference pages, and [Queries](queries.md) for the builder.
 
-The `mkEntity` macro generates the record, `deriving Generic`, and the `Entity`
-instance from one block (see [Entities](entities.md)). It builds the core entity;
-relationships and cascades are declared separately. Hand-writing the record and
-instance is fully supported and is what the snippets above show.
+A plain entity is the HKD record plus one `deriving via (Table "users" UserT)`
+line, which derives the table metadata, the row codec, and `primKey` (see
+[Entities](entities.md)). An entity with cascade rules or row-level-security
+policies writes a short explicit instance instead; relationships and cascades are
+declared separately.
 
 The site is published by GitHub Pages' built-in Jekyll build of `docs/`; there is
 no Actions workflow. The tutorials run as tests and require a Postgres (the suite

@@ -8,11 +8,10 @@ nav_order: 3
 An entity is a table, expressed as one Haskell record. That declaration serves
 three roles: the runtime value you read and edit, the typed column references the
 query layer uses, and (via `deriving Generic` plus an `Entity` instance) the table
-metadata, the row codec, and the generic CRUD the session drives. You can write
-that record and instance by hand, or generate it with the `mkEntity` Template
-Haskell macro (see
-[Deriving entities with Template Haskell](#deriving-entities-with-template-haskell)
-below).
+metadata, the row codec, and the generic CRUD the session drives. For a plain
+entity the `Entity` instance is one `deriving via` line (see
+[Deriving the Entity instance](#deriving-the-entity-instance) below); entities with
+cascade rules or row-level-security policies write a short explicit instance.
 
 This page covers the shape of that record (Higher-Kinded Data), how `Col` erases
 its markers in `Identity` context, what the `Entity` instance derives, and how
@@ -95,39 +94,37 @@ primary key and an auto-incrementing serial.
 
 ### The `Entity` instance
 
-`deriving Generic` plus one `Entity` instance is everything the session needs:
+`deriving Generic` plus one `Entity` instance is everything the session needs. For
+a plain entity that instance is a single `deriving via` line (see
+[Deriving the Entity instance](#deriving-the-entity-instance)):
 
 ```haskell
-instance Entity User where
-  type PrimKey User = Int
-  tableMeta  = genericTableMeta @UserT "users"
-  rowDecoder = genericRowDecoder
-  rowEncode  = genericRowEncode
-  primKey    = userId
+deriving via (Table "users" UserT) instance Entity User
 ```
 
 `Entity` is the class the Unit-of-Work operates over. Its members:
 
 | Member | What it is | How it's provided |
 |---|---|---|
-| `type PrimKey a` | the primary-key column's runtime type | declared (`Int`) |
-| `tableMeta` | table name plus per-column metadata (name, SQL type, PK/serial flags, nullability) | `genericTableMeta @UserT "users"`, derived from the `Exposed` view; you supply the table name |
-| `rowDecoder` | row to value codec | `genericRowDecoder`, derived |
-| `rowEncode` | value to one `SqlParam` per column, in column order | `genericRowEncode`, derived |
-| `primKey` | the PK selector | the field accessor (`userId`) |
+| `tableMeta` | table name plus per-column metadata (name, SQL type, PK/serial flags, nullability) | derived from the `Exposed` view; the `"users"` in `Table "users" UserT` supplies the table name |
+| `rowDecoder` | row to value codec | derived |
+| `rowEncode` | value to one `SqlParam` per column, in column order | derived |
+| `primKey` | the PK value | derived (reads the primary-key column, which is the first field) |
 | `cascadeRules` | onDelete policies (optional) | defaults to `[]`; see [Cascades](cascades.md) |
+| `rlsPolicies` | row-level-security policies (optional) | defaults to `[]`; see [Row-level security](rls.md) |
 
-`genericTableMeta` walks the `Generic` rep of `UserT Exposed` and reads each
-field's markers: it computes the column name by `camelCase` to `snake_case`
-(`userName` to `user_name`, no prefix stripping), the SQL type, and the PK/serial
-flags. `genericRowDecoder`/`genericRowEncode` derive the row codec the same way.
-The session's `get` / `add` / `save` / `delete` are all generic over the `Entity`
-class, so defining the instance is all it takes to make a record persistable.
+The deriver walks the `Generic` rep of `UserT Exposed` and reads each field's
+markers: it computes the column name by `camelCase` to `snake_case` (`userName` to
+`user_name`, no prefix stripping), the SQL type, and the PK/serial flags, and it
+derives the row codec the same way. The primary-key value comes from the first
+field, which is the primary key by convention. The session's `get` / `add` /
+`save` / `delete` are all generic over the `Entity` class, so defining the instance
+is all it takes to make a record persistable.
 
-You write two members by hand: `tableMeta`'s table name and `primKey`'s selector.
-These are the parts Generics can't infer (the table name isn't in the record, and
-which field is the PK is, but the selector function isn't reflected as a value).
-Everything else is derived.
+The only thing Generics cannot infer is the table name (it is not in the record).
+The `deriving via` carrier supplies it as the `"users"` type-level string, so a
+plain entity needs no hand-written members at all. There is no `type PrimKey` line
+to write: the primary-key type is computed from the first field's marker.
 
 ### Keys
 
@@ -143,7 +140,7 @@ newtype Key a = Key { unKey :: PrimKey a }
 mu <- get (Key 42)        -- :: Db (Maybe User)
 ```
 
-`Key User` wraps an `Int` (because `PrimKey User = Int`). The session's identity
+`Key User` wraps an `Int` (because the primary key, `userId`, is an `Int`). The session's identity
 map is keyed by `(type, encoded-PK)`, so identity is value-based via the primary
 key, which is the row's identity. See [Unit of Work](unit-of-work.md) for how that
 drives change tracking.
@@ -208,12 +205,12 @@ data PostT f = Post
   , postTitle  :: Col f Text
   } deriving Generic
 
-instance Entity User where
-  type PrimKey User = UserId
-  -- … tableMeta / rowDecoder / rowEncode / primKey = userId
+deriving via (Table "users" UserT) instance Entity User
 ```
 
-Now `userId :: UserId`, `Key User` wraps a `UserId`, and `postAuthor` is a `UserId`
+The primary-key type is read from the first field's marker, so `PrimaryKey (Serial
+UserId)` makes the key a `UserId` with no extra declaration. Now `userId ::
+UserId`, `Key User` wraps a `UserId`, and `postAuthor` is a `UserId`
 you cannot fill from a `PostId`. The id flows through `add` (the `RETURNING` serial is
 decoded back into `UserId`), `get (Key (UserId 1))`, and the query builder
 (`#postAuthor ==. val someUserId`). The column is still `BIGSERIAL`/`BIGINT`, so the
@@ -230,10 +227,13 @@ The full recipe for adding a table:
 
 1. **Declare the HKD record** `data XT f = X { … :: Col f … } deriving Generic`,
    marking the primary key with `PrimaryKey` (and `Serial` if it auto-increments).
+   The primary key must be the first field.
 2. **Add the runtime synonym** `type X = XT Identity`.
-3. **Write the `Entity` instance**: declare `PrimKey`, point `tableMeta` at
-   `genericTableMeta @XT "table_name"`, use `genericRowDecoder` /
-   `genericRowEncode`, and set `primKey` to the PK field accessor.
+3. **Derive the `Entity` instance** with one `deriving via` line,
+   `deriving via (Table "table_name" XT) instance Entity X`, which supplies the
+   table name and derives everything else. An entity with cascade rules or RLS
+   policies writes a short explicit instance instead (see
+   [Deriving the Entity instance](#deriving-the-entity-instance)).
 4. **Optionally declare relations** (`HasRelation` instances) and **cascade rules**
    (`cascadeRules`); see [Relationships](relationships.md) and
    [Cascades](cascades.md).
@@ -258,12 +258,7 @@ data PostT f = Post
 
 type Post = PostT Identity
 
-instance Entity Post where
-  type PrimKey Post = Int
-  tableMeta  = genericTableMeta @PostT "posts"
-  rowDecoder = genericRowDecoder
-  rowEncode  = genericRowEncode
-  primKey    = postId
+deriving via (Table "posts" PostT) instance Entity Post
 ```
 
 A non-serial, nullable column (`Profile`'s `profileUser :: Col f (Maybe Int)`) is
@@ -275,35 +270,60 @@ round-trip. Start with [Getting started](getting-started.md) for a first `add` /
 `get` / `save`, then [Unit of Work](unit-of-work.md) for how editing a value
 becomes a minimal `UPDATE`.
 
-## Deriving entities with Template Haskell
+## Deriving the Entity instance
 
-Writing the HKD record, the `type` synonym, and the `Entity` instance by hand is
-mechanical. The `mkEntity` macro generates all three from one block:
+`tableMeta`, the row codec, and `primKey` all follow mechanically from the record,
+so the `Entity` instance for a plain entity is a single `deriving via` line. You
+write the HKD record (with the primary key as its first field) and derive the
+instance through a `Table` carrier that supplies the table name as a type-level
+string:
 
 ```haskell
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 
-import Manifest (mkEntity, field)
-import Manifest.Core.Table (PrimaryKey, Serial)
-import Data.Text (Text)
+data PostT f = Post
+  { postId     :: Col f (PrimaryKey (Serial Int))   -- primary key: the first field
+  , postAuthor :: Col f Int
+  , postTitle  :: Col f Text
+  } deriving Generic
+type Post = PostT Identity
 
-mkEntity "Widget" "widgets"
-  [ field "id"   [t| PrimaryKey (Serial Int) |]
-  , field "name" [t| Text |]
-  , field "size" [t| Maybe Int |]
-  ]
+deriving via (Table "posts" PostT) instance Entity Post
 ```
 
-This is equivalent to writing `data WidgetT f = Widget { widgetId :: …, … } deriving
-Generic`, `type Widget = WidgetT Identity`, and the `Entity Widget` instance by
-hand. Field selectors are the lowercased entity name plus the capitalised short
-name (`widgetId`, `widgetName`), and column names are their `snake_case` form
-(`widget_id`). Exactly one field must be a `PrimaryKey`; it becomes `primKey`.
+That one line derives `tableMeta` (the table name comes from the `"posts"`
+string), the row codec, and `primKey`. There is no `type PrimKey` line to write:
+the primary-key type is computed from the record's first field. The form needs the
+`DerivingVia` and `StandaloneDeriving` extensions.
 
-> **Scope:** `mkEntity` generates the core entity only. Relationships
-> (`HasRelation` instances) and `onDelete` cascade rules are declared separately,
-> the same way as for a hand-written entity.
+The primary key must be the first field of the record. This is a real constraint
+of the derivation, not just a convention: the primary-key type and value are read
+off the first field, so an entity whose primary key is not first will not compile.
+
+### Cascade rules and row-level security
+
+An entity that needs `onDelete` cascade rules or row-level-security policies writes
+a short explicit instance instead of the `deriving via` line, supplying only the
+table name and the policy. The row codec and `primKey` still default
+generically, so you do not repeat them:
+
+```haskell
+instance Entity User where
+  tableMeta    = genericTableMeta @UserT "users"
+  cascadeRules =
+    [ cascade (Proxy @Post)    (Proxy @"postAuthor")  Cascade
+    , cascade (Proxy @Profile) (Proxy @"profileUser") SetNull
+    , cascade (Proxy @Tag)     (Proxy @"tagUser")     Restrict
+    ]
+```
+
+`genericTableMeta @UserT "users"` builds `tableMeta` from the `Exposed` view, the
+same value the `deriving via` form produces; you supply the table name. The
+`cascadeRules` field lists the dependents and their delete behaviour; see
+[Cascades](cascades.md). Row-level-security policies go in `rlsPolicies` the same
+way; see [Row-level security](rls.md). Everything you do not mention (`rowDecoder`,
+`rowEncode`, `primKey`) keeps its generic default.

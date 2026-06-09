@@ -12,9 +12,8 @@ API, the same surface the [tutorials](tutorials/index.md) compile and run as tes
 A Manifest table is one higher-kinded record. That declaration provides the
 runtime value, the typed column references the query layer uses, and (via
 `deriving Generic` and an `Entity` instance) the table metadata, the row codec,
-and the generic CRUD the session drives. You write that record and instance by
-hand, shown below, or generate them with the `mkEntity` macro
-([Entities](entities.md)).
+and the generic CRUD the session drives. For a plain entity the `Entity` instance
+is one `deriving via` line, shown below ([Entities](entities.md)).
 
 ## 1. Define a table
 
@@ -27,6 +26,8 @@ invisible in the value.
 ```haskell
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -36,7 +37,7 @@ import GHC.Generics (Generic)
 import Manifest
 
 data UserT f = User
-  { userId    :: Col f (PrimaryKey (Serial Int))
+  { userId    :: Col f (PrimaryKey (Serial Int))   -- primary key: the first field
   , userName  :: Col f Text
   , userEmail :: Col f (Maybe Text)
   } deriving Generic
@@ -44,23 +45,20 @@ data UserT f = User
 -- The clean runtime value: userId :: Int, userName :: Text, userEmail :: Maybe Text
 type User = UserT Identity
 
-instance Entity User where
-  type PrimKey User = Int
-  tableMeta  = genericTableMeta @UserT "users"
-  rowDecoder = genericRowDecoder
-  rowEncode  = genericRowEncode
-  primKey    = userId
+deriving via (Table "users" UserT) instance Entity User
 ```
 
-`deriving Generic` and this `Entity` instance provide everything: `genericTableMeta`
-derives the table name, columns, types, PK and serial flags; `genericRowDecoder` /
-`genericRowEncode` derive the row codec; and the field labels become typed column
-references (`#userName`). The session's `get` / `add` / `save` / `delete` are
-generic over the `Entity` class, so defining the instance is all it takes.
+That one `deriving via` line provides everything: it derives the table name (from
+the `"users"` string), the columns, types, PK and serial flags, the row codec, and
+`primKey`. There is no `type PrimKey` line to write; the primary-key type is read
+from the first field, which is the primary key by convention. The field labels
+become typed column references (`#userName`). The session's `get` / `add` / `save`
+/ `delete` are generic over the `Entity` class, so deriving the instance is all it
+takes.
 
-> **Less boilerplate:** the [`mkEntity` Template Haskell macro](entities.md)
-> generates this record, `type` synonym, and `Entity` instance from one block. The
-> hand-written form above is what it expands to.
+> An entity that needs `onDelete` cascade rules or row-level-security policies
+> writes a short explicit instance instead of the `deriving via` line; the row
+> codec and `primKey` still default. See [Entities](entities.md).
 
 ## 2. Open a session
 
