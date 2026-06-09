@@ -539,4 +539,8 @@ main = runChecks
   , check "parseEvent: unknown -> EvOther"
       EvOther
       (parseEvent (sseFrame (JObject [("type", JString "ping")])))
+  , check "parseEvent: content_block_stop -> EvBlockStop"
+      (EvBlockStop 1)
+      (parseEvent (sseFrame (JObject
+        [ ("type", JString "content_block_stop"), ("index", JNumber 1) ])))
   ]

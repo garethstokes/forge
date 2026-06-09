@@ -15,6 +15,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 
+import Data.Maybe (fromMaybe)
 import Crucible.Json.Decode (Decoder, at, decodeValue, field, int, string)
 import Crucible.Json.Parse (parse)
 import Crucible.Json.Value (Value)
@@ -82,6 +83,6 @@ classify v = case dv (field "type" string) of
   Just "message_delta"      -> maybe EvOther EvUsageOut  (dv (at ["usage", "output_tokens"] int))
   _                         -> EvOther
   where
-    idx = maybe 0 id (dv (field "index" int))
+    idx = fromMaybe 0 (dv (field "index" int))
     dv :: Decoder a -> Maybe a
     dv d = either (const Nothing) Just (decodeValue d v)
