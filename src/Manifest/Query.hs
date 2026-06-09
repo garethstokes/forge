@@ -68,8 +68,9 @@ emptyState = QueryState 0 "" [] [] [] [] [] Nothing Nothing [] [] 0 [] [] False
 newtype Handle e = Handle ByteString
 data    Expr t   = Expr ByteString [SqlParam]
 
--- | A handle to the right side of a LEFT JOIN: its columns may be NULL, so it
--- selects as @Maybe e@.
+-- | A handle whose columns may be NULL, so it selects as @Maybe e@. Produced by
+-- 'leftJoin' / 'fullJoin' (the unmatched side) or by 'opt' (a table a RIGHT or FULL
+-- join can leave unmatched).
 newtype OptHandle e = OptHandle ByteString
 
 -- | Things you can project a column from (a 'Handle', or a left-joined 'OptHandle').
