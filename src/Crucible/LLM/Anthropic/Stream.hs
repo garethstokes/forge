@@ -188,6 +188,7 @@ openStream cfg mgr bodyJson =
                 [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
                 , ("anthropic-version", "2023-06-01")
                 , ("content-type", "application/json")
+                , ("accept", "text/event-stream")
                 ]
             , requestBody = RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode bodyJson)))
             }
