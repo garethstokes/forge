@@ -19,6 +19,7 @@ import Data.Functor.Identity (Identity)
 import Data.Kind (Type)
 import Data.Text (Text)
 import Manifest.Core.SqlType (SqlType(..))
+import Manifest.Core.Codec (DbType(..), Codec(..))
 
 -- | Marker: an auto-incrementing serial column whose runtime type is @a@.
 data Serial a
@@ -74,8 +75,8 @@ instance FieldMeta (Serial a) where
   fieldSqlType  = SqlBigSerial
   fieldNullable = False
 
-instance {-# OVERLAPPABLE #-} ScalarMeta a => FieldMeta a where
+instance {-# OVERLAPPABLE #-} DbType a => FieldMeta a where
   fieldIsPK     = False
   fieldIsSerial = False
-  fieldSqlType  = scalarType @a
-  fieldNullable = scalarNullable @a
+  fieldSqlType  = cSqlType  (dbType @a)
+  fieldNullable = cNullable (dbType @a)

@@ -90,6 +90,7 @@ module Manifest
   , rel
   , Member
     -- * Column-type classes (for newtype columns)
+  , DbType (..)
   , ToField (..)
   , FromField (..)
   , ScalarMeta (..)
@@ -181,7 +182,8 @@ import Manifest.Relation.Loaded
   , Member
   )
 import Manifest.Core.Codec
-  ( ToField (..)
+  ( DbType (..)
+  , ToField (..)
   , FromField (..)
   )
 import Manifest.Core.Table

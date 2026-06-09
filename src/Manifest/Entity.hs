@@ -36,7 +36,7 @@ import GHC.Generics
 import GHC.TypeLits (Symbol, TypeError, ErrorMessage(..))
 import Manifest.Core.Cascade (CascadeRule)
 import Manifest.Core.Rls (Policy)
-import Manifest.Core.Codec (FromField, fromField, RowDecoder, SqlParam, ToField(..), field)
+import Manifest.Core.Codec (DbType(..), Codec(..), RowDecoder, SqlParam, encode, decodeCol)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..))
 import Manifest.Core.Table (Exposed, Base)
 
@@ -76,7 +76,7 @@ class Typeable a => Entity a where
   rowEncode = genericRowEncode
 
   primKey :: a -> PrimKey a
-  default primKey :: FromField (PrimKey a) => a -> PrimKey a
+  default primKey :: DbType (PrimKey a) => a -> PrimKey a
   primKey = genericPrimKey
 
   -- | onDelete cascade rules applied when a value of this type is deleted.
@@ -100,8 +100,8 @@ instance GRowDecode f => GRowDecode (D1 m f) where gRowDecode = M1 <$> gRowDecod
 instance GRowDecode f => GRowDecode (C1 m f) where gRowDecode = M1 <$> gRowDecode
 instance (GRowDecode a, GRowDecode b) => GRowDecode (a :*: b) where
   gRowDecode = (:*:) <$> gRowDecode <*> gRowDecode
-instance FromField t => GRowDecode (S1 m (Rec0 t)) where
-  gRowDecode = M1 . K1 <$> field
+instance DbType t => GRowDecode (S1 m (Rec0 t)) where
+  gRowDecode = M1 . K1 <$> decodeCol
 
 -- | Default 'rowDecoder' via Generics.
 genericRowDecoder :: (Generic a, GRowDecode (Rep a)) => RowDecoder a
@@ -116,8 +116,8 @@ instance GRowEncode f => GRowEncode (D1 m f) where gRowEncode (M1 x) = gRowEncod
 instance GRowEncode f => GRowEncode (C1 m f) where gRowEncode (M1 x) = gRowEncode x
 instance (GRowEncode a, GRowEncode b) => GRowEncode (a :*: b) where
   gRowEncode (a :*: b) = gRowEncode a ++ gRowEncode b
-instance ToField t => GRowEncode (S1 m (Rec0 t)) where
-  gRowEncode (M1 (K1 x)) = [toField x]
+instance DbType t => GRowEncode (S1 m (Rec0 t)) where
+  gRowEncode (M1 (K1 x)) = [encode x]
 
 -- | Default 'rowEncode' via Generics. Produces one 'SqlParam' per column, in
 -- 'tableMeta' column order.
@@ -126,9 +126,9 @@ genericRowEncode = gRowEncode . from
 
 -- | Default 'primKey': re-encode the row, take the PK column's 'SqlParam', and
 -- decode it back to 'PrimKey a'.
-genericPrimKey :: forall a. (Entity a, FromField (PrimKey a)) => a -> PrimKey a
+genericPrimKey :: forall a. (Entity a, DbType (PrimKey a)) => a -> PrimKey a
 genericPrimKey a =
-  case fromField (rowEncode a !! pkIndex @a) of
+  case cDecode (dbType @(PrimKey a)) (rowEncode a !! pkIndex @a) of
     Right v  -> v
     Left err -> error ("Manifest.genericPrimKey: " <> show err)
 

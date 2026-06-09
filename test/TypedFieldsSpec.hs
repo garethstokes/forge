@@ -29,15 +29,15 @@ import Harness
 -- column-type classes are re-exported from the umbrella.
 newtype Email = Email Text
   deriving stock (Eq, Show)
-  deriving newtype (ToField, FromField, ScalarMeta)
+  deriving newtype (ToField, FromField, ScalarMeta, DbType)
 
 newtype AccountId = AccountId Int
   deriving stock (Eq, Show)
-  deriving newtype (ToField, FromField, ScalarMeta)
+  deriving newtype (ToField, FromField, ScalarMeta, DbType)
 
 newtype NoteId = NoteId Int
   deriving stock (Eq, Show)
-  deriving newtype (ToField, FromField, ScalarMeta)
+  deriving newtype (ToField, FromField, ScalarMeta, DbType)
 
 data AccountT f = Account
   { accountId   :: Col f (PrimaryKey (Serial AccountId))   -- runtime AccountId; column BIGSERIAL

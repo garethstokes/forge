@@ -20,7 +20,7 @@ import Data.Proxy (Proxy(..))
 import GHC.Generics (Generic, Rep)
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import Type.Reflection (Typeable)
-import Manifest.Core.Codec (FromField)
+import Manifest.Core.Codec (DbType)
 import Manifest.Core.Meta (GColumns, genericTableMeta)
 import Manifest.Core.Table (Exposed)
 import Manifest.Entity
@@ -32,7 +32,7 @@ instance
   , Typeable (Table name t)
   , Generic (t Exposed), GColumns (Rep (t Exposed))
   , Generic (t Identity), GRowDecode (Rep (t Identity)), GRowEncode (Rep (t Identity))
-  , FromField (PrimKey (Table name t))
+  , DbType (PrimKey (Table name t))
   ) => Entity (Table name t) where
   -- coerce is sound: Table name t is a newtype over t Identity; TableMeta's param
   -- is phantom and RowDecoder's is representational.
