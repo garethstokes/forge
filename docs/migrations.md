@@ -140,7 +140,7 @@ them.
 These follow-ups are **Planned**, not built, and this page does not show them as
 working:
 
-* **Alembic-style versioned migration files.** There is no generation of
+* **Versioned migration files.** There is no generation of
   numbered/named `.sql` migration files, and `schema_migrations` is a run-count ledger
   rather than a per-version history keyed to such files. Migrations are computed live
   from the records, not replayed from a file series.

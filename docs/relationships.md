@@ -89,7 +89,7 @@ The D-path keeps a value and its loaded relations together in a typed bundle:
 data Ent (loaded :: [Symbol]) a = Ent { entVal :: a, entRels :: RelMap }
 
 manage :: a -> Ent '[] a                                  -- wrap, nothing loaded
-getEnt :: (Entity a, ToField (PrimKey a))
+getEnt :: (Entity a, DbType (PrimKey a))
        => Key a -> Db (Maybe (Ent '[] a))                 -- load by PK, nothing loaded
 with   :: HasRelation a name
        => Strategy name -> Ent l a -> Db (Ent (Insert name l) a)   -- load a relation in
@@ -160,7 +160,7 @@ non-`Many` leaf is rejected at runtime.
 ## Self-referential relations
 
 A table can relate to itself. The `Employee` fixture has a nullable self-FK
-`employeeManager :: Col f (Maybe Int)` referencing `employee_id`, giving both a
+`employeeManager :: Field f (Nullable Int)` referencing `employee_id`, giving both a
 forward and a reverse relation on the same type:
 
 ```haskell

@@ -50,8 +50,8 @@ deriving via (Table "users" UserT) instance Entity User
 
 That one `deriving via` line provides everything: it derives the table name (from
 the `"users"` string), the columns, types, PK and serial flags, the row codec, and
-`primKey`. There is no `type PrimKey` line to write; the primary-key type is read
-from the first field, which is the primary key by convention. The field labels
+`primKey`. There is no separate primary-key type declaration to write; the
+primary-key type is read from the first field, which is the primary key by convention. The field labels
 become typed column references (`#userName`). The session's `get` / `add` / `save`
 / `delete` are generic over the `Entity` class, so deriving the instance is all it
 takes.

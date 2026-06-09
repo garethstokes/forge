@@ -66,7 +66,7 @@ writes on commit.
 
 ## The identity map
 
-The identity map is `(type, encoded-PK)` to baseline column vector:
+The identity map is `(type, encoded-PK)` to baseline column list:
 
 ```hs
 type IdentityMap = Map (SomeTypeRep, SqlParam) [SqlParam]
@@ -163,7 +163,7 @@ Snapshot-diff is the default. For blind or bulk writes there is a command path t
 bypasses the identity map entirely:
 
 ```hs
-update      :: (Entity a, ToField (PrimKey a)) => Key a -> [Assign a] -> Db ()
+update      :: (Entity a, DbType (PrimKey a)) => Key a -> [Assign a] -> Db ()
 deleteWhere :: Entity a                        => [Cond a]            -> Db ()
 ```
 

@@ -124,8 +124,8 @@ is all it takes to make a record persistable.
 
 The only thing Generics cannot infer is the table name (it is not in the record).
 The `deriving via` carrier supplies it as the `"users"` type-level string, so a
-plain entity needs no hand-written members at all. There is no `type PrimKey` line
-to write: the primary-key type is computed from the first field's marker.
+plain entity needs no hand-written members at all. There is no separate primary-key
+type declaration to write: the primary-key type is computed from the first field's marker.
 
 ### Keys
 
@@ -348,8 +348,8 @@ deriving via (Table "posts" PostT) instance Entity Post
 ```
 
 That one line derives `tableMeta` (the table name comes from the `"posts"`
-string), the row codec, and `primKey`. There is no `type PrimKey` line to write:
-the primary-key type is computed from the record's first field. The form needs the
+string), the row codec, and `primKey`. There is no separate primary-key type
+declaration to write: the primary-key type is computed from the record's first field. The form needs the
 `DerivingVia` and `StandaloneDeriving` extensions.
 
 The primary key must be the first field of the record. This is a real constraint
