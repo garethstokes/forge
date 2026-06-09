@@ -27,6 +27,7 @@ module Crucible.LLM.Anthropic
   , isRetryable
   , chatRequestJson
   , parseTurn
+  , runChatAnthropic
   ) where
 
 import Data.List (partition)
@@ -62,7 +63,7 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 
-import Crucible.Chat (Block (..), ChatMsg (..), ToolUse (..), Turn (..))
+import Crucible.Chat (Block (..), Chat (..), ChatMsg (..), ToolUse (..), Turn (..))
 import Crucible.Json.Encode (encode)
 import Crucible.Json.Value (Value (..))
 import qualified Crucible.Json.Decode as D
@@ -165,6 +166,19 @@ runLLMCassette path action = do
       case rs of
         (x : xs) -> put xs >> pure x
         []       -> pure "")
+    action
+
+-- | Interpret 'Chat' against the live Anthropic Messages API with native
+-- tool-calling. One shared TLS manager is created up front; each 'Converse'
+-- POSTs the conversation + tool specs and parses the assistant's 'Turn'.
+-- Failures throw 'AnthropicError'.
+runChatAnthropic :: (IOE :> es) => AnthropicConfig -> Eff (Chat : es) a -> Eff es a
+runChatAnthropic cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  interpret
+    (\_ (Converse specs msgs) -> liftIO $ do
+        body <- postMessages cfg mgr (chatRequestJson cfg specs msgs)
+        either (\_ -> throwIO (AnthropicNoContent body)) pure (parseTurn body))
     action
 
 -- | POST a JSON request body to @/v1/messages@ and return the raw 2xx response
