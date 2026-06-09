@@ -80,4 +80,15 @@ tests = group "Json"
           pure (map (unJson . settingPrefs) (bt :: [Setting]), map (unJson . settingPrefs) (bc :: [Setting]))
         assertEqual "->> theme=dark finds the dark row"  [Prefs "dark"  ["x"]] byText
         assertEqual "@> finds the light row"             [Prefs "light" ["y"]] byContain
+  , test "jsonb path operators #> and #>> navigate the document" $
+      withEmptyDb $ \pool -> do
+        withConnection pool (\c -> execText c settingsDDL [])
+        rows <- withSession pool $ do
+          _ <- add (Setting { settingId = 0, settingPrefs = Json (Prefs "dark"  ["x"]), settingNote = Nothing } :: Setting)
+          _ <- add (Setting { settingId = 0, settingPrefs = Json (Prefs "light" ["y"]), settingNote = Nothing } :: Setting)
+          runQuery $ do
+            s <- from @Setting
+            where_ ((s ^. #settingPrefs :: Expr (Json Prefs)) .#>> ["theme"] .== val ("light" :: Text))
+            pure s
+        assertEqual "#>> [theme] = light finds the light row" [Prefs "light" ["y"]] (map (unJson . settingPrefs) (rows :: [Setting]))
   ]

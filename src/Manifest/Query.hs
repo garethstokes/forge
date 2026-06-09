@@ -19,7 +19,7 @@ module Manifest.Query
   , (^.)
   , val
   , (.==), (./=), (.>), (.<), (.&&)
-  , Jsonb, JsonbExpr, (.@>), (.->), (.->>)
+  , Jsonb, JsonbExpr, (.@>), (.->), (.->>), (.#>), (.#>>)
   , where_
   , having, distinct
   , orderBy, asc, desc, limit, offset, OrderTerm
@@ -180,6 +180,27 @@ e .-> k = Expr (jRaw e <> " -> " <> quoteLit k) (jParams e)
 (.->>) :: JsonbExpr e => e -> Text -> Expr Text
 e .->> k = Expr (jRaw e <> " ->> " <> quoteLit k) (jParams e)
 infixl 8 .->, .->>
+
+-- | Navigate a jsonb path, returning jsonb (chainable). @e #> '{a,b}'@.
+(.#>) :: JsonbExpr e => e -> [Text] -> Expr Jsonb
+e .#> path = Expr (jRaw e <> " #> " <> pathLit path) (jParams e)
+
+-- | Navigate a jsonb path, returning text. @e #>> '{a,b}'@.
+(.#>>) :: JsonbExpr e => e -> [Text] -> Expr Text
+e .#>> path = Expr (jRaw e <> " #>> " <> pathLit path) (jParams e)
+infixl 8 .#>, .#>>
+
+-- | Render a list of keys as a Postgres text[] array literal: @'{"a","b"}'@.
+-- Each element is double-quoted (handles keys with commas); embedded " and \\
+-- are backslash-escaped, and the surrounding single-quoted literal doubles '.
+pathLit :: [Text] -> ByteString
+pathLit ks = "'{" <> BC.intercalate "," (map elem_ ks) <> "}'"
+  where
+    elem_ k = "\"" <> BC.concatMap esc (TE.encodeUtf8 k) <> "\""
+    esc '"'  = "\\\""
+    esc '\\' = "\\\\"
+    esc '\'' = "''"
+    esc c    = BC.singleton c
 
 from :: forall e. Entity e => QueryM (Handle e)
 from = QueryM $ do
