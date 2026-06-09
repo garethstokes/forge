@@ -33,6 +33,9 @@ import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Schema (Schema (SObj, SStr))
 import Crucible.Json.Value (Value (JString))
+import Crucible.Emit (runEmitIO)
+import Crucible.LLM.Anthropic.Stream (runLLMAnthropicStream, runChatAnthropicStream)
+import System.IO (hFlush, stdout)
 
 prompt :: [Message]
 prompt =
@@ -76,3 +79,23 @@ main = do
             <> T.pack (show (usOutputTokens usage)) <> " out = "
             <> T.pack (show (usTotalTokens usage)) <> " tokens"
             <> "; est. cost $" <> T.pack (show (estimateCost rates usage)) )
+      -- Streaming: print tokens as they arrive (text path).
+      TIO.putStr "stream: "
+      (streamed, sUsage) <-
+        runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
+                  (runLLMAnthropicStream cfg (complete prompt)))
+      TIO.putStrLn ""
+      TIO.putStrLn ("stream usage: " <> T.pack (show (usTotalTokens sUsage)) <> " tokens"
+                    <> " (len " <> T.pack (show (T.length streamed)) <> ")")
+      -- Streaming tool-agent (deltas printed live).
+      let weatherTool2 = Tl.Tool "get_weather" (SObj [("city", SStr)])
+            (\_ -> pure (JString "It is 26C and sunny."))
+      TIO.putStr "stream tool: "
+      (toolStream, tUsage) <-
+        runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
+                  (runChatAnthropicStream cfg (runToolAgent [weatherTool2] "Use the tool to get the weather in Brisbane, then tell me.")))
+      TIO.putStrLn ""
+      case toolStream of
+        Right a  -> TIO.putStrLn ("stream tool result: " <> a)
+        Left err -> TIO.putStrLn ("stream tool error: " <> T.pack (show err))
+      TIO.putStrLn ("stream tool usage: " <> T.pack (show (usTotalTokens tUsage)) <> " tokens")
