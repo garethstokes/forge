@@ -35,7 +35,8 @@ import Crucible.Chat
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
-import Crucible.LLM.Anthropic.Stream (splitFrames)
+import qualified Data.Text.Encoding as TE
+import Crucible.LLM.Anthropic.Stream (splitFrames, StreamEvent(..), parseEvent)
 
 -- Sample types for M3 tests
 
@@ -141,6 +142,10 @@ agentRun = runAgentScripted
   [ "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}"
   , "{\"answer\":\"It is sunny in Brisbane\"}" ]
   agentCodec "What's the weather in Brisbane?"
+
+-- Build an SSE frame ("data: <json>") as a ByteString from a Value.
+sseFrame :: Value -> BC.ByteString
+sseFrame v = TE.encodeUtf8 ("data: " <> encode v)
 
 main :: IO ()
 main = runChecks
@@ -505,4 +510,33 @@ main = runChecks
   , check "splitFrames: trailing delimiter -> non-empty frames, empty remainder"
       ([BC.pack "A", BC.pack "B"], BC.pack "")
       (splitFrames (BC.pack "A\n\nB\n\n"))
+  -- A#3: parseEvent
+  , check "parseEvent: text_delta -> EvText"
+      (EvText "Hello")
+      (parseEvent (sseFrame (JObject
+        [ ("type", JString "content_block_delta"), ("index", JNumber 0)
+        , ("delta", JObject [("type", JString "text_delta"), ("text", JString "Hello")]) ])))
+  , check "parseEvent: message_start -> EvUsageIn"
+      (EvUsageIn 25)
+      (parseEvent (sseFrame (JObject
+        [ ("type", JString "message_start")
+        , ("message", JObject [("usage", JObject [("input_tokens", JNumber 25), ("output_tokens", JNumber 1)])]) ])))
+  , check "parseEvent: message_delta -> EvUsageOut"
+      (EvUsageOut 7)
+      (parseEvent (sseFrame (JObject
+        [ ("type", JString "message_delta"), ("delta", JObject [])
+        , ("usage", JObject [("output_tokens", JNumber 7)]) ])))
+  , check "parseEvent: tool_use start -> EvToolStart"
+      (EvToolStart 0 "tu_1" "get_weather")
+      (parseEvent (sseFrame (JObject
+        [ ("type", JString "content_block_start"), ("index", JNumber 0)
+        , ("content_block", JObject [("type", JString "tool_use"), ("id", JString "tu_1"), ("name", JString "get_weather"), ("input", JObject [])]) ])))
+  , check "parseEvent: input_json_delta -> EvToolJson"
+      (EvToolJson 0 "{\"city\":")
+      (parseEvent (sseFrame (JObject
+        [ ("type", JString "content_block_delta"), ("index", JNumber 0)
+        , ("delta", JObject [("type", JString "input_json_delta"), ("partial_json", JString "{\"city\":")]) ])))
+  , check "parseEvent: unknown -> EvOther"
+      EvOther
+      (parseEvent (sseFrame (JObject [("type", JString "ping")])))
   ]
