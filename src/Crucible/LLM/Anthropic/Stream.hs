@@ -1,5 +1,10 @@
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE GADTs              #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators      #-}
 
 -- | SSE streaming for the live Anthropic path: a pure event core
 -- ('splitFrames' / 'parseEvent' / 'stepAcc') plus thin streaming interpreters.
@@ -11,6 +16,7 @@ module Crucible.LLM.Anthropic.Stream
   , PartialTool (..)
   , emptyAcc
   , stepAcc
+  , runLLMAnthropicStream
   ) where
 
 import Data.ByteString (ByteString)
@@ -21,10 +27,33 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 
 import Data.Maybe (fromMaybe)
+import Data.Word (Word8)
+import qualified Data.ByteString.Lazy as LBS
+
+import Effectful
+import Effectful.Dispatch.Dynamic (reinterpret)
+import Effectful.Exception (bracket)
+import Effectful.State.Static.Local (modify, runState)
+
+import Control.Exception (handle, throwIO)
+import Control.Monad.Catch (Handler (Handler))
+import Control.Retry (capDelay, fullJitterBackoff, limitRetries, recovering)
+import Network.HTTP.Client
+  ( BodyReader, HttpException, Manager, RequestBody (RequestBodyLBS), Response
+  , brRead, method, parseRequest, requestBody, requestHeaders, responseBody
+  , responseClose, responseOpen, responseStatus )
+import Network.HTTP.Types.Status (statusCode)
+
 import Crucible.Chat (ToolUse (..), ToolUseId)
+import Crucible.Emit (Emit, emit)
 import Crucible.Json.Decode (Decoder, at, decodeValue, field, int, string)
+import Crucible.Json.Encode (encode)
 import Crucible.Json.Parse (parse)
-import Crucible.Json.Value (Value (JObject))
+import Crucible.Json.Value (Value (JBool, JObject))
+import Crucible.LLM (LLM (..))
+import Crucible.LLM.Anthropic
+  ( AnthropicConfig (..), AnthropicError (..), isRetryable, newAnthropicManager
+  , requestJson )
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
 
@@ -127,3 +156,95 @@ stepAcc acc = \case
       | i == j    = (j, PartialTool tid n (js <> frag))
       | otherwise = (j, pt)
     parseArgs js = either (const (JObject [])) id (parse js)
+
+-- | Upper bound on a single backoff delay (30s). Mirrors the constant in
+-- "Crucible.LLM.Anthropic"; kept local so this module is self-contained.
+maxBackoffMicros :: Int
+maxBackoffMicros = 30000000
+
+-- | Add @"stream": true@ to a request body object.
+addStream :: Value -> Value
+addStream (JObject kvs) = JObject (kvs ++ [("stream", JBool True)])
+addStream v             = v
+
+-- | Open a @stream:true@ POST, retrying transient PRE-stream failures
+-- (network/timeout, 429, 5xx) with the same policy as the non-streaming path.
+-- Returns the live 2xx response (the caller streams and closes it); a non-2xx
+-- response is drained, closed, and thrown as a retryable 'AnthropicStatusError'.
+-- Nothing is emitted before this returns, so retrying is safe.
+openStream :: AnthropicConfig -> Manager -> Value -> IO (Response BodyReader)
+openStream cfg mgr bodyJson =
+  recovering
+    (capDelay maxBackoffMicros (fullJitterBackoff (acBaseDelayMicros cfg))
+       <> limitRetries (acMaxRetries cfg))
+    [ \_ -> Handler (\(e :: AnthropicError) -> pure (isRetryable e)) ]
+    (\_ -> doOpen)
+  where
+    doOpen = handle (\(e :: HttpException) -> throwIO (AnthropicHttpError e)) $ do
+      base <- parseRequest "https://api.anthropic.com/v1/messages"
+      let req = base
+            { method = "POST"
+            , requestHeaders =
+                [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
+                , ("anthropic-version", "2023-06-01")
+                , ("content-type", "application/json")
+                ]
+            , requestBody = RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode bodyJson)))
+            }
+      resp <- responseOpen req mgr
+      let code = statusCode (responseStatus resp)
+      if code >= 200 && code < 300
+        then pure resp
+        else do
+          errBody <- drainBody (responseBody resp)
+          responseClose resp
+          throwIO (AnthropicStatusError code (TE.decodeUtf8Lenient errBody))
+
+-- | Read a BodyReader to exhaustion into one strict ByteString.
+drainBody :: BodyReader -> IO ByteString
+drainBody br = go []
+  where
+    go acc = do
+      chunk <- brRead br
+      if BS.null chunk then pure (BS.concat (reverse acc)) else go (chunk : acc)
+
+-- | Stream an open response: read chunks, split frames, 'emit' text deltas live,
+-- and fold the whole stream into a 'StreamAcc'.
+streamLoop :: (IOE :> es, Emit :> es) => Response BodyReader -> Eff es StreamAcc
+streamLoop resp = go emptyAcc BS.empty
+  where
+    br = responseBody resp
+    go acc buf = do
+      chunk <- liftIO (brRead br)
+      if BS.null chunk
+        then if BS.all isWs buf then pure acc else emitFrames acc [buf]
+        else do
+          let (frames, rest) = splitFrames (buf <> chunk)
+          acc' <- emitFrames acc frames
+          go acc' rest
+    emitFrames acc []       = pure acc
+    emitFrames acc (f : fs) = do
+      let ev = parseEvent f
+      case ev of
+        EvText t -> emit t
+        _        -> pure ()
+      emitFrames (stepAcc acc ev) fs
+    isWs :: Word8 -> Bool
+    isWs c = c == 32 || c == 10 || c == 13 || c == 9
+
+-- | Stream the text path: interpret 'LLM' against Anthropic SSE, 'emit'ting each
+-- text delta and returning the assembled reply plus summed 'Usage'.
+runLLMAnthropicStream
+  :: (IOE :> es, Emit :> es)
+  => AnthropicConfig -> Eff (LLM : es) a -> Eff es (a, Usage)
+runLLMAnthropicStream cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  reinterpret (runState mempty)
+    (\_ (Complete msgs) -> do
+        acc <- bracket
+                 (liftIO (openStream cfg mgr (addStream (requestJson cfg msgs))))
+                 (liftIO . responseClose)
+                 streamLoop
+        modify (<> saUsage acc)
+        pure (saText acc))
+    action

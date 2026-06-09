@@ -20,6 +20,8 @@
 module Crucible.LLM.Anthropic
   ( AnthropicConfig (..)
   , defaultAnthropicConfig
+  , newAnthropicManager
+  , requestJson
   , runLLMAnthropic
   , recordLLMAnthropic
   , runLLMCassette
