@@ -88,6 +88,11 @@ module Manifest
   , joined
   , rel
   , Member
+    -- * Column-type classes (for newtype columns)
+  , ToField (..)
+  , FromField (..)
+  , ScalarMeta (..)
+  , SqlType (..)
     -- * Table metadata
   , Serial
   , PrimaryKey
@@ -177,13 +182,19 @@ import Manifest.Relation.Loaded
   , rel
   , Member
   )
+import Manifest.Core.Codec
+  ( ToField (..)
+  , FromField (..)
+  )
 import Manifest.Core.Table
   ( Serial
   , PrimaryKey
   , Col
+  , ScalarMeta (..)
   )
 import Manifest.Core.Meta
   ( genericTableMeta
+  , SqlType (..)
   )
 import Manifest.Entity
   ( Entity(..)
