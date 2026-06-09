@@ -149,6 +149,15 @@ agentRun = runAgentScripted
 sseFrame :: Value -> BC.ByteString
 sseFrame v = TE.encodeUtf8 ("data: " <> encode v)
 
+-- Assemble a full SSE body (frames joined by blank lines, trailing blank line).
+sseBody :: [Value] -> BC.ByteString
+sseBody vs = TE.encodeUtf8 (T.intercalate "\n\n" ["data: " <> encode v | v <- vs] <> "\n\n")
+
+-- Run a full body through the pure core to a final StreamAcc.
+runBody :: BC.ByteString -> StreamAcc
+runBody body = let (frames, _) = splitFrames body
+               in foldl' stepAcc emptyAcc (map parseEvent frames)
+
 main :: IO ()
 main = runChecks
   [ check "harness self-test" (2 + 2 :: Int) 4
@@ -568,4 +577,24 @@ main = runChecks
                  , EvToolJson 0 "1}",      EvToolJson 1 "2}"
                  , EvBlockStop 0, EvBlockStop 1 ]
        in saTools a)
+  -- A#3: keystone — full SSE body through the pure core
+  , check "stream keystone: text response"
+      ("Hello world", Usage 25 3)
+      (let a = runBody (sseBody
+                 [ JObject [("type", JString "message_start"), ("message", JObject [("usage", JObject [("input_tokens", JNumber 25), ("output_tokens", JNumber 1)])])]
+                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "text_delta"), ("text", JString "Hello")])]
+                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "text_delta"), ("text", JString " world")])]
+                 , JObject [("type", JString "message_delta"), ("delta", JObject []), ("usage", JObject [("output_tokens", JNumber 3)])]
+                 , JObject [("type", JString "message_stop")] ])
+       in (saText a, saUsage a))
+  , check "stream keystone: tool_use response"
+      ([ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])], Usage 40 12)
+      (let a = runBody (sseBody
+                 [ JObject [("type", JString "message_start"), ("message", JObject [("usage", JObject [("input_tokens", JNumber 40), ("output_tokens", JNumber 1)])])]
+                 , JObject [("type", JString "content_block_start"), ("index", JNumber 0), ("content_block", JObject [("type", JString "tool_use"), ("id", JString "tu_1"), ("name", JString "get_weather"), ("input", JObject [])])]
+                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "input_json_delta"), ("partial_json", JString "{\"city\":")])]
+                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "input_json_delta"), ("partial_json", JString "\"Brisbane\"}")])]
+                 , JObject [("type", JString "content_block_stop"), ("index", JNumber 0)]
+                 , JObject [("type", JString "message_delta"), ("delta", JObject []), ("usage", JObject [("output_tokens", JNumber 12)])] ])
+       in (saTools a, saUsage a))
   ]
