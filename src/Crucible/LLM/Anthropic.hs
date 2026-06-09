@@ -28,6 +28,7 @@ module Crucible.LLM.Anthropic
   , AnthropicError (..)
   , isRetryable
   , chatRequestJson
+  , turnContentJson
   , parseTurn
   , parseUsage
   , runChatAnthropic
@@ -329,6 +330,14 @@ chatRequestJson cfg specs msgs =
 chatMsgJson :: ChatMsg -> Value
 chatMsgJson (ChatMsg r blocks) =
   JObject [("role", JString (anthropicRole r)), ("content", JArray (map blockJson blocks))]
+
+-- | Encode a 'Turn' to the Anthropic content shape (reusing 'blockJson'), for
+-- recording to a chat cassette. Round-trips: @parseTurn (encode (turnContentJson t)) == Right t@.
+turnContentJson :: Turn -> Value
+turnContentJson (Turn t uses) =
+  JObject [("content", JArray (map blockJson blocks))]
+  where
+    blocks = [TextBlock t | not (T.null t)] ++ map ToolUseBlock uses
 
 blockJson :: Block -> Value
 blockJson (TextBlock t) =

@@ -29,7 +29,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
-import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, acStreamIdleSecs)
+import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, acStreamIdleSecs, turnContentJson)
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
@@ -621,4 +621,15 @@ main = runChecks
          (case r of Left (AnthropicStreamTimeout n) -> Just (n :: Int); _ -> Nothing)
   , do r <- timedRead 0 (pure (BC.pack "x"))
        check "timedRead: non-positive disables the guard" (BC.pack "x") r
+  -- crucible-dak: Turn JSON round-trip
+  , check "turnContentJson: round-trips text + tool_use"
+      (Right (Turn "Let me check." [ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])]))
+      (parseTurn (encode (turnContentJson
+        (Turn "Let me check." [ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])]))))
+  , check "turnContentJson: round-trips text-only"
+      (Right (Turn "Hello." []))
+      (parseTurn (encode (turnContentJson (Turn "Hello." []))))
+  , check "turnContentJson: round-trips tool-only"
+      (Right (Turn "" [ToolUse "u" "f" (JObject [])]))
+      (parseTurn (encode (turnContentJson (Turn "" [ToolUse "u" "f" (JObject [])]))))
   ]
