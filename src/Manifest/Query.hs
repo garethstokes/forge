@@ -19,6 +19,7 @@ module Manifest.Query
   , (^.)
   , val
   , (.==), (./=), (.>), (.<), (.&&)
+  , Jsonb, JsonbExpr, (.@>), (.->), (.->>)
   , where_
   , having, distinct
   , orderBy, asc, desc, limit, offset, OrderTerm
@@ -46,6 +47,7 @@ import Manifest.Core.Query (Column (..))
 import Manifest.Core.Sql (bcIntercalate)
 import Manifest.Entity (Entity (..), pkIndex)
 import Manifest.Error (DecodeError (..), DbError (..), DbException (..))
+import Manifest.Json (Json)
 import Manifest.Session (Db, execDb)
 
 newtype QueryM a = QueryM (State QueryState a)
@@ -147,6 +149,37 @@ infix 4 .==, ./=, .>, .<
 (.&&) :: Expr Bool -> Expr Bool -> Expr Bool
 Expr a pa .&& Expr b pb = Expr ("(" <> a <> " AND " <> b <> ")") (pa ++ pb)
 infixr 3 .&&
+
+-- | An opaque jsonb sub-document (the result of '.->'); its Haskell type is not
+-- tracked, so it can only be navigated further with '.->'/'.->>'.
+data Jsonb
+
+-- | Expressions evaluating to jsonb: a typed 'Json' column or an untyped 'Jsonb'.
+class JsonbExpr e where
+  jRaw    :: e -> ByteString
+  jParams :: e -> [SqlParam]
+
+instance JsonbExpr (Expr (Json a)) where
+  jRaw    (Expr s _) = s
+  jParams (Expr _ p) = p
+
+instance JsonbExpr (Expr Jsonb) where
+  jRaw    (Expr s _) = s
+  jParams (Expr _ p) = p
+
+-- | jsonb containment: @lhs \@> rhs@; the right side is a typed literal bound as @?::jsonb@.
+(.@>) :: DbType (Json a) => Expr (Json a) -> Json a -> Expr Bool
+(Expr a pa) .@> lit = Expr (a <> " @> ?::jsonb") (pa ++ [encode lit])
+infix 4 .@>
+
+-- | Navigate to an object field as jsonb; chainable.
+(.->) :: JsonbExpr e => e -> Text -> Expr Jsonb
+e .-> k = Expr (jRaw e <> " -> " <> quoteLit k) (jParams e)
+
+-- | Navigate to an object field as text.
+(.->>) :: JsonbExpr e => e -> Text -> Expr Text
+e .->> k = Expr (jRaw e <> " ->> " <> quoteLit k) (jParams e)
+infixl 8 .->, .->>
 
 from :: forall e. Entity e => QueryM (Handle e)
 from = QueryM $ do

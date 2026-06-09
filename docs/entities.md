@@ -230,6 +230,49 @@ schema and migrations are unchanged.
 > mis-declared relationship is not rejected), and it does not auto-generate id
 > newtypes. Both are planned follow-ups.
 
+## JSONB columns
+
+A column can store a structured value as Postgres `jsonb`. Wrap the value type in
+`Json` and give the value an `autodocodec` `HasCodec` instance:
+
+```haskell
+import Autodocodec
+
+data Prefs = Prefs { prefTheme :: Text, prefTags :: [Text] }
+instance HasCodec Prefs where
+  codec = object "Prefs" $
+    Prefs <$> requiredField "theme" "ui theme" .= prefTheme
+          <*> requiredField "tags"  "tags"     .= prefTags
+
+data UserT f = User
+  { userId    :: Field f (Pk Int)
+  , userPrefs :: Field f (Json Prefs)          -- column type jsonb
+  , userExtra :: Field f (Maybe (Json Prefs))  -- nullable jsonb
+  } deriving Generic
+```
+
+The whole value encodes to and from `jsonb` on every read and write.
+
+Query into the document with `.@>` (containment), `.->` (field as jsonb, chainable),
+and `.->>` (field as text). A projected column is annotated with its `Json` type so the
+operator knows the document shape:
+
+```haskell
+runQuery $ do
+  u <- from @User
+  where_ ((u ^. #userPrefs :: Expr (Json Prefs)) .->> "theme" .== val ("dark" :: Text))
+  pure u
+```
+
+Containment checks whether the stored document contains a given value:
+
+```haskell
+runQuery $ do
+  u <- from @User
+  where_ ((u ^. #userPrefs :: Expr (Json Prefs)) .@> Json (Prefs "dark" []))
+  pure u
+```
+
 ## Adding a table
 
 The full recipe for adding a table:

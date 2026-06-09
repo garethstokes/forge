@@ -9,6 +9,7 @@ import qualified Data.ByteString.Char8 as BC
 import Data.ByteString.Char8 (pack)
 import Data.Text (Text)
 import Manifest.Core.Codec
+import Manifest.Core.SqlType (SqlType(..), sqlTypeDDL, sqlTypeLive)
 import Manifest.Error (DecodeError (..))
 import Harness
 
@@ -83,4 +84,7 @@ tests = group "Codec"
       assertEqual "rmap post-composes decode" (Right (43 :: Int)) (cDecode c (Just (BC.pack "42")))
       assertEqual "rmap leaves sqltype" (cSqlType (dbType @Int)) (cSqlType c)
       assertEqual "used through Profunctor p =>" (encode (5 :: Int)) (cEncode (idVia (dbType @Int)) 5)
+  , test "SqlJsonb DDL and live spellings" $ do
+      assertEqual "ddl"  "JSONB" (sqlTypeDDL SqlJsonb)
+      assertEqual "live" "jsonb" (sqlTypeLive SqlJsonb)
   ]

@@ -110,16 +110,17 @@ infix 4 .@>
 **Scope decision: `.->>` returns `Expr Text`** (compares directly with `val "dark"`); a
 missing key yields SQL NULL, which simply fails the comparison (conventional behaviour).
 
-Usage:
+Usage (a projected column carries a `:: Expr (Json a)` annotation, because the `#label`
+projection's value type is not fixed by the label alone):
 
 ```haskell
 runQuery $ do
   u <- from @User
-  where_ (u ^. #userPrefs .->> "theme" .== val "dark")
+  where_ ((u ^. #userPrefs :: Expr (Json Prefs)) .->> "theme" .== val "dark")
   pure u
 
-selectWhere-style containment: u ^. #userPrefs .@> Json (Prefs Dark [])
-chaining: u ^. #userPrefs .-> "window" .->> "title"
+containment: (u ^. #userPrefs :: Expr (Json Prefs)) .@> Json (Prefs Dark [])
+chaining:    (u ^. #userPrefs :: Expr (Json Prefs)) .-> "window" .->> "title"
 ```
 
 ## 4. Umbrella exports (`Manifest.hs`)
