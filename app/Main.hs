@@ -21,8 +21,10 @@ import Effectful (runEff)
 import Crucible.LLM (Message (..), Role (..), complete)
 import Crucible.LLM.Anthropic
   ( defaultAnthropicConfig
+  , recordChatAnthropic
   , recordLLMAnthropic
   , runChatAnthropicUsage
+  , runChatCassette
   , runLLMAnthropic
   , runLLMCassette
   )
@@ -106,3 +108,16 @@ main = do
         Right a  -> TIO.putStrLn ("stream tool result: " <> a)
         Left err -> TIO.putStrLn ("stream tool error: " <> T.pack (show err))
       TIO.putStrLn ("stream tool usage: " <> T.pack (show (usTotalTokens tUsage)) <> " tokens")
+      -- Chat cassette: record a live tool-agent run, then replay it (no network).
+      let chatCassette = "/tmp/crucible-chat-cassette.jsonl"
+          weatherTool3 = Tl.Tool "get_weather" (SObj [("city", SStr)])
+            (\_ -> pure (JString "It is 26C and sunny."))
+          toolQuestion = "Use the tool to get the weather in Brisbane, then tell me."
+      TIO.writeFile chatCassette ""  -- fresh cassette
+      recordedAns <- runEff (recordChatAnthropic chatCassette cfg (runToolAgent [weatherTool3] toolQuestion))
+      replayedAns <- runEff (runChatCassette chatCassette (runToolAgent [weatherTool3] toolQuestion))
+      case (recordedAns, replayedAns) of
+        (Right a, Right b)
+          | a == b    -> TIO.putStrLn ("chat cassette: OK replay matches — " <> a)
+          | otherwise -> TIO.putStrLn ("chat cassette: MISMATCH — live=" <> a <> " replay=" <> b)
+        _ -> TIO.putStrLn "chat cassette: a run failed"
