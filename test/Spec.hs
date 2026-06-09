@@ -31,7 +31,7 @@ import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable)
 import Crucible.Chat
-  (Chat, converse, runChatScripted, Turn(..), ChatMsg(..), Block(..), ToolUse(..))
+  (Chat, converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 
 -- Sample types for M3 tests
 
@@ -100,6 +100,10 @@ answerCodec = C.object (Answer <$> C.field "answer" (\(Answer t) -> t) C.str)
 
 decCodec :: Codec (Decision ToolCall Answer)
 decCodec = decisionCodec toolCallCodec answerCodec
+
+-- M12 Task 3: runToolAgent fixture
+weatherToolC :: Tl.Tool es
+weatherToolC = Tl.Tool "get_weather" (SObj [("city", SStr)]) (\_ -> pure (JString "Sunny in Brisbane!"))
 
 -- M11 Task 1: Crucible.Function fixtures
 classifyFn :: LlmFn T.Text T.Text
@@ -415,4 +419,22 @@ main = runChecks
       (Turn "hello" [])
       (runPureEff (runChatScripted [Turn "hello" []]
         (converse [] [ChatMsg User [TextBlock "hi"]])))
+  -- M12 Task 3: runToolAgent loop
+  , check "runToolAgent: runs the tool, then returns final text"
+      (Right "Sunny in Brisbane!")
+      (runPureEff (runChatScripted
+        [ Turn "" [ToolUse "u1" "get_weather" (JObject [("city", JString "Brisbane")])]
+        , Turn "Sunny in Brisbane!" [] ]
+        (runToolAgent [weatherToolC] "weather in Brisbane?")))
+  , check "runToolAgent: unknown tool fed back, then answers"
+      (Right "done")
+      (runPureEff (runChatScripted
+        [ Turn "" [ToolUse "u1" "nonesuch" (JObject [])]
+        , Turn "done" [] ]
+        (runToolAgent [weatherToolC] "x")))
+  , check "runToolAgent: exhausts the iteration cap -> Left"
+      (Left (ToolLoopExceeded 10))
+      (runPureEff (runChatScripted
+        (replicate 20 (Turn "" [ToolUse "u" "get_weather" (JObject [])]))
+        (runToolAgent [weatherToolC] "x")))
   ]
