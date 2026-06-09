@@ -31,7 +31,7 @@ import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage)
 import Crucible.Chat
-  (converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
+  (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
@@ -457,6 +457,11 @@ main = runChecks
       (runPureEff (runChatScripted
         (replicate 20 (Turn "" [ToolUse "u" "get_weather" (JObject [])]))
         (runToolAgent [weatherToolC] "x")))
+  , check "runToolAgentN: custom cap is honoured and reported"
+      (Left (ToolLoopExceeded 2))
+      (runPureEff (runChatScripted
+        (replicate 20 (Turn "" [ToolUse "u" "get_weather" (JObject [])]))
+        (runToolAgentN 2 [weatherToolC] "x")))
   -- A#4: Usage Monoid + cost helper
   , check "usage: semigroup sums fields"
       (Usage 4 6)

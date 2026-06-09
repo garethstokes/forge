@@ -22,6 +22,7 @@ module Crucible.Chat
   , ChatError (..)
   , runChatScripted
   , runToolAgent
+  , runToolAgentN
   , defaultMaxIterations
   ) where
 
@@ -94,14 +95,10 @@ runChatScripted turns = reinterpret (evalState turns) $ \_ -> \case
 defaultMaxIterations :: Int
 defaultMaxIterations = 10
 
--- | Drive a native tool-calling loop to a final text answer. Each round: ask
--- the model (advertising the tools), run any requested tools (unknown name or a
--- tool's own error 'Value' is fed back as a tool_result so the model can
--- recover), and continue until a text-only turn. Caps at 'defaultMaxIterations',
--- returning @Left ('ToolLoopExceeded' n)@. Total: works under the scripted and
--- live interpreters alike (needs only @Chat :> es@).
-runToolAgent :: (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
-runToolAgent tools question = loop defaultMaxIterations [ChatMsg User [TextBlock question]]
+-- | Like 'runToolAgent' but with an explicit iteration cap. On exhaustion
+-- returns @Left ('ToolLoopExceeded' cap)@ — the actual budget used.
+runToolAgentN :: (Chat :> es) => Int -> [Tool es] -> Text -> Eff es (Either ChatError Text)
+runToolAgentN cap tools question = loop cap [ChatMsg User [TextBlock question]]
   where
     specs = [(toolName t, toolSchema t) | t <- tools]
 
@@ -111,7 +108,7 @@ runToolAgent tools question = loop defaultMaxIterations [ChatMsg User [TextBlock
         then pure (Right (turnText turn))
         else
           if n <= 0
-            then pure (Left (ToolLoopExceeded defaultMaxIterations))
+            then pure (Left (ToolLoopExceeded cap))
             else do
               results <- mapM runOne (turnToolUses turn)
               let assistant =
@@ -124,3 +121,9 @@ runToolAgent tools question = loop defaultMaxIterations [ChatMsg User [TextBlock
     runOne u = case filter ((== tuName u) . toolName) tools of
       (t : _) -> ToolResultBlock (tuId u) <$> toolRun t (tuArgs u)
       []      -> pure (ToolResultBlock (tuId u) (JString ("unknown tool: " <> tuName u)))
+
+-- | Drive a native tool-calling loop to a final text answer, capped at
+-- 'defaultMaxIterations'. See 'runToolAgentN' for a custom cap. Total: works
+-- under the scripted and live interpreters alike (needs only @Chat :> es@).
+runToolAgent :: (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
+runToolAgent = runToolAgentN defaultMaxIterations
