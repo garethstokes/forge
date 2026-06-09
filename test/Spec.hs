@@ -29,7 +29,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
-import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable)
+import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn)
 import Crucible.Chat
   (Chat, converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 
@@ -437,4 +437,25 @@ main = runChecks
       (runPureEff (runChatScripted
         (replicate 20 (Turn "" [ToolUse "u" "get_weather" (JObject [])]))
         (runToolAgent [weatherToolC] "x")))
+  -- M12 Task 5: chatRequestJson + parseTurn
+  , check "parseTurn: text + tool_use"
+      (Right (Turn "Let me check."
+                [ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])]))
+      (parseTurn "{\"content\":[{\"type\":\"text\",\"text\":\"Let me check.\"},{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Brisbane\"}}]}")
+  , check "chatRequestJson: tools + message blocks"
+      (JObject
+        [ ("model", JString "claude-haiku-4-5-20251001")
+        , ("max_tokens", JNumber 1024)
+        , ("tools", JArray
+            [ JObject [("name", JString "get_weather")
+                      ,("input_schema", JObject
+                          [ ("type", JString "object")
+                          , ("properties", JObject [("city", JObject [("type", JString "string")])])
+                          , ("required", JArray [JString "city"]) ])] ])
+        , ("messages", JArray
+            [ JObject [("role", JString "user")
+                      ,("content", JArray [JObject [("type", JString "text"),("text", JString "hi")]])] ]) ])
+      (chatRequestJson (defaultAnthropicConfig "k")
+        [("get_weather", SObj [("city", SStr)])]
+        [ChatMsg User [TextBlock "hi"]])
   ]

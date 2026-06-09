@@ -25,6 +25,8 @@ module Crucible.LLM.Anthropic
   , runLLMCassette
   , AnthropicError (..)
   , isRetryable
+  , chatRequestJson
+  , parseTurn
   ) where
 
 import Data.List (partition)
@@ -60,10 +62,13 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 
+import Crucible.Chat (Block (..), ChatMsg (..), ToolUse (..), Turn (..))
 import Crucible.Json.Encode (encode)
 import Crucible.Json.Value (Value (..))
 import qualified Crucible.Json.Decode as D
 import Crucible.LLM (LLM (..), Message (..), Role (..))
+import Crucible.Schema (Schema, schemaToJson)
+import Crucible.Tool (ToolName)
 
 -- | A typed live-path failure. Network/timeout errors are wrapped as
 -- 'AnthropicHttpError'; a non-2xx response is 'AnthropicStatusError'; a 2xx body
@@ -231,3 +236,55 @@ anthropicRole = \case
 -- | Pull @content[0].text@ out of a Messages API response.
 extractText :: Text -> Either D.Error Text
 extractText = D.decodeString (D.field "content" (D.index 0 (D.field "text" D.string)))
+
+-- | Build the @/v1/messages@ request body for a chat turn: the model + token
+-- cap, the advertised @tools@ (each @{name, input_schema}@), and the
+-- conversation @messages@ as content-block arrays.
+chatRequestJson :: AnthropicConfig -> [(ToolName, Schema)] -> [ChatMsg] -> Value
+chatRequestJson cfg specs msgs =
+  JObject
+    [ ("model", JString (acModel cfg))
+    , ("max_tokens", JNumber (fromIntegral (acMaxTokens cfg)))
+    , ("tools", JArray [ toolSpec n s | (n, s) <- specs ])
+    , ("messages", JArray (map chatMsgJson msgs))
+    ]
+  where
+    toolSpec n s = JObject [("name", JString n), ("input_schema", schemaToJson s)]
+
+chatMsgJson :: ChatMsg -> Value
+chatMsgJson (ChatMsg r blocks) =
+  JObject [("role", JString (anthropicRole r)), ("content", JArray (map blockJson blocks))]
+
+blockJson :: Block -> Value
+blockJson (TextBlock t) =
+  JObject [("type", JString "text"), ("text", JString t)]
+blockJson (ToolUseBlock (ToolUse i n a)) =
+  JObject [("type", JString "tool_use"), ("id", JString i), ("name", JString n), ("input", a)]
+blockJson (ToolResultBlock i v) =
+  JObject
+    [ ("type", JString "tool_result")
+    , ("tool_use_id", JString i)
+    , ("content", resultText v)
+    ]
+  where
+    resultText (JString s) = JString s
+    resultText other       = JString (encode other)
+
+-- | Parse a @/v1/messages@ response body into a 'Turn': concatenated @text@
+-- blocks, plus every @tool_use@ block.
+parseTurn :: Text -> Either D.Error Turn
+parseTurn = D.decodeString (D.field "content" (toTurn <$> D.list rblock))
+  where
+    toTurn bs = Turn (T.concat [t | RText t <- bs]) [u | RUse u <- bs]
+
+data RBlock = RText Text | RUse ToolUse | RSkip
+
+rblock :: D.Decoder RBlock
+rblock = D.field "type" D.string >>= \ty -> case ty of
+  "text"     -> RText <$> D.field "text" D.string
+  "tool_use" ->
+    (\i n inp -> RUse (ToolUse i n inp))
+      <$> D.field "id" D.string
+      <*> D.field "name" D.string
+      <*> D.field "input" D.value
+  _ -> D.succeed RSkip
