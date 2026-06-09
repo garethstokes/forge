@@ -22,6 +22,7 @@ import Crucible.LLM.Anthropic
   ( defaultAnthropicConfig
   , recordLLMAnthropic
   , runChatAnthropic
+  , runChatAnthropicUsage
   , runLLMAnthropic
   , runLLMCassette
   )
@@ -29,6 +30,7 @@ import Crucible.Function (llmFn, call)
 import Crucible.Codec (str)
 import qualified Crucible.Json.Decode as D
 import Crucible.Chat (runToolAgent)
+import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Schema (Schema (SObj, SStr))
 import Crucible.Json.Value (Value (JString))
@@ -63,7 +65,14 @@ main = do
         Left err -> TIO.putStrLn ("typed fn decode error: " <> T.pack (D.message err))
       let weatherTool = Tl.Tool "get_weather" (SObj [("city", SStr)])
             (\_ -> pure (JString "It is 26C and sunny."))
-      toolAns <- runEff (runChatAnthropic cfg (runToolAgent [weatherTool] "Use the tool to get the weather in Brisbane, then tell me."))
+      (toolAns, usage) <- runEff (runChatAnthropicUsage cfg (runToolAgent [weatherTool] "Use the tool to get the weather in Brisbane, then tell me."))
       case toolAns of
         Right a  -> TIO.putStrLn ("tool agent: " <> a)
         Left err -> TIO.putStrLn ("tool agent error: " <> T.pack (show err))
+      -- Illustrative per-MTok rates (not authoritative pricing).
+      let rates = Rates 1.0 5.0
+      TIO.putStrLn
+        ( "usage: " <> T.pack (show (usInputTokens usage)) <> " in + "
+            <> T.pack (show (usOutputTokens usage)) <> " out = "
+            <> T.pack (show (usTotalTokens usage)) <> " tokens"
+            <> "; est. cost $" <> T.pack (show (estimateCost rates usage)) )
