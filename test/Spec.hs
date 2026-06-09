@@ -15,7 +15,7 @@ import qualified Data.Text
 import qualified Data.Text as T
 import Crucible.Json.Decode as D
 import Crucible.Json.Decode (Error(..), Crumb(..))
-import Crucible.Schema (Schema(..), renderSchema)
+import Crucible.Schema (Schema(..), renderSchema, schemaToJson)
 import qualified Crucible.Codec as C
 import Crucible.Codec (Codec(..), str, codecSchema)
 import GHC.Generics (Generic)
@@ -384,6 +384,22 @@ main = runChecks
       True
       (either (const True) (const False)
         (runPureEff (runLLMScripted ["bad", "bad"] (call (withRetries 1 classifyFn) "x"))))
+  -- M12 Task 1: schemaToJson
+  , check "schemaToJson: object with required field"
+      (JObject
+        [ ("type", JString "object")
+        , ("properties", JObject [("city", JObject [("type", JString "string")])])
+        , ("required", JArray [JString "city"]) ])
+      (schemaToJson (SObj [("city", SStr)]))
+  , check "schemaToJson: optional field dropped from required"
+      (JObject
+        [ ("type", JString "object")
+        , ("properties", JObject [("note", JObject [("type", JString "string")])])
+        , ("required", JArray []) ])
+      (schemaToJson (SObj [("note", SOpt SStr)]))
+  , check "schemaToJson: array of strings"
+      (JObject [("type", JString "array"), ("items", JObject [("type", JString "string")])])
+      (schemaToJson (SArr SStr))
   -- live-path-robustness Task 2: AnthropicError + isRetryable
   , check "isRetryable: 429"        True  (isRetryable (AnthropicStatusError 429 ""))
   , check "isRetryable: 500"        True  (isRetryable (AnthropicStatusError 500 ""))

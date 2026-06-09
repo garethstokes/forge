@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Crucible.Schema (Schema(..), renderSchema) where
+module Crucible.Schema (Schema(..), renderSchema, schemaToJson) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import Crucible.Json.Value (Value (..))
 
 -- | A structural description of a type, injected into prompts.
 data Schema
@@ -32,3 +33,25 @@ renderSchema (SObj fs)   =
 
 quote :: Text -> Text
 quote s = "\"" <> s <> "\""
+
+-- | Render a 'Schema' as a JSON-Schema object (for an Anthropic tool's
+-- @input_schema@). Optional object fields are omitted from @required@.
+schemaToJson :: Schema -> Value
+schemaToJson s = case s of
+  SStr      -> JObject [("type", JString "string")]
+  SNum      -> JObject [("type", JString "number")]
+  SBool     -> JObject [("type", JString "boolean")]
+  SArr e    -> JObject [("type", JString "array"), ("items", schemaToJson e)]
+  SEnum vs  -> JObject [("type", JString "string"), ("enum", JArray (map JString vs))]
+  SOneOf ss -> JObject [("anyOf", JArray (map schemaToJson ss))]
+  SOpt e    -> schemaToJson e
+  SAny      -> JObject []
+  SObj kvs  ->
+    JObject
+      [ ("type", JString "object")
+      , ("properties", JObject [(k, schemaToJson v) | (k, v) <- kvs])
+      , ("required", JArray [JString k | (k, v) <- kvs, not (isOpt v)])
+      ]
+  where
+    isOpt (SOpt _) = True
+    isOpt _        = False
