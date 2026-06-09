@@ -21,7 +21,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 
 import Data.Maybe (fromMaybe)
-import Crucible.Chat (ToolUse (..))
+import Crucible.Chat (ToolUse (..), ToolUseId)
 import Crucible.Json.Decode (Decoder, at, decodeValue, field, int, string)
 import Crucible.Json.Parse (parse)
 import Crucible.Json.Value (Value (JObject))
@@ -43,9 +43,6 @@ splitFrames = go []
            else if BS.null before
                   then go acc (BS.drop 2 rest)
                   else go (before : acc) (BS.drop 2 rest)
-
--- Anthropic's tool_use id is a JSON string.
-type ToolUseId = Text
 
 -- | A single parsed SSE event, reduced to what the accumulator needs.
 data StreamEvent
@@ -117,7 +114,7 @@ stepAcc acc = \case
   EvToolStart i tid n -> acc { saPartial = (i, PartialTool tid n "") : saPartial acc }
   EvToolJson i frag   -> acc { saPartial = map (bump i frag) (saPartial acc) }
   EvBlockStop i       -> case lookup i (saPartial acc) of
-    Nothing                       -> acc
+    Nothing                       -> acc  -- non-tool block stop (e.g. text); ignore
     Just (PartialTool tid n js) -> acc
       { saPartial = filter ((/= i) . fst) (saPartial acc)
       , saTools   = saTools acc ++ [ToolUse tid n (parseArgs js)]

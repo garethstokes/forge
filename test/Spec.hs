@@ -558,4 +558,14 @@ main = runChecks
                  , EvToolJson 0 "{\"city\":", EvToolJson 0 "\"Brisbane\"}"
                  , EvBlockStop 0, EvUsageOut 12 ]
        in (saTools a, saUsage a))
+  , check "stepAcc: interleaved tool blocks keep separate args"
+      ([ ToolUse "tu_a" "alpha" (JObject [("x", JNumber 1)])
+       , ToolUse "tu_b" "beta"  (JObject [("y", JNumber 2)]) ])
+      (let a = foldl' stepAcc emptyAcc
+                 [ EvToolStart 0 "tu_a" "alpha"
+                 , EvToolStart 1 "tu_b" "beta"
+                 , EvToolJson 0 "{\"x\":", EvToolJson 1 "{\"y\":"
+                 , EvToolJson 0 "1}",      EvToolJson 1 "2}"
+                 , EvBlockStop 0, EvBlockStop 1 ]
+       in saTools a)
   ]
