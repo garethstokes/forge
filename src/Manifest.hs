@@ -133,6 +133,7 @@ module Manifest
   , diffTable
   , renderCreateTable
   , renderAddColumn
+  , renderCreateIndex
   , liveColumns
   , tableExists
     -- * Row-level security
@@ -147,6 +148,12 @@ module Manifest
   , currentSettingOr
   , lit
   , withRlsContext
+    -- * Declarative indexes
+  , IndexMethod (..)
+  , Index
+  , IndexDef (..)
+  , gin
+  , btree
     -- * Errors
   , DbError(..)
   , DbException(..)
@@ -173,6 +180,10 @@ import Manifest.Core.Rls
   ( Policy, PolicyCmd (..) )
 import Manifest.Rls
   ( policy, using, withCheck, forCommand )
+import Manifest.Core.Index
+  ( IndexMethod (..), Index, IndexDef (..) )
+import Manifest.Index
+  ( gin, btree )
 import Manifest.Core.Relation
   ( HasRelation(..)
   , Card(..)
@@ -250,6 +261,7 @@ import Manifest.Migrate
   , diffTable
   , renderCreateTable
   , renderAddColumn
+  , renderCreateIndex
   , liveColumns
   , tableExists
   )

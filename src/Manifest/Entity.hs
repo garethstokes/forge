@@ -35,6 +35,7 @@ import Data.Proxy (Proxy(..))
 import GHC.Generics
 import GHC.TypeLits (Symbol, TypeError, ErrorMessage(..))
 import Manifest.Core.Cascade (CascadeRule)
+import Manifest.Core.Index (Index)
 import Manifest.Core.Rls (Policy)
 import Manifest.Core.Codec (DbType(..), Codec(..), RowDecoder, SqlParam, encode, decodeCol)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..))
@@ -87,6 +88,11 @@ class Typeable a => Entity a where
   -- "Manifest.Rls" DSL; applied by the migration engine.
   rlsPolicies :: [Policy a]
   rlsPolicies = []
+  -- | Declarative indexes for this entity (default: none). Built with the
+  -- "Manifest.Index" DSL ('Manifest.Index.gin' / 'Manifest.Index.btree');
+  -- created (create-if-absent, never dropped) by the migration engine.
+  indexes :: [Index a]
+  indexes = []
 
 -- | A row's identity: a newtype over its primary-key value.
 newtype Key a = Key { unKey :: PrimKey a }
