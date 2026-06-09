@@ -1,4 +1,4 @@
--- | Provider-agnostic token-usage accounting for the live LLM path.
+-- | Provider-agnostic token-usage accounting. Intended for use by live LLM interpreters.
 --
 -- 'Usage' is a 'Monoid' whose '<>' sums token counts, so accumulating usage
 -- across many API calls is just '<>' / 'mconcat'. 'estimateCost' is a pure
@@ -34,6 +34,7 @@ data Rates = Rates
   { rInputPerMTok  :: !Double
   , rOutputPerMTok :: !Double
   }
+  deriving (Eq, Show)
 
 -- | Estimated cost in the rates' currency: each token count divided by one
 -- million, multiplied by its rate, summed.

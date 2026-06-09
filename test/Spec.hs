@@ -442,9 +442,12 @@ main = runChecks
   , check "usage: semigroup sums fields"
       (Usage 4 6)
       (Usage 1 2 <> Usage 3 4)
-  , check "usage: mempty is identity"
+  , check "usage: mempty is left identity"
       (Usage 5 9)
       (mempty <> Usage 5 9)
+  , check "usage: mempty is right identity"
+      (Usage 5 9)
+      (Usage 5 9 <> mempty)
   , check "usage: total tokens"
       (14 :: Int)
       (usTotalTokens (Usage 5 9))
