@@ -12,7 +12,7 @@ version = "0.1.0"
 
 [build.lib]
 source-dirs = ["src"]
-depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls"]
+depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls", "http-types", "retry"]
 
 [build.exe.crucible-anthropic]
 source-dirs = ["app"]
@@ -50,3 +50,9 @@ vendored = "0.2.1.0"
 
 [dependencies.http-client-tls]
 repo = "https://github.com/snoyberg/http-client"
+
+[dependencies.ram]
+vendored = "0.22.0"
+
+[dependencies.retry]
+repo = "https://github.com/Soostone/retry.git"
