@@ -29,6 +29,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
+import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable)
 
 -- Sample types for M3 tests
 
@@ -383,4 +384,12 @@ main = runChecks
       True
       (either (const True) (const False)
         (runPureEff (runLLMScripted ["bad", "bad"] (call (withRetries 1 classifyFn) "x"))))
+  -- live-path-robustness Task 2: AnthropicError + isRetryable
+  , check "isRetryable: 429"        True  (isRetryable (AnthropicStatusError 429 ""))
+  , check "isRetryable: 500"        True  (isRetryable (AnthropicStatusError 500 ""))
+  , check "isRetryable: 503"        True  (isRetryable (AnthropicStatusError 503 ""))
+  , check "isRetryable: 400"        False (isRetryable (AnthropicStatusError 400 ""))
+  , check "isRetryable: 401"        False (isRetryable (AnthropicStatusError 401 ""))
+  , check "isRetryable: 404"        False (isRetryable (AnthropicStatusError 404 ""))
+  , check "isRetryable: no-content" False (isRetryable (AnthropicNoContent ""))
   ]

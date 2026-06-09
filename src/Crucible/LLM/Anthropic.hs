@@ -22,6 +22,8 @@ module Crucible.LLM.Anthropic
   , runLLMAnthropic
   , recordLLMAnthropic
   , runLLMCassette
+  , AnthropicError (..)
+  , isRetryable
   ) where
 
 import Data.List (partition)
@@ -36,8 +38,10 @@ import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret)
 import Effectful.State.Static.Local (evalState, get, put)
 
+import Control.Exception (Exception)
 import Network.HTTP.Client
-  ( RequestBody (RequestBodyLBS)
+  ( HttpException
+  , RequestBody (RequestBodyLBS)
   , httpLbs
   , method
   , parseRequest
@@ -51,6 +55,25 @@ import Crucible.Json.Encode (encode)
 import Crucible.Json.Value (Value (..))
 import qualified Crucible.Json.Decode as D
 import Crucible.LLM (LLM (..), Message (..), Role (..))
+
+-- | A typed live-path failure. Network/timeout errors are wrapped as
+-- 'AnthropicHttpError'; a non-2xx response is 'AnthropicStatusError'; a 2xx body
+-- with no text content block is 'AnthropicNoContent'. Thrown by the live
+-- interpreter (the 'LLM' effect still returns 'Text'); callers 'try' it in IO.
+data AnthropicError
+  = AnthropicHttpError   HttpException
+  | AnthropicStatusError Int Text
+  | AnthropicNoContent   Text
+  deriving (Show)
+
+instance Exception AnthropicError
+
+-- | Whether a failure is worth retrying: network/timeout errors and HTTP 429 /
+-- 5xx are transient; other 4xx and a content-shape failure are permanent.
+isRetryable :: AnthropicError -> Bool
+isRetryable (AnthropicHttpError _)     = True
+isRetryable (AnthropicStatusError s _) = s == 429 || s >= 500
+isRetryable (AnthropicNoContent _)     = False
 
 -- | What the live interpreter needs: an API key, a model id, and a token cap.
 data AnthropicConfig = AnthropicConfig
