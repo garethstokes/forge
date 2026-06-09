@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | The live Anthropic interpreter for the 'LLM' effect (M8).
@@ -38,18 +39,26 @@ import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret)
 import Effectful.State.Static.Local (evalState, get, put)
 
-import Control.Exception (Exception)
+import Control.Exception (Exception, handle, throwIO)
+import Control.Monad.Catch (Handler (Handler))
+import Control.Retry (capDelay, fullJitterBackoff, limitRetries, recovering)
 import Network.HTTP.Client
   ( HttpException
+  , Manager
+  , ManagerSettings (managerResponseTimeout)
   , RequestBody (RequestBodyLBS)
   , httpLbs
   , method
+  , newManager
   , parseRequest
   , requestBody
   , requestHeaders
   , responseBody
+  , responseStatus
+  , responseTimeoutMicro
   )
-import Network.HTTP.Client.TLS (newTlsManager)
+import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types.Status (statusCode)
 
 import Crucible.Json.Encode (encode)
 import Crucible.Json.Value (Value (..))
@@ -100,22 +109,39 @@ defaultAnthropicConfig key =
     , acBaseDelayMicros = 500000
     }
 
--- | Interpret @LLM@ against the live Anthropic Messages API. Each 'Complete'
--- becomes one @POST \/v1\/messages@; the reply is the first text content block.
+-- | Upper bound on a single backoff delay (30s), so exponential growth is capped.
+maxBackoffMicros :: Int
+maxBackoffMicros = 30000000
+
+-- | One TLS 'Manager' configured with the request timeout, shared across all
+-- 'Complete's of a single interpreter invocation.
+newAnthropicManager :: AnthropicConfig -> IO Manager
+newAnthropicManager cfg =
+  newManager
+    tlsManagerSettings
+      { managerResponseTimeout = responseTimeoutMicro (acTimeoutSecs cfg * 1000000) }
+
+-- | Interpret @LLM@ against the live Anthropic Messages API. One shared TLS
+-- manager is created up front; each 'Complete' is one @POST \/v1\/messages@ with
+-- timeout + retry. Failures throw 'AnthropicError'.
 runLLMAnthropic :: (IOE :> es) => AnthropicConfig -> Eff (LLM : es) a -> Eff es a
-runLLMAnthropic cfg = interpret $ \_ -> \case
-  Complete msgs -> liftIO (anthropicComplete cfg msgs)
+runLLMAnthropic cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  interpret (\_ (Complete msgs) -> liftIO (anthropicComplete cfg mgr msgs)) action
 
 -- | Like 'runLLMAnthropic', but also TEE each reply to a cassette file (one
 -- JSON-encoded reply per line, appended in call order). A recorded cassette
 -- replays deterministically via 'runLLMCassette' — the slider between a live
 -- eval and a hermetic test.
 recordLLMAnthropic :: (IOE :> es) => FilePath -> AnthropicConfig -> Eff (LLM : es) a -> Eff es a
-recordLLMAnthropic path cfg = interpret $ \_ -> \case
-  Complete msgs -> liftIO $ do
-    reply <- anthropicComplete cfg msgs
-    TIO.appendFile path (encode (JString reply) <> "\n")
-    pure reply
+recordLLMAnthropic path cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  interpret
+    (\_ (Complete msgs) -> liftIO $ do
+        reply <- anthropicComplete cfg mgr msgs
+        TIO.appendFile path (encode (JString reply) <> "\n")
+        pure reply)
+    action
 
 -- | Replay a cassette recorded by 'recordLLMAnthropic': each 'Complete' pops the
 -- next recorded reply in order (a file-backed 'runLLMScripted'). Deterministic;
@@ -136,27 +162,38 @@ runLLMCassette path action = do
         []       -> pure "")
     action
 
--- | One live round-trip: encode the messages, POST them, return the reply text.
--- A non-JSON or shape-unexpected response degrades to the raw body so failures
--- surface legibly rather than as an empty string.
-anthropicComplete :: AnthropicConfig -> [Message] -> IO Text
-anthropicComplete cfg msgs = do
-  mgr <- newTlsManager
-  base <- parseRequest "https://api.anthropic.com/v1/messages"
-  let req =
-        base
-          { method = "POST"
-          , requestHeaders =
-              [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
-              , ("anthropic-version", "2023-06-01")
-              , ("content-type", "application/json")
-              ]
-          , requestBody =
-              RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode (requestJson cfg msgs))))
-          }
-  resp <- httpLbs req mgr
-  let body = TE.decodeUtf8 (LBS.toStrict (responseBody resp))
-  pure (either (const body) id (extractText body))
+-- | One robust round-trip: retry transient failures (network/timeout, 429, 5xx)
+-- with jittered exponential backoff up to 'acMaxRetries', then rethrow a typed
+-- 'AnthropicError'. A non-retryable failure (other 4xx, or a 2xx with no text
+-- content) is thrown immediately.
+anthropicComplete :: AnthropicConfig -> Manager -> [Message] -> IO Text
+anthropicComplete cfg mgr msgs =
+  recovering
+    (capDelay maxBackoffMicros (fullJitterBackoff (acBaseDelayMicros cfg))
+       <> limitRetries (acMaxRetries cfg))
+    [ \_ -> Handler (\(e :: AnthropicError) -> pure (isRetryable e)) ]
+    (\_ -> doRequest)
+  where
+    doRequest :: IO Text
+    doRequest = handle (\(e :: HttpException) -> throwIO (AnthropicHttpError e)) $ do
+      base <- parseRequest "https://api.anthropic.com/v1/messages"
+      let req =
+            base
+              { method = "POST"
+              , requestHeaders =
+                  [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
+                  , ("anthropic-version", "2023-06-01")
+                  , ("content-type", "application/json")
+                  ]
+              , requestBody =
+                  RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode (requestJson cfg msgs))))
+              }
+      resp <- httpLbs req mgr
+      let body = TE.decodeUtf8Lenient (LBS.toStrict (responseBody resp))
+          code = statusCode (responseStatus resp)
+      if code >= 200 && code < 300
+        then either (\_ -> throwIO (AnthropicNoContent body)) pure (extractText body)
+        else throwIO (AnthropicStatusError code body)
 
 -- | The Anthropic request body. System turns are concatenated into the
 -- top-level @system@ field; the remaining turns become the @messages@ array.
