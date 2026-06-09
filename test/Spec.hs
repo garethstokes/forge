@@ -502,4 +502,7 @@ main = runChecks
   , check "splitFrames: no blank line -> all remainder"
       ([], BC.pack "noblank")
       (splitFrames (BC.pack "noblank"))
+  , check "splitFrames: trailing delimiter -> non-empty frames, empty remainder"
+      ([BC.pack "A", BC.pack "B"], BC.pack "")
+      (splitFrames (BC.pack "A\n\nB\n\n"))
   ]

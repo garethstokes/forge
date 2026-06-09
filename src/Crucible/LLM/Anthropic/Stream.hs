@@ -11,7 +11,9 @@ import qualified Data.ByteString as BS
 
 -- | Split complete SSE frames (blank-line @\\n\\n@-delimited) off the buffer,
 -- returning the frames and the unconsumed remainder. With no blank line yet the
--- whole buffer is the remainder.
+-- whole buffer is the remainder. Empty frames (e.g. from a trailing @\\n\\n@,
+-- which every well-formed SSE body has) are omitted, so returned frames are
+-- always non-empty. (Anthropic SSE uses bare LF; CRLF is not normalised.)
 splitFrames :: ByteString -> ([ByteString], ByteString)
 splitFrames = go []
   where
@@ -19,4 +21,6 @@ splitFrames = go []
       let (before, rest) = BS.breakSubstring "\n\n" buf
       in if BS.null rest
            then (reverse acc, buf)
-           else go (before : acc) (BS.drop 2 rest)
+           else if BS.null before
+                  then go acc (BS.drop 2 rest)
+                  else go (before : acc) (BS.drop 2 rest)
