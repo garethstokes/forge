@@ -75,21 +75,29 @@ isRetryable (AnthropicHttpError _)     = True
 isRetryable (AnthropicStatusError s _) = s == 429 || s >= 500
 isRetryable (AnthropicNoContent _)     = False
 
--- | What the live interpreter needs: an API key, a model id, and a token cap.
+-- | What the live interpreter needs: an API key, a model id, a token cap,
+-- and knobs for timeout + retry behaviour.
 data AnthropicConfig = AnthropicConfig
-  { acApiKey    :: Text
-  , acModel     :: Text
-  , acMaxTokens :: Int
+  { acApiKey          :: Text
+  , acModel           :: Text
+  , acMaxTokens       :: Int
+  , acTimeoutSecs     :: Int  -- ^ request timeout in seconds
+  , acMaxRetries      :: Int  -- ^ retries on transient failures
+  , acBaseDelayMicros :: Int  -- ^ backoff base delay, microseconds
   }
   deriving (Eq, Show)
 
--- | A config with a sensible default model + token cap; supply the API key.
+-- | A config with sensible defaults (60s timeout, 3 retries, 0.5s backoff base);
+-- supply the API key.
 defaultAnthropicConfig :: Text -> AnthropicConfig
 defaultAnthropicConfig key =
   AnthropicConfig
     { acApiKey = key
     , acModel = "claude-haiku-4-5-20251001"
     , acMaxTokens = 1024
+    , acTimeoutSecs = 60
+    , acMaxRetries = 3
+    , acBaseDelayMicros = 500000
     }
 
 -- | Interpret @LLM@ against the live Anthropic Messages API. Each 'Complete'
