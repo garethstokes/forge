@@ -43,6 +43,28 @@ field. No backpressure/cancellation beyond a bracketed `responseClose`.
    and only then UTF-8-decoded, so a multibyte character split across two
    network chunks is never mis-decoded.
 
+## Streaming JSON and typed outputs
+
+Because the streaming interpreters discharge the *unchanged* `LLM`/`Chat`
+effects and return the fully-assembled `Text`/`Turn`, everything layered on top
+works under streaming with no change:
+
+- **Typed functions** (`Crucible.Function`'s `llmFn`/`call`) and **`Crucible.SAP`**
+  (`decodeLLM`) go through `complete`. Run e.g. `call myFn x` under
+  `runLLMAnthropicStream`: the JSON arrives token-by-token via the `Emit` sink,
+  *and* the codec still decodes the complete assembled text into the typed `o` at
+  the end. The deltas are a live side-channel; the decode is unchanged.
+- **Tool-call arguments** on the chat path are genuinely reassembled from the
+  API's partial-JSON `input_json_delta` fragments into a complete `tuArgs ::
+  Value` (see `stepAcc`/`PartialTool`) before becoming a `ToolUse`.
+
+What this design explicitly does **not** provide (future work, a non-goal here):
+**incremental typed decoding** — emitting a partially-filled Haskell record as
+its JSON fields arrive. The `emit`ted deltas are raw text fragments (possibly
+mid-token / mid-string); the codec decode runs once on the complete text.
+Streaming a partial JSON value into a partial typed value requires a separate
+incremental/resumable JSON parser and is out of scope.
+
 ## Module layout
 
 - **`Crucible.Emit`** (new) — the `Emit` effect + three interpreters.
