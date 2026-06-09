@@ -219,7 +219,8 @@ recordChatAnthropic path cfg action = do
 
 -- | Replay a cassette recorded by 'recordChatAnthropic': each 'Converse' pops
 -- the next recorded 'Turn' in order (a file-backed 'runChatScripted').
--- Deterministic; no network. Exhausting the cassette yields @Turn "" []@.
+-- Deterministic; no network. Exhausting the cassette, or an unparseable line,
+-- yields @Turn "" []@.
 runChatCassette :: (IOE :> es) => FilePath -> Eff (Chat : es) a -> Eff es a
 runChatCassette path action = do
   contents <- liftIO (TIO.readFile path)
