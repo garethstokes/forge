@@ -34,6 +34,8 @@ import Crucible.Chat
   (converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
+import qualified Data.ByteString.Char8 as BC
+import Crucible.LLM.Anthropic.Stream (splitFrames)
 
 -- Sample types for M3 tests
 
@@ -493,4 +495,11 @@ main = runChecks
   , check "emit: ignoreEmit discards, preserves result"
       (42 :: Int)
       (runPureEff (ignoreEmit (emit "x" >> emit "y" >> pure (42 :: Int))))
+  -- A#3: splitFrames
+  , check "splitFrames: splits complete frames, keeps remainder"
+      ([BC.pack "A", BC.pack "B"], BC.pack "part")
+      (splitFrames (BC.pack "A\n\nB\n\npart"))
+  , check "splitFrames: no blank line -> all remainder"
+      ([], BC.pack "noblank")
+      (splitFrames (BC.pack "noblank"))
   ]

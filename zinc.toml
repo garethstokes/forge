@@ -22,7 +22,7 @@ depends = ["base", "text", "crucible", "effectful", "effectful-core"]
 [build.test.spec]
 source-dirs = ["test"]
 main = "Spec.hs"
-depends = ["base", "text", "mtl", "crucible", "effectful", "effectful-core"]
+depends = ["base", "text", "bytestring", "mtl", "crucible", "effectful", "effectful-core"]
 
 [dependencies]
 
