@@ -32,6 +32,7 @@ import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(.
 import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage)
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
+import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 
 -- Sample types for M3 tests
@@ -485,4 +486,11 @@ main = runChecks
   , check "parseUsage: malformed token field -> mempty"
       (mempty :: Usage)
       (parseUsage "{\"usage\":{\"input_tokens\":\"twelve\",\"output_tokens\":7}}")
+  -- A#3: Emit effect
+  , check "emit: runEmitList collects in order"
+      (((), ["a", "b"]) :: ((), [T.Text]))
+      (runPureEff (runEmitList (emit "a" >> emit "b")))
+  , check "emit: ignoreEmit discards, preserves result"
+      (42 :: Int)
+      (runPureEff (ignoreEmit (emit "x" >> emit "y" >> pure (42 :: Int))))
   ]
