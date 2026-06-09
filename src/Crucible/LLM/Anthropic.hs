@@ -85,9 +85,10 @@ import Crucible.Usage (Usage (..))
 -- with no text content block is 'AnthropicNoContent'. Thrown by the live
 -- interpreter (the 'LLM' effect still returns 'Text'); callers 'try' it in IO.
 data AnthropicError
-  = AnthropicHttpError   HttpException
-  | AnthropicStatusError Int Text
-  | AnthropicNoContent   Text
+  = AnthropicHttpError    HttpException
+  | AnthropicStatusError  Int Text
+  | AnthropicNoContent    Text
+  | AnthropicStreamTimeout Int  -- ^ no chunk within the idle window (microseconds)
   deriving (Show)
 
 instance Exception AnthropicError
@@ -95,9 +96,10 @@ instance Exception AnthropicError
 -- | Whether a failure is worth retrying: network/timeout errors and HTTP 429 /
 -- 5xx are transient; other 4xx and a content-shape failure are permanent.
 isRetryable :: AnthropicError -> Bool
-isRetryable (AnthropicHttpError _)     = True
-isRetryable (AnthropicStatusError s _) = s == 429 || s >= 500
-isRetryable (AnthropicNoContent _)     = False
+isRetryable (AnthropicHttpError _)      = True
+isRetryable (AnthropicStatusError s _)  = s == 429 || s >= 500
+isRetryable (AnthropicNoContent _)      = False
+isRetryable (AnthropicStreamTimeout _)  = False
 
 -- | What the live interpreter needs: an API key, a model id, a token cap,
 -- and knobs for timeout + retry behaviour.
@@ -108,6 +110,7 @@ data AnthropicConfig = AnthropicConfig
   , acTimeoutSecs     :: Int  -- ^ request timeout in seconds
   , acMaxRetries      :: Int  -- ^ retries on transient failures
   , acBaseDelayMicros :: Int  -- ^ backoff base delay, microseconds
+  , acStreamIdleSecs  :: Int  -- ^ mid-stream per-chunk idle timeout, seconds
   }
   deriving (Eq, Show)
 
@@ -122,6 +125,7 @@ defaultAnthropicConfig key =
     , acTimeoutSecs = 60
     , acMaxRetries = 3
     , acBaseDelayMicros = 500000
+    , acStreamIdleSecs = 60
     }
 
 -- | Upper bound on a single backoff delay (30s), so exponential growth is capped.

@@ -29,7 +29,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
-import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage)
+import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, acStreamIdleSecs)
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
@@ -434,6 +434,13 @@ main = runChecks
   , check "isRetryable: 401"        False (isRetryable (AnthropicStatusError 401 ""))
   , check "isRetryable: 404"        False (isRetryable (AnthropicStatusError 404 ""))
   , check "isRetryable: no-content" False (isRetryable (AnthropicNoContent ""))
+  -- crucible-mgs: stream idle timeout config + error
+  , check "config: default stream idle is 60s"
+      (60 :: Int)
+      (acStreamIdleSecs (defaultAnthropicConfig "k"))
+  , check "isRetryable: stream timeout is not retryable"
+      False
+      (isRetryable (AnthropicStreamTimeout 1000))
   -- M12 Task 2: Chat effect + block types + scripted interpreter
   , check "runChatScripted: pops the canned turn"
       (Turn "hello" [])
