@@ -5,7 +5,7 @@
 
 module QueryBuilderSpec (tests) where
 
-import Data.List (sort)
+import Data.List (sort, sortOn)
 import Fixtures (Post, PostT (..), User, UserT (..), withTestDb)
 import Manifest
 import Manifest.Query
@@ -160,4 +160,82 @@ tests = group "QueryBuilder"
                        orderBy [asc (h ^. #userName)]
                        pure h)
         assertEqual "names > Ada" ["Bob","Cay"] (map userName names)
+  , test "rightJoin renders RIGHT JOIN; opt selects the left table as Maybe" $
+      assertEqual "sql"
+        ( "SELECT t0.user_id, t0.user_name, t0.user_email, t1.post_id, t1.post_author, t1.post_title"
+       <> " FROM users AS t0 RIGHT JOIN posts AS t1 ON t1.post_author = t0.user_id" )
+        (fst (renderQueryM (do u <- from @User
+                               p <- rightJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                               pure (opt u, p))))
+  , test "fullJoin renders FULL JOIN; both sides select as Maybe" $
+      assertEqual "sql"
+        ( "SELECT t0.user_id, t0.user_name, t0.user_email, t1.post_id, t1.post_author, t1.post_title"
+       <> " FROM users AS t0 FULL JOIN posts AS t1 ON t1.post_author = t0.user_id" )
+        (fst (renderQueryM (do u  <- from @User
+                               fp <- fullJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                               pure (opt u, fp))))
+  , test "rightJoin keeps unmatched right rows (orphan post -> Nothing user)" $
+      withTestDb $ \pool -> do
+        rows <- withSession pool $ do
+          ada <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          _   <- add (Post { postId = 0, postAuthor = userId ada, postTitle = "A1" } :: Post)
+          _   <- add (Post { postId = 0, postAuthor = 999, postTitle = "Orphan" } :: Post)
+          runQuery (do u <- from @User
+                       p <- rightJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                       pure (opt u, p))
+        assertEqual "every post kept; orphan has no user"
+          [(Just "Ada", "A1"), (Nothing, "Orphan")]
+          (sortOn snd [ (fmap userName mu, postTitle p) | (mu, p) <- rows ])
+  , test "fullJoin keeps unmatched rows on both sides" $
+      withTestDb $ \pool -> do
+        rows <- withSession pool $ do
+          ada <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          _   <- add (User { userId = 0, userName = "Bob", userEmail = Nothing } :: User)
+          _   <- add (Post { postId = 0, postAuthor = userId ada, postTitle = "A1" } :: Post)
+          _   <- add (Post { postId = 0, postAuthor = 999, postTitle = "Orphan" } :: Post)
+          runQuery (do u  <- from @User
+                       fp <- fullJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                       pure (opt u, fp))
+        assertEqual "matched, user-without-post, post-without-user"
+          (sort [ (Just "Ada", Just "A1"), (Just "Bob", Nothing), (Nothing, Just "Orphan") ])
+          (sort [ (fmap userName mu, fmap postTitle mp) | (mu, mp) <- rows ])
+  , test "having renders after GROUP BY; param numbers after WHERE" $
+      assertEqual "sql + params"
+        ( "SELECT t0.post_author, COUNT(*) FROM posts AS t0 WHERE t0.post_title <> $1"
+       <> " GROUP BY t0.post_author HAVING COUNT(*) > $2"
+        , [Just "x", Just "1"] )
+        (renderQueryM (do p <- from @Post
+                          where_ (p ^. #postTitle ./= val ("x" :: String))
+                          groupBy (p ^. #postAuthor)
+                          having (countRows .> val (1 :: Int))
+                          pure (p ^. #postAuthor :: Expr Int, countRows)))
+  , test "distinct renders SELECT DISTINCT" $
+      assertEqual "sql"
+        "SELECT DISTINCT t0.post_author FROM posts AS t0"
+        (fst (renderQueryM (do distinct; p <- from @Post; pure (p ^. #postAuthor :: Expr Int))))
+  , test "having filters groups at runtime" $
+      withTestDb $ \pool -> do
+        authors <- withSession pool $ do
+          u1 <- add (User { userId = 0, userName = "A", userEmail = Nothing } :: User)
+          u2 <- add (User { userId = 0, userName = "B", userEmail = Nothing } :: User)
+          _  <- add (Post { postId = 0, postAuthor = userId u1, postTitle = "p1" } :: Post)
+          _  <- add (Post { postId = 0, postAuthor = userId u1, postTitle = "p2" } :: Post)
+          _  <- add (Post { postId = 0, postAuthor = userId u2, postTitle = "p3" } :: Post)
+          runQuery (do p <- from @Post
+                       groupBy (p ^. #postAuthor)
+                       having (countRows .> val (1 :: Int))
+                       pure (p ^. #postAuthor))
+        assertEqual "only the author with >1 post" [1 :: Int] authors
+  , test "distinct dedups rows at runtime" $
+      withTestDb $ \pool -> do
+        authors <- withSession pool $ do
+          u1 <- add (User { userId = 0, userName = "A", userEmail = Nothing } :: User)
+          u2 <- add (User { userId = 0, userName = "B", userEmail = Nothing } :: User)
+          _  <- add (Post { postId = 0, postAuthor = userId u1, postTitle = "p1" } :: Post)
+          _  <- add (Post { postId = 0, postAuthor = userId u1, postTitle = "p2" } :: Post)
+          _  <- add (Post { postId = 0, postAuthor = userId u2, postTitle = "p3" } :: Post)
+          runQuery (do distinct
+                       p <- from @Post
+                       pure (p ^. #postAuthor :: Expr Int))
+        assertEqual "distinct authors (3 posts, 2 authors)" [1, 2] (sort authors)
   ]

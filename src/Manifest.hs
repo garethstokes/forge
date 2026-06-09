@@ -45,10 +45,15 @@ module Manifest
   , CteRef
   , innerJoin
   , leftJoin
+  , rightJoin
+  , fullJoin
+  , opt
   , (^.)
   , val
   , (.==), (./=), (.>), (.<), (.&&)
   , where_
+  , having
+  , distinct
   , orderBy
   , asc
   , desc
@@ -127,8 +132,8 @@ import Manifest.Core.Query
   )
 import Manifest.Query
   ( QueryM, Handle, OptHandle, Projectable, Expr, from
-  , withCte, fromCte, CteRef, innerJoin, leftJoin, (^.), val
-  , (.==), (./=), (.>), (.<), (.&&), where_, orderBy, asc, desc
+  , withCte, fromCte, CteRef, innerJoin, leftJoin, rightJoin, fullJoin, opt, (^.), val
+  , (.==), (./=), (.>), (.<), (.&&), where_, having, distinct, orderBy, asc, desc
   , limit, offset, groupBy, countRows, sum_, avg_, min_, max_
   , OrderTerm, Selectable (Result), runQuery )
 import Manifest.Core.Relation

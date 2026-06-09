@@ -50,6 +50,17 @@ rows <- runQuery $ do
   pure (u, mp)                 -- :: Db [(User, Maybe Post)]
 ```
 
+`rightJoin` keeps all rows of the joined table (the previously-joined tables may be
+NULL); `fullJoin` keeps unmatched rows on both sides. Use `opt` to select a table
+that a right or full join can leave unmatched, so it decodes as `Maybe`:
+
+```haskell
+rows <- runQuery $ do
+  u <- from @User
+  p <- rightJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+  pure (opt u, p)              -- :: Db [(Maybe User, Post)]
+```
+
 ## Aggregates and grouping
 
 `countRows`, `sum_`, `avg_`, `min_`, `max_` are expressions you return in the
@@ -64,6 +75,17 @@ perAuthor <- runQuery $ do
 total <- runQuery $ do
   p <- from @Post
   pure (sum_ (p ^. #postAuthor))       -- :: Db [Maybe Int]
+```
+
+`having` filters groups (typically on an aggregate); `distinct` makes the query a
+`SELECT DISTINCT`:
+
+```haskell
+prolific <- runQuery $ do
+  p <- from @Post
+  groupBy (p ^. #postAuthor)
+  having (countRows .> val 1)
+  pure (p ^. #postAuthor, countRows)   -- authors with more than one post
 ```
 
 ## Common table expressions
@@ -84,15 +106,15 @@ names <- runQuery $ do
 ## Status
 
 Built and tested: `from`, `where_`, `orderBy`/`asc`/`desc`, `limit`/`offset`,
-`innerJoin`, `leftJoin`, `withCte`/`fromCte`, `groupBy`,
+`innerJoin`, `leftJoin`, `rightJoin`/`fullJoin`/`opt`, `having`, `distinct`,
+`withCte`/`fromCte`, `groupBy`,
 `countRows`/`sum_`/`avg_`/`min_`/`max_`, tuple selections,
 and `runQuery`. Columns are entity- and alias-bound through handles.
 
 Planned, not built:
 
-* **`RIGHT` / `FULL` joins, `HAVING`, `DISTINCT`, recursive CTEs, and non-CTE
-  subqueries.** `INNER` and `LEFT` joins, the aggregates above, and non-recursive
-  entity CTEs are built.
+* **Recursive CTEs and non-CTE subqueries.** `INNER`/`LEFT`/`RIGHT`/`FULL` joins,
+  aggregates, `HAVING`, `DISTINCT`, and non-recursive entity CTEs are built.
 * **CTEs over non-entity selections.** A CTE's subquery selects a whole entity; a CTE
   whose selection is a tuple or expression is not supported.
 * **Multiple `from` / cross joins**, and selection tuples wider than pairs beyond

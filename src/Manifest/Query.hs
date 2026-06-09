@@ -15,10 +15,12 @@ module Manifest.Query
   , withCte, fromCte, CteRef
   , innerJoin
   , leftJoin, OptHandle, Projectable
+  , rightJoin, fullJoin, opt
   , (^.)
   , val
   , (.==), (./=), (.>), (.<), (.&&)
   , where_
+  , having, distinct
   , orderBy, asc, desc, limit, offset, OrderTerm
   , groupBy, countRows, sum_, avg_, min_, max_
   , Selectable (Result)
@@ -55,16 +57,20 @@ data QueryState = QueryState
   , qsWith   :: [ByteString]     -- rendered "cteN AS (subsql)" fragments
   , qsWithP  :: [SqlParam]       -- subquery params, in order (render before SELECT)
   , qsCte    :: Int              -- next CTE index
+  , qsHaving   :: [ByteString]
+  , qsHavingP  :: [SqlParam]
+  , qsDistinct :: Bool
   }
 
 emptyState :: QueryState
-emptyState = QueryState 0 "" [] [] [] [] [] Nothing Nothing [] [] 0
+emptyState = QueryState 0 "" [] [] [] [] [] Nothing Nothing [] [] 0 [] [] False
 
 newtype Handle e = Handle ByteString
 data    Expr t   = Expr ByteString [SqlParam]
 
--- | A handle to the right side of a LEFT JOIN: its columns may be NULL, so it
--- selects as @Maybe e@.
+-- | A handle whose columns may be NULL, so it selects as @Maybe e@. Produced by
+-- 'leftJoin' / 'fullJoin' (the unmatched side) or by 'opt' (a table a RIGHT or FULL
+-- join can leave unmatched).
 newtype OptHandle e = OptHandle ByteString
 
 -- | Things you can project a column from (a 'Handle', or a left-joined 'OptHandle').
@@ -133,40 +139,59 @@ fromCte (CteRef name) = QueryM $ do
   put st { qsAlias = i + 1, qsFrom = name <> " AS " <> al }
   pure (Handle al)
 
--- | INNER JOIN table @e@. The function receives the new handle and returns the
--- ON condition; handles bound earlier in the do-block are captured by the closure.
-innerJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (Handle e)
-innerJoin onf = QueryM $ do
-  st <- get
-  let i  = qsAlias st
-      al = "t" <> BC.pack (show i)
-      h  = Handle al
-      Expr onTxt onPs = onf h
-  put st { qsAlias  = i + 1
-         , qsFrom   = qsFrom st <> " INNER JOIN " <> tmTable (tableMeta @e)
-                        <> " AS " <> al <> " ON " <> onTxt
-         , qsFromP  = qsFromP st ++ onPs
-         }
-  pure h
-
--- | LEFT JOIN table @e@. Like 'innerJoin', but selects as @Maybe e@: rows with no
--- match decode to 'Nothing'. The ON closure gets a plain 'Handle e'.
-leftJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (OptHandle e)
-leftJoin onf = QueryM $ do
+-- | Shared join machinery: allocate an alias, append "<kw> <table> AS tN ON <on>"
+-- to the FROM, collect ON params, return the new alias.
+addJoin :: forall e. Entity e => ByteString -> (Handle e -> Expr Bool) -> QueryM ByteString
+addJoin kw onf = QueryM $ do
   st <- get
   let i  = qsAlias st
       al = "t" <> BC.pack (show i)
       Expr onTxt onPs = onf (Handle al)
   put st { qsAlias  = i + 1
-         , qsFrom   = qsFrom st <> " LEFT JOIN " <> tmTable (tableMeta @e)
+         , qsFrom   = qsFrom st <> " " <> kw <> " " <> tmTable (tableMeta @e)
                         <> " AS " <> al <> " ON " <> onTxt
          , qsFromP  = qsFromP st ++ onPs
          }
-  pure (OptHandle al)
+  pure al
+
+-- | INNER JOIN table @e@. The function receives the new handle and returns the ON
+-- condition; handles bound earlier in the do-block are captured by the closure.
+innerJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (Handle e)
+innerJoin onf = Handle <$> addJoin @e "INNER JOIN" onf
+
+-- | LEFT JOIN table @e@: selects as @Maybe e@ (unmatched right rows decode 'Nothing').
+leftJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (OptHandle e)
+leftJoin onf = OptHandle <$> addJoin @e "LEFT JOIN" onf
+
+-- | RIGHT JOIN table @e@: keeps all of @e@'s rows; previously-joined tables may be
+-- NULL, so select them with 'opt'. The new table is required ('Handle').
+rightJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (Handle e)
+rightJoin onf = Handle <$> addJoin @e "RIGHT JOIN" onf
+
+-- | FULL OUTER JOIN table @e@: keeps unmatched rows on both sides. The new table
+-- selects as @Maybe e@ ('OptHandle'); select prior tables with 'opt'.
+fullJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (OptHandle e)
+fullJoin onf = OptHandle <$> addJoin @e "FULL JOIN" onf
+
+-- | Re-tag a handle so it /selects/ as @Maybe e@ (NULL-aware, via 'optDecoder').
+-- Use for a table that a RIGHT or FULL join may leave unmatched. Does not change the
+-- FROM clause, only how the column set is decoded.
+opt :: Handle e -> OptHandle e
+opt (Handle al) = OptHandle al
 
 where_ :: Expr Bool -> QueryM ()
 where_ (Expr t ps) = QueryM $ modify' $ \st ->
   st { qsWhere = qsWhere st ++ [t], qsWhereP = qsWhereP st ++ ps }
+
+-- | A HAVING predicate over a grouped query (typically over an aggregate, e.g.
+-- @having (countRows .> val 1)@). Multiple calls are ANDed.
+having :: Expr Bool -> QueryM ()
+having (Expr t ps) = QueryM $ modify' $ \st ->
+  st { qsHaving = qsHaving st ++ [t], qsHavingP = qsHavingP st ++ ps }
+
+-- | Make the query a @SELECT DISTINCT@.
+distinct :: QueryM ()
+distinct = QueryM $ modify' $ \st -> st { qsDistinct = True }
 
 newtype OrderTerm = OrderTerm ByteString
 
@@ -263,14 +288,16 @@ renderRaw qm =
   let (sel, st) = runQueryM qm
       withTxt  = if null (qsWith st) then ""
                  else "WITH " <> bcIntercalate ", " (qsWith st) <> " "
+      selKw    = if qsDistinct st then "SELECT DISTINCT " else "SELECT "
       whereTxt = if null (qsWhere st) then "" else " WHERE " <> bcIntercalate " AND " (qsWhere st)
       groupTxt = if null (qsGroup st) then "" else " GROUP BY " <> bcIntercalate ", " (qsGroup st)
+      havingTxt = if null (qsHaving st) then "" else " HAVING " <> bcIntercalate " AND " (qsHaving st)
       orderTxt = if null (qsOrder st) then "" else " ORDER BY " <> bcIntercalate ", " (qsOrder st)
       limTxt   = maybe "" (\n -> " LIMIT "  <> BC.pack (show n)) (qsLimit st)
       offTxt   = maybe "" (\n -> " OFFSET " <> BC.pack (show n)) (qsOffset st)
-      raw = withTxt <> "SELECT " <> selCols sel <> " FROM " <> qsFrom st
-              <> whereTxt <> groupTxt <> orderTxt <> limTxt <> offTxt
-      params = qsWithP st ++ selParams sel ++ qsFromP st ++ qsWhereP st
+      raw = withTxt <> selKw <> selCols sel <> " FROM " <> qsFrom st
+              <> whereTxt <> groupTxt <> havingTxt <> orderTxt <> limTxt <> offTxt
+      params = qsWithP st ++ selParams sel ++ qsFromP st ++ qsWhereP st ++ qsHavingP st
   in (raw, params)
 
 renderQueryM :: Selectable s => QueryM s -> (ByteString, [SqlParam])
