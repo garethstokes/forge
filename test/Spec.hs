@@ -29,7 +29,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
-import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn)
+import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage)
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
@@ -475,4 +475,11 @@ main = runChecks
       (chatRequestJson (defaultAnthropicConfig "k")
         [("get_weather", SObj [("city", SStr)])]
         [ChatMsg User [TextBlock "hi"]])
+  -- A#4: parseUsage
+  , check "parseUsage: reads input/output tokens"
+      (Usage 12 7)
+      (parseUsage "{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"usage\":{\"input_tokens\":12,\"output_tokens\":7}}")
+  , check "parseUsage: missing usage -> mempty"
+      (mempty :: Usage)
+      (parseUsage "{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}")
   ]

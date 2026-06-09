@@ -27,6 +27,7 @@ module Crucible.LLM.Anthropic
   , isRetryable
   , chatRequestJson
   , parseTurn
+  , parseUsage
   , runChatAnthropic
   ) where
 
@@ -70,6 +71,7 @@ import qualified Crucible.Json.Decode as D
 import Crucible.LLM (LLM (..), Message (..), Role (..))
 import Crucible.Schema (Schema, schemaToJson)
 import Crucible.Tool (ToolName)
+import Crucible.Usage (Usage (..))
 
 -- | A typed live-path failure. Network/timeout errors are wrapped as
 -- 'AnthropicHttpError'; a non-2xx response is 'AnthropicStatusError'; a 2xx body
@@ -302,3 +304,13 @@ rblock = D.field "type" D.string >>= \ty -> case ty of
       <*> D.field "name" D.string
       <*> D.field "input" D.value
   _ -> D.succeed RSkip
+
+-- | Read the @usage@ object from a /v1/messages response body. A body without
+-- a well-formed @usage@ yields 'mempty' — usage is telemetry, not correctness.
+parseUsage :: Text -> Usage
+parseUsage =
+  either (const mempty) id
+    . D.decodeString
+        (D.field "usage"
+          (Usage <$> D.field "input_tokens"  D.int
+                 <*> D.field "output_tokens" D.int))
