@@ -26,6 +26,7 @@ depends = [
   "transformers",
   "postgresql-libpq",
   "profunctors",
+  "autodocodec",
 ]
 
 [build.test.spec]
@@ -52,6 +53,7 @@ depends = [
   "filepath",
   "postgresql-libpq",
   "manifest",
+  "autodocodec",
 ]
 
 [build.exe.manifest-migrate]
@@ -69,3 +71,6 @@ flags = { use-pkg-config = true }  # Simple pkgconfig provider (avoids build-typ
 
 [dependencies.profunctors]
 repo = "https://github.com/ekmett/profunctors.git"
+
+[dependencies.autodocodec]
+repo = "https://github.com/NorfairKing/autodocodec"
