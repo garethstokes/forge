@@ -3,7 +3,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -44,5 +43,6 @@ ignoreEmit = interpret $ \_ -> \case
 
 -- | Collect deltas in arrival order alongside the result (for tests).
 runEmitList :: Eff (Emit : es) a -> Eff es (a, [Text])
-runEmitList = reinterpret (runState []) $ \_ -> \case
-  Emit t -> modify (++ [t])
+runEmitList action = do
+  (a, xs) <- reinterpret (runState []) (\_ -> \case Emit t -> modify (t :)) action
+  pure (a, reverse xs)
