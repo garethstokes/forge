@@ -2,9 +2,11 @@
 
 module Manifest.Json
   ( Json (..)
+  , Aeson (..)
   ) where
 
 import Autodocodec (HasCodec, encodeJSONViaCodec, eitherDecodeJSONViaCodec)
+import Data.Aeson (FromJSON, ToJSON, encode, eitherDecode)
 import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as LB
 import Manifest.Core.Codec (Codec (..), DbType (..))
@@ -22,6 +24,22 @@ instance HasCodec a => DbType (Json a) where
     , cDecode   = \p -> case p of
         Just bs -> bimap (DecodeError . ("jsonb decode: " <>)) Json
                          (eitherDecodeJSONViaCodec (LB.fromStrict bs))
+        Nothing -> Left (DecodeError "expected jsonb, got NULL")
+    , cSqlType  = SqlJsonb
+    , cNullable = False
+    }
+
+-- | A column that stores its value as Postgres @jsonb@ via the value's aeson
+-- 'ToJSON'/'FromJSON' instances (the alternative to 'Json', which uses autodocodec).
+newtype Aeson a = Aeson { unAeson :: a }
+  deriving (Eq, Show)
+
+instance (ToJSON a, FromJSON a) => DbType (Aeson a) where
+  dbType = Codec
+    { cEncode   = \(Aeson x) -> Just (LB.toStrict (encode x))
+    , cDecode   = \p -> case p of
+        Just bs -> bimap (DecodeError . ("jsonb (aeson) decode: " <>)) Aeson
+                         (eitherDecode (LB.fromStrict bs))
         Nothing -> Left (DecodeError "expected jsonb, got NULL")
     , cSqlType  = SqlJsonb
     , cNullable = False

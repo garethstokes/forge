@@ -27,6 +27,7 @@ depends = [
   "postgresql-libpq",
   "profunctors",
   "autodocodec",
+  "aeson",
 ]
 
 [build.test.spec]
@@ -54,6 +55,7 @@ depends = [
   "postgresql-libpq",
   "manifest",
   "autodocodec",
+  "aeson",
 ]
 
 [build.exe.manifest-migrate]

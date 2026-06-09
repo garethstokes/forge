@@ -108,6 +108,7 @@ module Manifest
   , SqlType (..)
     -- * JSONB columns
   , Json (..)
+  , Aeson (..)
   , HasCodec (..)
     -- * Table metadata
   , Serial
@@ -209,6 +210,7 @@ import Manifest.Core.Codec
   )
 import Manifest.Json
   ( Json (..)
+  , Aeson (..)
   )
 import Autodocodec
   ( HasCodec (..)
