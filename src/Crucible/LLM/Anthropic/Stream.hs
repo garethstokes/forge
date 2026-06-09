@@ -17,6 +17,7 @@ module Crucible.LLM.Anthropic.Stream
   , emptyAcc
   , stepAcc
   , runLLMAnthropicStream
+  , runChatAnthropicStream
   ) where
 
 import Data.ByteString (ByteString)
@@ -44,7 +45,7 @@ import Network.HTTP.Client
   , responseClose, responseOpen, responseStatus )
 import Network.HTTP.Types.Status (statusCode)
 
-import Crucible.Chat (ToolUse (..), ToolUseId)
+import Crucible.Chat (Chat (..), ToolUse (..), ToolUseId, Turn (..))
 import Crucible.Emit (Emit, emit)
 import Crucible.Json.Decode (Decoder, at, decodeValue, field, int, string)
 import Crucible.Json.Encode (encode)
@@ -52,8 +53,8 @@ import Crucible.Json.Parse (parse)
 import Crucible.Json.Value (Value (JBool, JObject))
 import Crucible.LLM (LLM (..))
 import Crucible.LLM.Anthropic
-  ( AnthropicConfig (..), AnthropicError (..), isRetryable, newAnthropicManager
-  , requestJson )
+  ( AnthropicConfig (..), AnthropicError (..), chatRequestJson, isRetryable
+  , newAnthropicManager, requestJson )
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
 
@@ -248,4 +249,22 @@ runLLMAnthropicStream cfg action = do
                  streamLoop
         modify (<> saUsage acc)
         pure (saText acc))
+    action
+
+-- | Stream the chat path: interpret 'Chat' against Anthropic SSE, 'emit'ting each
+-- text delta, reassembling tool_use blocks, and returning the assembled 'Turn'
+-- plus summed 'Usage'.
+runChatAnthropicStream
+  :: (IOE :> es, Emit :> es)
+  => AnthropicConfig -> Eff (Chat : es) a -> Eff es (a, Usage)
+runChatAnthropicStream cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  reinterpret (runState mempty)
+    (\_ (Converse specs msgs) -> do
+        acc <- bracket
+                 (liftIO (openStream cfg mgr (addStream (chatRequestJson cfg specs msgs))))
+                 (liftIO . responseClose)
+                 streamLoop
+        modify (<> saUsage acc)
+        pure (Turn (saText acc) (saTools acc)))
     action
