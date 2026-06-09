@@ -24,6 +24,10 @@ module Manifest.Query
   , orderBy, asc, desc, limit, offset, OrderTerm
   , groupBy, countRows, sum_, avg_, min_, max_
   , Selectable (Result)
+  , Self (..)
+  , currentSetting
+  , lit
+  , renderPredicate
   , renderQueryM
   , runQuery
   ) where
@@ -33,6 +37,8 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (State, get, modify', put, runState)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
 import Manifest.Core.Codec (FromField, RowDecoder (..), SqlParam, ToField (..), decodeRow, field)
 import Manifest.Core.Meta (ColumnMeta (..), TableMeta (..))
 import Manifest.Core.Query (Column (..))
@@ -89,6 +95,34 @@ instance Projectable OptHandle where
 
 val :: ToField t => t -> Expr t
 val x = Expr "?" [toField x]
+
+-- | A self-reference to the policy's own table: projects BARE column names
+-- (no alias), because an RLS policy is already scoped to its table.
+data Self e = Self
+
+instance Projectable Self where
+  Self ^. Column c = Expr c []
+
+-- | @current_setting('name')@ — read a GUC the app set with 'withRlsContext'.
+currentSetting :: Text -> Expr Text
+currentSetting name = Expr ("current_setting(" <> quoteLit name <> ")") []
+
+-- | An inline single-quoted SQL string literal (for DDL predicates; not a bound param).
+lit :: Text -> Expr a
+lit t = Expr (quoteLit t) []
+
+quoteLit :: Text -> ByteString
+quoteLit t = "'" <> BC.concatMap esc (TE.encodeUtf8 t) <> "'"
+  where
+    esc '\'' = "''"
+    esc c    = BC.singleton c
+
+-- | Render a predicate to SQL for a policy body. Errors if it carries bound params
+-- (a 'val' is not allowed in DDL; use 'lit' / 'currentSetting').
+renderPredicate :: Expr Bool -> ByteString
+renderPredicate (Expr t ps)
+  | null ps   = t
+  | otherwise = error "Manifest.Query.renderPredicate: policy predicate may not use 'val'/bound params; use 'lit' or 'currentSetting'"
 
 binop :: ByteString -> Expr t -> Expr t -> Expr Bool
 binop o (Expr a pa) (Expr b pb) = Expr (a <> " " <> o <> " " <> b) (pa ++ pb)

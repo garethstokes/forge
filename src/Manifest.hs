@@ -114,6 +114,16 @@ module Manifest
   , renderAddColumn
   , liveColumns
   , tableExists
+    -- * Row-level security
+  , Policy
+  , PolicyCmd (..)
+  , policy
+  , using
+  , withCheck
+  , forCommand
+  , Self
+  , currentSetting
+  , lit
     -- * Errors
   , DbError(..)
   , DbException(..)
@@ -135,7 +145,11 @@ import Manifest.Query
   , withCte, fromCte, CteRef, innerJoin, leftJoin, rightJoin, fullJoin, opt, (^.), val
   , (.==), (./=), (.>), (.<), (.&&), where_, having, distinct, orderBy, asc, desc
   , limit, offset, groupBy, countRows, sum_, avg_, min_, max_
-  , OrderTerm, Selectable (Result), runQuery )
+  , OrderTerm, Selectable (Result), runQuery, Self, currentSetting, lit )
+import Manifest.Core.Rls
+  ( Policy, PolicyCmd (..) )
+import Manifest.Rls
+  ( policy, using, withCheck, forCommand )
 import Manifest.Core.Relation
   ( HasRelation(..)
   , Card(..)
