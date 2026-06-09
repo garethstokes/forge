@@ -29,7 +29,6 @@ import qualified Data.Text.Encoding as TE
 
 import Data.Maybe (fromMaybe)
 import Data.Word (Word8)
-import qualified Data.ByteString.Lazy as LBS
 
 import Effectful
 import Effectful.Dispatch.Dynamic (reinterpret)
@@ -37,24 +36,21 @@ import Effectful.Exception (bracket)
 import Effectful.State.Static.Local (modify, runState)
 
 import Control.Exception (handle, throwIO)
-import Control.Monad.Catch (Handler (Handler))
-import Control.Retry (capDelay, fullJitterBackoff, limitRetries, recovering)
 import Network.HTTP.Client
-  ( BodyReader, HttpException, Manager, RequestBody (RequestBodyLBS), Response
-  , brRead, method, parseRequest, requestBody, requestHeaders, responseBody
+  ( BodyReader, HttpException, Manager, Response
+  , brRead, requestHeaders, responseBody
   , responseClose, responseOpen, responseStatus )
 import Network.HTTP.Types.Status (statusCode)
 
 import Crucible.Chat (Chat (..), ToolUse (..), ToolUseId, Turn (..))
 import Crucible.Emit (Emit, emit)
 import Crucible.Json.Decode (Decoder, at, decodeValue, field, int, string)
-import Crucible.Json.Encode (encode)
 import Crucible.Json.Parse (parse)
 import Crucible.Json.Value (Value (JBool, JObject))
 import Crucible.LLM (LLM (..))
 import Crucible.LLM.Anthropic
-  ( AnthropicConfig (..), AnthropicError (..), chatRequestJson, isRetryable
-  , newAnthropicManager, requestJson )
+  ( AnthropicConfig (..), AnthropicError (..), chatRequestJson
+  , messagesRequest, newAnthropicManager, requestJson, withAnthropicRetry )
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
 
@@ -158,11 +154,6 @@ stepAcc acc = \case
       | otherwise = (j, pt)
     parseArgs js = either (const (JObject [])) id (parse js)
 
--- | Upper bound on a single backoff delay (30s). Mirrors the constant in
--- "Crucible.LLM.Anthropic"; kept local so this module is self-contained.
-maxBackoffMicros :: Int
-maxBackoffMicros = 30000000
-
 -- | Add @"stream": true@ to a request body object.
 addStream :: Value -> Value
 addStream (JObject kvs) = JObject (kvs ++ [("stream", JBool True)])
@@ -175,24 +166,10 @@ addStream v             = v
 -- Nothing is emitted before this returns, so retrying is safe.
 openStream :: AnthropicConfig -> Manager -> Value -> IO (Response BodyReader)
 openStream cfg mgr bodyJson =
-  recovering
-    (capDelay maxBackoffMicros (fullJitterBackoff (acBaseDelayMicros cfg))
-       <> limitRetries (acMaxRetries cfg))
-    [ \_ -> Handler (\(e :: AnthropicError) -> pure (isRetryable e)) ]
-    (\_ -> doOpen)
-  where
-    doOpen = handle (\(e :: HttpException) -> throwIO (AnthropicHttpError e)) $ do
-      base <- parseRequest "https://api.anthropic.com/v1/messages"
-      let req = base
-            { method = "POST"
-            , requestHeaders =
-                [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
-                , ("anthropic-version", "2023-06-01")
-                , ("content-type", "application/json")
-                , ("accept", "text/event-stream")
-                ]
-            , requestBody = RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode bodyJson)))
-            }
+  withAnthropicRetry cfg $
+    handle (\(e :: HttpException) -> throwIO (AnthropicHttpError e)) $ do
+      base <- messagesRequest cfg bodyJson
+      let req = base { requestHeaders = requestHeaders base ++ [("accept", "text/event-stream")] }
       resp <- responseOpen req mgr
       let code = statusCode (responseStatus resp)
       if code >= 200 && code < 300

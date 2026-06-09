@@ -33,6 +33,8 @@ module Crucible.LLM.Anthropic
   , runChatAnthropic
   , runLLMAnthropicUsage
   , runChatAnthropicUsage
+  , messagesRequest
+  , withAnthropicRetry
   ) where
 
 import Data.List (partition)
@@ -54,6 +56,7 @@ import Network.HTTP.Client
   ( HttpException
   , Manager
   , ManagerSettings (managerResponseTimeout)
+  , Request
   , RequestBody (RequestBodyLBS)
   , httpLbs
   , method
@@ -220,6 +223,32 @@ runChatAnthropicUsage cfg action = do
         pure turn)
     action
 
+-- | Build the @POST \/v1\/messages@ request for a JSON body, with the shared
+-- Anthropic headers. (The streaming path adds an @Accept@ header on top.)
+messagesRequest :: AnthropicConfig -> Value -> IO Request
+messagesRequest cfg bodyJson = do
+  base <- parseRequest "https://api.anthropic.com/v1/messages"
+  pure base
+    { method = "POST"
+    , requestHeaders =
+        [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
+        , ("anthropic-version", "2023-06-01")
+        , ("content-type", "application/json")
+        ]
+    , requestBody = RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode bodyJson)))
+    }
+
+-- | Wrap an IO action in the shared retry policy: jittered exponential backoff
+-- capped at 'maxBackoffMicros', up to 'acMaxRetries', retrying 'AnthropicError's
+-- for which 'isRetryable' holds.
+withAnthropicRetry :: AnthropicConfig -> IO a -> IO a
+withAnthropicRetry cfg action =
+  recovering
+    (capDelay maxBackoffMicros (fullJitterBackoff (acBaseDelayMicros cfg))
+       <> limitRetries (acMaxRetries cfg))
+    [ \_ -> Handler (\(e :: AnthropicError) -> pure (isRetryable e)) ]
+    (\_ -> action)
+
 -- | POST a JSON request body to @/v1/messages@ and return the raw 2xx response
 -- body, retrying transient failures (network/timeout, 429, 5xx) with jittered
 -- exponential backoff up to 'acMaxRetries'. A non-2xx response throws
@@ -227,26 +256,9 @@ runChatAnthropicUsage cfg action = do
 -- Shared by the text completion and the chat interpreter.
 postMessages :: AnthropicConfig -> Manager -> Value -> IO Text
 postMessages cfg mgr bodyJson =
-  recovering
-    (capDelay maxBackoffMicros (fullJitterBackoff (acBaseDelayMicros cfg))
-       <> limitRetries (acMaxRetries cfg))
-    [ \_ -> Handler (\(e :: AnthropicError) -> pure (isRetryable e)) ]
-    (\_ -> doRequest)
-  where
-    doRequest :: IO Text
-    doRequest = handle (\(e :: HttpException) -> throwIO (AnthropicHttpError e)) $ do
-      base <- parseRequest "https://api.anthropic.com/v1/messages"
-      let req =
-            base
-              { method = "POST"
-              , requestHeaders =
-                  [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
-                  , ("anthropic-version", "2023-06-01")
-                  , ("content-type", "application/json")
-                  ]
-              , requestBody =
-                  RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode bodyJson)))
-              }
+  withAnthropicRetry cfg $
+    handle (\(e :: HttpException) -> throwIO (AnthropicHttpError e)) $ do
+      req <- messagesRequest cfg bodyJson
       resp <- httpLbs req mgr
       let body = TE.decodeUtf8Lenient (LBS.toStrict (responseBody resp))
           code = statusCode (responseStatus resp)
