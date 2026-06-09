@@ -15,6 +15,7 @@ module Manifest.Query
   , withCte, fromCte, CteRef
   , innerJoin
   , leftJoin, OptHandle, Projectable
+  , rightJoin, fullJoin, opt
   , (^.)
   , val
   , (.==), (./=), (.>), (.<), (.&&)
@@ -133,36 +134,45 @@ fromCte (CteRef name) = QueryM $ do
   put st { qsAlias = i + 1, qsFrom = name <> " AS " <> al }
   pure (Handle al)
 
--- | INNER JOIN table @e@. The function receives the new handle and returns the
--- ON condition; handles bound earlier in the do-block are captured by the closure.
-innerJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (Handle e)
-innerJoin onf = QueryM $ do
-  st <- get
-  let i  = qsAlias st
-      al = "t" <> BC.pack (show i)
-      h  = Handle al
-      Expr onTxt onPs = onf h
-  put st { qsAlias  = i + 1
-         , qsFrom   = qsFrom st <> " INNER JOIN " <> tmTable (tableMeta @e)
-                        <> " AS " <> al <> " ON " <> onTxt
-         , qsFromP  = qsFromP st ++ onPs
-         }
-  pure h
-
--- | LEFT JOIN table @e@. Like 'innerJoin', but selects as @Maybe e@: rows with no
--- match decode to 'Nothing'. The ON closure gets a plain 'Handle e'.
-leftJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (OptHandle e)
-leftJoin onf = QueryM $ do
+-- | Shared join machinery: allocate an alias, append "<kw> <table> AS tN ON <on>"
+-- to the FROM, collect ON params, return the new alias.
+addJoin :: forall e. Entity e => ByteString -> (Handle e -> Expr Bool) -> QueryM ByteString
+addJoin kw onf = QueryM $ do
   st <- get
   let i  = qsAlias st
       al = "t" <> BC.pack (show i)
       Expr onTxt onPs = onf (Handle al)
   put st { qsAlias  = i + 1
-         , qsFrom   = qsFrom st <> " LEFT JOIN " <> tmTable (tableMeta @e)
+         , qsFrom   = qsFrom st <> " " <> kw <> " " <> tmTable (tableMeta @e)
                         <> " AS " <> al <> " ON " <> onTxt
          , qsFromP  = qsFromP st ++ onPs
          }
-  pure (OptHandle al)
+  pure al
+
+-- | INNER JOIN table @e@. The function receives the new handle and returns the ON
+-- condition; handles bound earlier in the do-block are captured by the closure.
+innerJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (Handle e)
+innerJoin onf = Handle <$> addJoin @e "INNER JOIN" onf
+
+-- | LEFT JOIN table @e@: selects as @Maybe e@ (unmatched right rows decode 'Nothing').
+leftJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (OptHandle e)
+leftJoin onf = OptHandle <$> addJoin @e "LEFT JOIN" onf
+
+-- | RIGHT JOIN table @e@: keeps all of @e@'s rows; previously-joined tables may be
+-- NULL, so select them with 'opt'. The new table is required ('Handle').
+rightJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (Handle e)
+rightJoin onf = Handle <$> addJoin @e "RIGHT JOIN" onf
+
+-- | FULL OUTER JOIN table @e@: keeps unmatched rows on both sides. The new table
+-- selects as @Maybe e@ ('OptHandle'); select prior tables with 'opt'.
+fullJoin :: forall e. Entity e => (Handle e -> Expr Bool) -> QueryM (OptHandle e)
+fullJoin onf = OptHandle <$> addJoin @e "FULL JOIN" onf
+
+-- | Re-tag a handle so it /selects/ as @Maybe e@ (NULL-aware, via 'optDecoder').
+-- Use for a table that a RIGHT or FULL join may leave unmatched. Does not change the
+-- FROM clause, only how the column set is decoded.
+opt :: Handle e -> OptHandle e
+opt (Handle al) = OptHandle al
 
 where_ :: Expr Bool -> QueryM ()
 where_ (Expr t ps) = QueryM $ modify' $ \st ->

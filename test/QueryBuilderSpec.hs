@@ -5,7 +5,7 @@
 
 module QueryBuilderSpec (tests) where
 
-import Data.List (sort)
+import Data.List (sort, sortOn)
 import Fixtures (Post, PostT (..), User, UserT (..), withTestDb)
 import Manifest
 import Manifest.Query
@@ -160,4 +160,43 @@ tests = group "QueryBuilder"
                        orderBy [asc (h ^. #userName)]
                        pure h)
         assertEqual "names > Ada" ["Bob","Cay"] (map userName names)
+  , test "rightJoin renders RIGHT JOIN; opt selects the left table as Maybe" $
+      assertEqual "sql"
+        ( "SELECT t0.user_id, t0.user_name, t0.user_email, t1.post_id, t1.post_author, t1.post_title"
+       <> " FROM users AS t0 RIGHT JOIN posts AS t1 ON t1.post_author = t0.user_id" )
+        (fst (renderQueryM (do u <- from @User
+                               p <- rightJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                               pure (opt u, p))))
+  , test "fullJoin renders FULL JOIN; both sides select as Maybe" $
+      assertEqual "sql"
+        ( "SELECT t0.user_id, t0.user_name, t0.user_email, t1.post_id, t1.post_author, t1.post_title"
+       <> " FROM users AS t0 FULL JOIN posts AS t1 ON t1.post_author = t0.user_id" )
+        (fst (renderQueryM (do u  <- from @User
+                               fp <- fullJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                               pure (opt u, fp))))
+  , test "rightJoin keeps unmatched right rows (orphan post -> Nothing user)" $
+      withTestDb $ \pool -> do
+        rows <- withSession pool $ do
+          ada <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          _   <- add (Post { postId = 0, postAuthor = userId ada, postTitle = "A1" } :: Post)
+          _   <- add (Post { postId = 0, postAuthor = 999, postTitle = "Orphan" } :: Post)
+          runQuery (do u <- from @User
+                       p <- rightJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                       pure (opt u, p))
+        assertEqual "every post kept; orphan has no user"
+          [(Just "Ada", "A1"), (Nothing, "Orphan")]
+          (sortOn snd [ (fmap userName mu, postTitle p) | (mu, p) <- rows ])
+  , test "fullJoin keeps unmatched rows on both sides" $
+      withTestDb $ \pool -> do
+        rows <- withSession pool $ do
+          ada <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          _   <- add (User { userId = 0, userName = "Bob", userEmail = Nothing } :: User)
+          _   <- add (Post { postId = 0, postAuthor = userId ada, postTitle = "A1" } :: Post)
+          _   <- add (Post { postId = 0, postAuthor = 999, postTitle = "Orphan" } :: Post)
+          runQuery (do u  <- from @User
+                       fp <- fullJoin @Post (\p -> p ^. #postAuthor .== u ^. #userId)
+                       pure (opt u, fp))
+        assertEqual "matched, user-without-post, post-without-user"
+          (sort [ (Just "Ada", Just "A1"), (Just "Bob", Nothing), (Nothing, Just "Orphan") ])
+          (sort [ (fmap userName mu, fmap postTitle mp) | (mu, mp) <- rows ])
   ]
