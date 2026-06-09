@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Manifest.Core.Codec
   ( SqlParam
@@ -7,6 +9,15 @@ module Manifest.Core.Codec
   , RowDecoder(..)
   , field
   , decodeRow
+  , Codec(..)
+  , DbType(..)
+  , dimap
+  , lmap
+  , rmap
+  , refine
+  , nullable
+  , encode
+  , decodeCol
   ) where
 
 import Data.ByteString (ByteString)
@@ -14,6 +25,7 @@ import qualified Data.ByteString.Char8 as BC
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Manifest.Core.SqlType (SqlType(..))
 import Manifest.Error (DecodeError(..))
 import Text.Read (readMaybe)
 
@@ -94,3 +106,76 @@ decodeRow (RowDecoder g) cs = do
   if null rest
     then Right a
     else Left (DecodeError ("row had " <> show (length rest) <> " unconsumed column(s)"))
+
+-- | A profunctor column codec: pairs an encoder (Haskell -> column) with a
+-- decoder (column -> Haskell), plus the SQL column type and nullability. The
+-- @a@ side is contravariant (encode), the @b@ side covariant (decode), so a
+-- value-level @Codec a a@ is what a 'DbType' instance provides.
+data Codec a b = Codec
+  { cEncode   :: a -> SqlParam
+  , cDecode   :: SqlParam -> Either DecodeError b
+  , cSqlType  :: SqlType
+  , cNullable :: Bool
+  }
+
+-- | Profunctor 'dimap': pre-compose on the encode side, post-compose on decode.
+dimap :: (a' -> a) -> (b -> b') -> Codec a b -> Codec a' b'
+dimap f g (Codec e d s n) = Codec (e . f) (fmap g . d) s n
+
+-- | Map the contravariant (encode) side only.
+lmap :: (a' -> a) -> Codec a b -> Codec a' b
+lmap f = dimap f id
+
+-- | Map the covariant (decode) side only.
+rmap :: (b -> b') -> Codec a b -> Codec a b'
+rmap = dimap id
+
+-- | Refine the decoded value with a partial function that may reject.
+refine :: (b -> Either DecodeError c) -> Codec a b -> Codec a c
+refine k (Codec e d s n) = Codec e (\p -> d p >>= k) s n
+
+-- | Lift a non-null codec to a nullable one: 'Nothing' round-trips to SQL NULL.
+nullable :: Codec a a -> Codec (Maybe a) (Maybe a)
+nullable (Codec e d s _) =
+  Codec (maybe Nothing e)
+        (\p -> case p of Nothing -> Right Nothing; Just v -> Just <$> d (Just v))
+        s True
+
+-- | A type with a canonical column codec.
+class DbType a where
+  dbType :: Codec a a
+
+instance DbType Int where
+  dbType = Codec (Just . BC.pack . show)
+                 (\p -> case p of
+                          Just bs -> maybe (Left (DecodeError ("expected Int, got " <> show (BC.unpack bs)))) Right (readMaybe (BC.unpack bs))
+                          Nothing -> Left (DecodeError "expected Int, got NULL"))
+                 SqlBigInt False
+
+instance DbType Text where
+  dbType = Codec (Just . TE.encodeUtf8)
+                 (\p -> case p of Just bs -> Right (TE.decodeUtf8 bs); Nothing -> Left (DecodeError "expected Text, got NULL"))
+                 SqlText False
+
+instance DbType Bool where
+  dbType = Codec (\b -> Just (if b then BC.pack "t" else BC.pack "f"))
+                 (\p -> case p of
+                          Just bs -> case BC.unpack bs of { "t" -> Right True; "f" -> Right False; o -> Left (DecodeError ("expected Bool (t/f), got " <> show o)) }
+                          Nothing -> Left (DecodeError "expected Bool, got NULL"))
+                 SqlBool False
+
+instance DbType String where
+  dbType = dimap T.pack T.unpack (dbType :: Codec Text Text)
+
+instance DbType a => DbType (Maybe a) where
+  dbType = nullable dbType
+
+-- | Encode a value to a column using its 'DbType' instance.
+encode :: DbType a => a -> SqlParam
+encode = cEncode dbType
+
+-- | Decode one column with its 'DbType' instance.
+decodeCol :: forall a. DbType a => RowDecoder a
+decodeCol = RowDecoder $ \cs -> case cs of
+  (c:rest) -> (\a -> (a, rest)) <$> cDecode (dbType @a) c
+  []       -> Left (DecodeError "ran out of columns while decoding row")

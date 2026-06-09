@@ -1,9 +1,36 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
+
 module CodecSpec (tests) where
 
 import qualified Data.ByteString.Char8 as BC
+import Data.ByteString.Char8 (pack)
+import Data.Text (Text)
 import Manifest.Core.Codec
 import Manifest.Error (DecodeError (..))
 import Harness
+
+-- 1. deriving newtype DbType reuses the base column type + encode.
+newtype Email = Email Text
+  deriving newtype DbType
+
+-- 2. dimap builds a domain column.
+newtype Money = Money Int
+instance DbType Money where
+  dbType = dimap (\(Money n) -> n) Money (dbType @Int)
+
+-- 4. refine rejects invalid input.
+newtype Age = Age Int
+  deriving stock (Eq, Show)
+instance DbType Age where
+  dbType = refine (\n -> if n >= 0 then Right (Age n) else Left (DecodeError "neg"))
+                  (lmap (\(Age n) -> n) (dbType @Int))
+
+isRight :: Either a b -> Bool
+isRight (Right _) = True
+isRight (Left _)  = False
 
 tests :: [Test]
 tests = group "Codec"
@@ -24,4 +51,26 @@ tests = group "Codec"
       assertEqual "5-tuple"
         (Right (1 :: Int, "a" :: String, Nothing :: Maybe String, True, 9 :: Int))
         (decodeRow dec row)
+  , test "deriving newtype DbType reuses base column type and encode" $ do
+      assertEqual "sql type matches base"
+        (cSqlType (dbType @Text))
+        (cSqlType (dbType @Email))
+      assertEqual "encode matches base"
+        (encode ("ada" :: Text))
+        (encode (Email "ada"))
+  , test "dimap builds a domain column" $
+      assertEqual "Money encodes like its underlying Int"
+        (encode (100 :: Int))
+        (encode (Money 100))
+  , test "nullable encodes Nothing as NULL and is nullable" $ do
+      assertEqual "Nothing encodes to NULL"
+        (Nothing :: SqlParam)
+        (encode (Nothing :: Maybe Int))
+      assertBool "Maybe Int codec is nullable"
+        (cNullable (dbType @(Maybe Int)))
+  , test "refine accepts valid and rejects invalid" $ do
+      assertBool "decoding 5 succeeds"
+        (isRight (cDecode (dbType @Age) (Just (pack "5"))))
+      assertBool "decoding -1 fails"
+        (not (isRight (cDecode (dbType @Age) (Just (pack "-1")))))
   ]
