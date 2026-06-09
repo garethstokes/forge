@@ -22,14 +22,15 @@ import GHC.Generics (Generic)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.SAP (stripToJson, decodeLLM)
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
-import Effectful (Eff, runPureEff)
+import Effectful (Eff, runEff, runPureEff)
+import qualified Data.Text.IO as TIO
 import Crucible.LLM (LLM, complete, Message(..), Role(..), runLLMScripted)
 import Crucible.Agent (startAgent, runAgent)
 import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
-import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, acStreamIdleSecs, turnContentJson)
+import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, acStreamIdleSecs, turnContentJson, runChatCassette)
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
@@ -632,4 +633,14 @@ main = runChecks
   , check "turnContentJson: round-trips tool-only"
       (Right (Turn "" [ToolUse "u" "f" (JObject [])]))
       (parseTurn (encode (turnContentJson (Turn "" [ToolUse "u" "f" (JObject [])]))))
+  -- crucible-dak: hermetic cassette replay drives a tool loop
+  , do let cassettePath = "/tmp/crucible-chat-cassette-test.jsonl"
+           cassette =
+             encode (turnContentJson (Turn "" [ToolUse "u1" "get_weather" (JObject [("city", JString "Brisbane")])])) <> "\n"
+             <> encode (turnContentJson (Turn "Sunny in Brisbane!" [])) <> "\n"
+       TIO.writeFile cassettePath cassette
+       r <- runEff (runChatCassette cassettePath (runToolAgent [weatherToolC] "weather in Brisbane?"))
+       check "runChatCassette: replays a tool loop to the final answer"
+         (Right "Sunny in Brisbane!")
+         r
   ]

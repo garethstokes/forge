@@ -32,6 +32,8 @@ module Crucible.LLM.Anthropic
   , parseTurn
   , parseUsage
   , runChatAnthropic
+  , recordChatAnthropic
+  , runChatCassette
   , runLLMAnthropicUsage
   , runChatAnthropicUsage
   , messagesRequest
@@ -200,6 +202,38 @@ runChatAnthropic cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   interpret
     (\_ (Converse specs msgs) -> liftIO (fst <$> converseOnce cfg mgr specs msgs))
+    action
+
+-- | Like 'runChatAnthropic', but also TEE each assistant 'Turn' to a cassette
+-- file (one content-JSON line, appended in call order). Replays via
+-- 'runChatCassette'.
+recordChatAnthropic :: (IOE :> es) => FilePath -> AnthropicConfig -> Eff (Chat : es) a -> Eff es a
+recordChatAnthropic path cfg action = do
+  mgr <- liftIO (newAnthropicManager cfg)
+  interpret
+    (\_ (Converse specs msgs) -> liftIO $ do
+        (turn, _u) <- converseOnce cfg mgr specs msgs
+        TIO.appendFile path (encode (turnContentJson turn) <> "\n")
+        pure turn)
+    action
+
+-- | Replay a cassette recorded by 'recordChatAnthropic': each 'Converse' pops
+-- the next recorded 'Turn' in order (a file-backed 'runChatScripted').
+-- Deterministic; no network. Exhausting the cassette yields @Turn "" []@.
+runChatCassette :: (IOE :> es) => FilePath -> Eff (Chat : es) a -> Eff es a
+runChatCassette path action = do
+  contents <- liftIO (TIO.readFile path)
+  let turns =
+        [ either (const (Turn "" [])) id (parseTurn ln)
+        | ln <- T.lines contents
+        , not (T.null ln)
+        ]
+  reinterpret (evalState turns) (\_ -> \case
+    Converse _ _ -> do
+      ts <- get
+      case ts of
+        (t : rest) -> put rest >> pure t
+        []         -> pure (Turn "" []))
     action
 
 -- | Like 'runLLMAnthropic', but sum the token usage across every 'Complete' and
