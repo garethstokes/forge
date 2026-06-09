@@ -32,6 +32,7 @@ import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(.
 import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn)
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
+import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 
 -- Sample types for M3 tests
 
@@ -437,6 +438,19 @@ main = runChecks
       (runPureEff (runChatScripted
         (replicate 20 (Turn "" [ToolUse "u" "get_weather" (JObject [])]))
         (runToolAgent [weatherToolC] "x")))
+  -- A#4: Usage Monoid + cost helper
+  , check "usage: semigroup sums fields"
+      (Usage 4 6)
+      (Usage 1 2 <> Usage 3 4)
+  , check "usage: mempty is identity"
+      (Usage 5 9)
+      (mempty <> Usage 5 9)
+  , check "usage: total tokens"
+      (14 :: Int)
+      (usTotalTokens (Usage 5 9))
+  , check "estimateCost: per-MTok rates"
+      (18.0 :: Double)
+      (estimateCost (Rates 3 15) (Usage 1000000 1000000))
   -- M12 Task 5: chatRequestJson + parseTurn
   , check "parseTurn: text + tool_use"
       (Right (Turn "Let me check."
