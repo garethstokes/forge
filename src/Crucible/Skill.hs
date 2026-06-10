@@ -21,7 +21,6 @@ module Crucible.Skill
   ) where
 
 import Data.Text (Text)
-import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson as A
@@ -32,7 +31,7 @@ import Autodocodec (toJSONVia)
 
 import Crucible.Codec (JSONCodec, schemaText)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
-import Crucible.SAP (decodeLLM)
+import Crucible.SAP (decodeLLM, DecodeError(..))
 
 -- | A declared LLM skill: a task instruction plus input/output codecs.
 data Skill i o = Skill
@@ -78,17 +77,17 @@ prompt Skill{output = outC, instruction = instr, input = inC} inp =
 -- | Run a typed skill: build the prompt, call the model, and decode the reply
 -- against the output codec. On a decode failure, re-ask with the parse error fed
 -- back (up to 'retries' times); on exhaustion return 'Left'.
-call :: (LLM :> es) => Skill i o -> i -> Eff es (Either String o)
+call :: (LLM :> es) => Skill i o -> i -> Eff es (Either DecodeError o)
 call fn@Skill{output = outC, retries = rets} inp = loop rets (prompt fn inp)
   where
     loop n msgs = do
       raw <- complete msgs
       case decodeLLM outC raw of
         Right o -> pure (Right o)
-        Left err
+        Left err@(DecodeError msg _)
           | n <= 0    -> pure (Left err)
           | otherwise ->
-              let e = T.pack err
+              let e = msg
               in loop (n - 1)
                 ( msgs
                     ++ [ Message Assistant raw

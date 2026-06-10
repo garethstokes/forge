@@ -1,5 +1,7 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Crucible.SAP (stripToJson, decodeLLM) where
+module Crucible.SAP (stripToJson, decodeLLM, DecodeError(..)) where
 
 import Data.Aeson (Value)
 import qualified Data.Aeson as A
@@ -9,6 +11,11 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Autodocodec (JSONCodec, parseJSONVia)
+
+-- | A structured parse failure carrying both the error message and the
+-- original (un-stripped) LLM reply text.
+data DecodeError = DecodeError { message :: Text, raw :: Text }
+  deriving (Eq, Show)
 
 -- | Best-effort extraction of a JSON value from LLM output that may be wrapped
 -- in markdown code fences and/or surrounding prose. Finds the first '{' or '['
@@ -52,8 +59,12 @@ scanBalanced = go 0 (0 :: Int) False False
                       in if d' == 0 then Just (j + 1) else go (j + 1) d' False False r
 
 -- | Strip JSON out of LLM prose, parse it, and decode through the codec.
-decodeLLM :: JSONCodec a -> Text -> Either String a
+-- On any failure returns a 'DecodeError' whose 'raw' field carries the
+-- original un-stripped input.
+decodeLLM :: JSONCodec a -> Text -> Either DecodeError a
 decodeLLM c t =
   case A.eitherDecode (LB.fromStrict (TE.encodeUtf8 (stripToJson t))) of
-    Left err -> Left err
-    Right v  -> parseEither (parseJSONVia c) (v :: Value)
+    Left err -> Left (DecodeError (T.pack err) t)
+    Right v  -> case parseEither (parseJSONVia c) (v :: Value) of
+      Left err -> Left (DecodeError (T.pack err) t)
+      Right a  -> Right a

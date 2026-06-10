@@ -29,6 +29,7 @@ import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
 import Crucible.Skill (Skill, skill, call)
+import Crucible.SAP (DecodeError(..))
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
@@ -68,7 +69,7 @@ main = do
       typed <- runEff (Anthropic.run cfg (call classify "I absolutely love this!"))
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
-        Left err -> TIO.putStrLn ("typed fn decode error: " <> T.pack err)
+        Left (DecodeError msg _) -> TIO.putStrLn ("typed fn decode error: " <> msg)
       let weatherSchema = A.object
             [ "type" A..= A.String "object"
             , "properties" A..= A.object [ "city" A..= A.object ["type" A..= A.String "string"] ]

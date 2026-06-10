@@ -21,7 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
 import GHC.Generics (Generic)
-import Crucible.SAP (stripToJson, decodeLLM)
+import Crucible.SAP (stripToJson, decodeLLM, DecodeError(..))
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
 import Effectful (Eff, runEff, runPureEff)
 import qualified Data.Text.IO as TIO
@@ -189,6 +189,11 @@ main = runChecks
   , check "decodeLLM rejects junk"
       True
       (either (const True) (const False) (decodeLLM forecastCodec "no json here"))
+  , check "decodeLLM: malformed reply -> Left DecodeError carrying the raw text"
+      (Left True)
+      (case decodeLLM C.str "not json at all" of
+         Left (DecodeError _ r) -> Left (r == "not json at all")
+         Right _                -> Right ())
   -- Codec round-trip: primitives
   , check "codec encode str"  (String "hello")  (encodeVia C.str "hello")
   , check "codec decode str"  (Right "hello")   (decodeVia C.str (String "hello"))

@@ -8,7 +8,6 @@ module Crucible.Agent
   ) where
 
 import Data.Text (Text)
-import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson as A
@@ -18,7 +17,7 @@ import NeatInterpolation (text)
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
 import Crucible.Tool (Tools, callTool, ToolCall(..))
 import Crucible.Codec (JSONCodec, schemaText)
-import Crucible.SAP (decodeLLM)
+import Crucible.SAP (decodeLLM, DecodeError(..))
 import Crucible.Decision (Decision, Step(..), reduce)
 
 -- | The agent's running context: the conversation so far.
@@ -44,8 +43,8 @@ runAgent codec = loop
       raw <- complete (transcript st)
       let st1 = append st (Message Assistant raw)
       case decodeLLM codec raw of
-        Left err ->
-          let e = T.pack err
+        Left (DecodeError msg _) ->
+          let e = msg
           in loop (append st1
                (Message User [text|Your reply did not parse: ${e}. Respond with valid JSON only.|]))
         Right dec -> case reduce dec of

@@ -19,7 +19,7 @@ import Effectful
 import NeatInterpolation (text)
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
 import Crucible.Codec (JSONCodec, object, field, str, bool)
-import Crucible.SAP (decodeLLM)
+import Crucible.SAP (decodeLLM, DecodeError(..))
 
 -- | What a case's output is checked against.
 data Expectation a
@@ -52,7 +52,7 @@ judge render rubric actual = do
 Output to grade: ${graded}|] ]
   pure $ case decodeLLM verdictCodec raw of
     Right Verdict{pass = vp, why = vw} -> Score (if vp then 1.0 else 0.0) vw
-    Left e                              -> Score 0.0 ("judge parse error: " <> T.pack e)
+    Left (DecodeError msg _)            -> Score 0.0 ("judge parse error: " <> msg)
   where graded = render actual
 
 -- | Score one output against its expectation. Pure for Exactly/Predicate; the
