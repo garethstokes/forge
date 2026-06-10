@@ -73,7 +73,7 @@ tests :: [Test]
 tests = group "Index"
   [ test "renderCreateIndex emits CREATE INDEX … USING gin (col)" $ do
       let ddl = renderCreateIndex "idx_docs"
-                  (IndexDef "idx_docs_doc_prefs_gin_idx" Gin ["doc_prefs"])
+                  (IndexDef "idx_docs_doc_prefs_gin_idx" Gin False ["doc_prefs"])
       assertEqual "gin DDL"
         "CREATE INDEX idx_docs_doc_prefs_gin_idx ON idx_docs USING gin (doc_prefs)"
         ddl
@@ -106,4 +106,31 @@ tests = group "Index"
         liftIO $ do
           assertEqual "no idx_docs indexes before" [] before
           assertBool  "gin index created with the table" (ginIdxName `elem` after)
+  , test "migrateUp creates a UNIQUE multi-column index on (a, b)" $
+      withEmptyDb $ \pool -> withSession pool $ do
+        _   <- migrateUp [managed (Proxy @Pair)]
+        idx <- liveIdx "idx_pairs"
+        ud  <- idxDef uniqueIdxName
+        liftIO $ do
+          assertBool ("unique index present: " <> show idx) (uniqueIdxName `elem` idx)
+          assertBool ("def is UNIQUE: " <> show ud)
+            (maybe False ("UNIQUE" `isInfixOf`) ud)
+          assertBool ("def covers (pair_a, pair_b): " <> show ud)
+            (maybe False ("(pair_a, pair_b)" `isInfixOf`) ud)
   ]
+
+-- A small 2-column entity that declares a UNIQUE composite index on (a, b).
+data PairT f = Pair
+  { pairId :: Field f (Pk Int)
+  , pairA  :: Field f Text
+  , pairB  :: Field f Text
+  } deriving GHC.Generics.Generic
+type Pair = PairT Identity
+
+instance Entity Pair where
+  tableMeta = genericTableMeta @PairT "idx_pairs"
+  indexes   = [ unique [#pairA, #pairB] ]
+
+-- The expected derived unique index name: <table>_<col1>_<col2>_unique_idx.
+uniqueIdxName :: BS.ByteString
+uniqueIdxName = "idx_pairs_pair_a_pair_b_unique_idx"

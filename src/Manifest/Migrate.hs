@@ -32,7 +32,7 @@ import Data.Proxy (Proxy)
 import qualified Data.ByteString.Char8 as BC
 import Manifest.Core.Codec (SqlParam)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), sqlTypeDDL, sqlTypeLive)
-import Manifest.Core.Index (Index (..), IndexDef (..), methodSql)
+import Manifest.Core.Index (Index (..), IndexDef (..), IndexMethod (..), methodSql)
 import Manifest.Core.Rls (PolicyDef (..), PolicyCmd (..), policyDef)
 import Manifest.Entity (Entity, tableMeta, rlsPolicies, indexes)
 import Manifest.Error (DbError(OtherError), DbException(..))
@@ -59,8 +59,10 @@ managed _ = ManagedTable (tmTable tm) (tmColumns tm)
 -- | Name each declared index from the table it lives on, so the name is
 -- schema-unique: @\<table>_\<col1>[_\<col2>...]_\<method>_idx@.
 mkIndexes :: ByteString -> [Index a] -> [IndexDef]
-mkIndexes table = map $ \(Index (m, cols)) ->
-  IndexDef (table <> "_" <> BC.intercalate "_" cols <> "_" <> methodSql m <> "_idx") m cols
+mkIndexes table = map $ \(Index (m, uniq, cols)) ->
+  let suffix = if uniq then "unique" else methodSql m
+      name   = table <> "_" <> BC.intercalate "_" cols <> "_" <> suffix <> "_idx"
+  in IndexDef name m uniq cols
 
 -- | One column's DDL fragment: @name TYPE [NOT NULL]@. A serial PK column is
 -- @name BIGSERIAL PRIMARY KEY@; a non-serial PK gets @PRIMARY KEY@ too.
@@ -187,8 +189,9 @@ rlsPlan = fmap concat . mapM rlsForTable
 
 -- | @CREATE INDEX name ON table USING method (col1, col2, …)@.
 renderCreateIndex :: ByteString -> IndexDef -> ByteString
-renderCreateIndex table (IndexDef n m cols) =
-  "CREATE INDEX " <> n <> " ON " <> table <> " USING " <> methodSql m
+renderCreateIndex table (IndexDef n method uniq cols) =
+  "CREATE " <> (if uniq then "UNIQUE " else "") <> "INDEX " <> n <> " ON " <> table
+    <> (case method of Gin -> " USING gin"; Btree -> "")
     <> " (" <> BC.intercalate ", " cols <> ")"
 
 -- | The index names live on a table (in the @public@ schema).

@@ -1,0 +1,14 @@
+[package]
+name = "manifest-evals"
+version = "0.1.0.0"
+
+[build.lib]
+source-dirs = ["src"]
+ghc-options = ["-Wall", "-XOverloadedStrings"]
+depends = ["base", "text", "time", "bytestring", "aeson", "manifest"]
+
+[build.test.spec]
+source-dirs = ["test"]
+main = "Spec.hs"
+ghc-options = ["-XOverloadedStrings", "-lpq"]
+depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "manifest-evals"]

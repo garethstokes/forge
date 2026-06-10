@@ -58,6 +58,9 @@ type family PrimKey a where
 type family GPrimKeyType (rep :: Type -> Type) :: Type where
   GPrimKeyType (D1 m f) = GPrimKeyType f
   GPrimKeyType (C1 m f) = GPrimKeyType f
+  -- 4+ fields produce a balanced product tree, so the first field sits at the
+  -- left spine of a nested @:*:@; recurse left to reach it.
+  GPrimKeyType ((l :*: r) :*: rest) = GPrimKeyType (l :*: r)
   GPrimKeyType ((S1 m (Rec0 (Exposed inner))) :*: rest) = Base inner
   GPrimKeyType (S1 m (Rec0 (Exposed inner)))            = Base inner
   GPrimKeyType other =

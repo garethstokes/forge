@@ -20,7 +20,10 @@ module Manifest.Core.Codec
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Data.Char (isDigit)
 import Data.Profunctor (Profunctor(..))
+import Data.Time (UTCTime)
+import Data.Time.Format (formatTime, parseTimeM, defaultTimeLocale)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -95,6 +98,34 @@ instance DbType Int where
                           Just bs -> maybe (Left (DecodeError ("expected Int, got " <> show (BC.unpack bs)))) Right (readMaybe (BC.unpack bs))
                           Nothing -> Left (DecodeError "expected Int, got NULL"))
                  SqlBigInt False
+
+instance DbType Double where
+  dbType = Codec (Just . BC.pack . show)
+                 (\p -> case p of
+                          Just bs -> maybe (Left (DecodeError ("expected Double, got " <> show (BC.unpack bs)))) Right (readMaybe (BC.unpack bs))
+                          Nothing -> Left (DecodeError "expected Double, got NULL"))
+                 SqlDouble False
+
+instance DbType UTCTime where
+  dbType = Codec
+    (\t -> Just (BC.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" t)))
+    (\p -> case p of
+        Just bs -> maybe (Left (DecodeError ("expected timestamptz, got " <> show (BC.unpack bs)))) Right
+                         (parsePgTimestamptz (BC.unpack bs))
+        Nothing -> Left (DecodeError "expected timestamptz, got NULL"))
+    SqlTimestamptz False
+
+-- Parse Postgres ISO timestamptz "YYYY-MM-DD HH:MM:SS[.ffffff]±HH[:MM[:SS]]".
+-- The time library's %z wants ±HHMM, so normalize the trailing offset first.
+parsePgTimestamptz :: String -> Maybe UTCTime
+parsePgTimestamptz s = parseTimeM True defaultTimeLocale "%Y-%m-%d %H:%M:%S%Q%z" (normalizeOffset s)
+  where
+    normalizeOffset str =
+      case [ i | (i, c) <- zip [0 :: Int ..] str, (c == '+' || c == '-') && i > 10 ] of
+        [] -> str
+        is -> case splitAt (last is) str of
+                (ts, sign : off) -> ts ++ sign : take 4 (filter isDigit off ++ "0000")
+                (ts, [])         -> ts
 
 instance DbType Text where
   dbType = Codec (Just . TE.encodeUtf8)

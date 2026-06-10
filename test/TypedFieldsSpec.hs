@@ -82,6 +82,20 @@ type Gadget = GadgetT Identity
 
 deriving via (Table "gadgets" GadgetT) instance Entity Gadget
 
+-- A 4+-field entity: GHC builds a BALANCED Generic Rep tree for these, so the
+-- first field sits at the left spine of a nested (:*:). GPrimKeyType must recurse
+-- the left branch to reach it; this guards that core type-family invariant inside
+-- the library's own suite (all other test entities are <= 3 fields).
+data WideT f = Wide
+  { wideId :: Field f (Pk Int)
+  , wideA  :: Field f Text
+  , wideB  :: Field f Int
+  , wideC  :: Field f Bool
+  } deriving Generic
+type Wide = WideT Identity
+
+deriving via (Table "wides" WideT) instance Entity Wide
+
 accountsDDL, notesDDL, gadgetsDDL, itemsDDL :: BC.ByteString
 accountsDDL = "CREATE TABLE accounts ( account_id BIGSERIAL PRIMARY KEY, account_name TEXT NOT NULL )"
 notesDDL    = "CREATE TABLE notes ( note_id BIGSERIAL PRIMARY KEY, note_account BIGINT NOT NULL, note_body TEXT NOT NULL )"
@@ -106,7 +120,11 @@ wrongIdSource = unlines
 
 tests :: [Test]
 tests = group "TypedFields"
-  [ test "a newtype column round-trips through the codec" $
+  [ test "primKey of a 4+-field entity (balanced Rep) is the first field" $
+      assertEqual "first field is the PK"
+        (7 :: Int)
+        (primKey (Wide { wideId = 7, wideA = "x", wideB = 3, wideC = True } :: Wide))
+  , test "a newtype column round-trips through the codec" $
       assertEqual "Email round-trip"
         (Right (Email "ada@x.io"))
         (cDecode dbType (encode (Email "ada@x.io")))

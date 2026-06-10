@@ -85,7 +85,12 @@ module Manifest
   , (./)
   , Path
   , HasRelation(..)
+  , RelSpec(..)
   , Card(..)
+  , hasMany
+  , hasOpt
+  , belongsTo
+  , belongsToMaybe
     -- * Cascades (onDelete)
   , OnDelete(..)
   , CascadeRule(..)
@@ -120,7 +125,10 @@ module Manifest
   , Field
   , Pk
   , Nullable
+  , TableMeta(..)
+  , ColumnMeta(..)
   , genericTableMeta
+  , camelToSnake
   , genericRowDecoder
   , genericRowEncode
     -- * Connection pool
@@ -156,11 +164,15 @@ module Manifest
   , IndexMethod (..)
   , Index
   , IndexDef (..)
+  , SomeColumn (..)
   , gin
   , btree
+  , unique
     -- * Errors
   , DbError(..)
   , DbException(..)
+    -- * Testing helpers
+  , withEphemeralDb
   ) where
 
 import Manifest.Core.Query
@@ -185,13 +197,18 @@ import Manifest.Core.Rls
 import Manifest.Rls
   ( policy, using, withCheck, forCommand )
 import Manifest.Core.Index
-  ( IndexMethod (..), Index, IndexDef (..) )
+  ( IndexMethod (..), Index, IndexDef (..), SomeColumn (..) )
 import Manifest.Index
-  ( gin, btree )
+  ( gin, btree, unique )
 import Manifest.Core.Relation
   ( HasRelation(..)
+  , RelSpec(..)
   , Card(..)
   , cascade
+  , hasMany
+  , hasOpt
+  , belongsTo
+  , belongsToMaybe
   )
 import Manifest.Core.Cascade
   ( OnDelete(..)
@@ -238,7 +255,10 @@ import Manifest.Core.Table
   , Nullable
   )
 import Manifest.Core.Meta
-  ( genericTableMeta
+  ( TableMeta (..)
+  , ColumnMeta (..)
+  , genericTableMeta
+  , camelToSnake
   , SqlType (..)
   )
 import Manifest.Entity
@@ -290,4 +310,7 @@ import Manifest.Session
 import Manifest.Session.Command
   ( update
   , deleteWhere
+  )
+import Manifest.Testing
+  ( withEphemeralDb
   )
