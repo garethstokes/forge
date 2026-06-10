@@ -24,7 +24,7 @@ import Crucible.LLM.Anthropic
   ( defaultAnthropicConfig
   )
 import qualified Crucible.LLM.Anthropic as Anthropic
-import qualified Crucible.LLM.Anthropic.Stream as Stream
+import qualified Crucible.LLM.Anthropic.Stream as Anthropic
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
@@ -94,7 +94,7 @@ main = do
       TIO.putStr "stream: "
       (streamed, sUsage) <-
         runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-                  (Stream.runLLMAnthropicStream cfg (complete prompt)))
+                  (Anthropic.stream cfg (complete prompt)))
       TIO.putStrLn ""
       TIO.putStrLn ("stream usage: " <> T.pack (show (usTotalTokens sUsage)) <> " tokens"
                     <> " (len " <> T.pack (show (T.length streamed)) <> ")")
@@ -104,7 +104,7 @@ main = do
       TIO.putStr "stream tool: "
       (toolStream, tUsage) <-
         runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-                  (Stream.runChatAnthropicStream cfg (runToolAgent [weatherTool2] "Use the tool to get the weather in Brisbane, then tell me.")))
+                  (Anthropic.streamChat cfg (runToolAgent [weatherTool2] "Use the tool to get the weather in Brisbane, then tell me.")))
       TIO.putStrLn ""
       case toolStream of
         Right a  -> TIO.putStrLn ("stream tool result: " <> a)

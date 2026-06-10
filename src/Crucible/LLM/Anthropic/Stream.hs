@@ -20,8 +20,8 @@ module Crucible.LLM.Anthropic.Stream
   , emptyAcc
   , stepAcc
   , timedRead
-  , runLLMAnthropicStream
-  , runChatAnthropicStream
+  , stream
+  , streamChat
   ) where
 
 import Data.ByteString (ByteString)
@@ -235,10 +235,10 @@ streamLoop idleMicros resp = go emptyAcc BS.empty
 
 -- | Stream the text path: interpret 'LLM' against Anthropic SSE, 'emit'ting each
 -- text delta and returning the assembled reply plus summed 'Usage'.
-runLLMAnthropicStream
+stream
   :: (IOE :> es, Emit :> es)
   => AnthropicConfig -> Eff (LLM : es) a -> Eff es (a, Usage)
-runLLMAnthropicStream cfg action = do
+stream cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   reinterpret (runState mempty)
     (\_ (Complete msgs) -> do
@@ -253,10 +253,10 @@ runLLMAnthropicStream cfg action = do
 -- | Stream the chat path: interpret 'Chat' against Anthropic SSE, 'emit'ting each
 -- text delta, reassembling tool_use blocks, and returning the assembled 'Turn'
 -- plus summed 'Usage'.
-runChatAnthropicStream
+streamChat
   :: (IOE :> es, Emit :> es)
   => AnthropicConfig -> Eff (Chat : es) a -> Eff es (a, Usage)
-runChatAnthropicStream cfg action = do
+streamChat cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   reinterpret (runState mempty)
     (\_ (Converse specs msgs) -> do
