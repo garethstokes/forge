@@ -8,9 +8,12 @@ module CodecSpec (tests) where
 import qualified Data.ByteString.Char8 as BC
 import Data.ByteString.Char8 (pack)
 import Data.Text (Text)
+import Data.Time (UTCTime)
+import Fixtures (withEmptyDb)
 import Manifest.Core.Codec
 import Manifest.Core.SqlType (SqlType(..), sqlTypeDDL, sqlTypeLive)
 import Manifest.Error (DecodeError (..))
+import Manifest.Postgres (execText, withConnection)
 import Harness
 
 -- 1. deriving newtype DbType reuses the base column type + encode.
@@ -91,4 +94,21 @@ tests = group "Codec"
       assertEqual "sqltype" SqlDouble (cSqlType (dbType @Double))
       assertEqual "encode"  (Just (BC.pack "1.5")) (encode (1.5 :: Double))
       assertEqual "decode"  (Right (1.5 :: Double)) (cDecode (dbType @Double) (Just (BC.pack "1.5")))
+  , test "UTCTime decodes the Postgres timestamptz text format" $ do
+      assertEqual "sqltype" SqlTimestamptz (cSqlType (dbType @UTCTime))
+      let bs = Just (BC.pack "2026-06-10 10:53:21.123456+10")
+      assertEqual "decode +10 offset to UTC"
+        (Right (read "2026-06-10 00:53:21.123456 UTC" :: UTCTime))
+        (cDecode (dbType @UTCTime) bs)
+  , test "UTCTime round-trips through a real Postgres timestamptz column" $
+      withEmptyDb $ \pool -> withConnection pool $ \conn -> do
+        let ts = read "2026-06-10 00:53:21.123456 UTC" :: UTCTime
+        _ <- execText conn "CREATE TABLE ts_rt (at TIMESTAMPTZ NOT NULL)" []
+        _ <- execText conn "INSERT INTO ts_rt (at) VALUES ($1)" [encode ts]
+        rows <- execText conn "SELECT at FROM ts_rt" []
+        case rows of
+          [[col]] ->
+            assertEqual "round-trip equals original"
+              (Right ts) (cDecode (dbType @UTCTime) col)
+          _ -> assertBool "expected exactly one row/col" False
   ]
