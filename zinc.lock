@@ -47,6 +47,12 @@ sha256 = "sha256:39e1dc6981dadac0cf9a3c7ba5a0505581b4f0c59fb084a54406b44e6b96c81
 depends = ["aeson", "dlist", "hashable", "scientific", "unordered-containers", "validity", "validity-scientific", "vector"]
 
 [[locked]]
+name = "autodocodec-schema"
+vendored = "0.2.0.1"
+sha256 = "sha256:2e38f4bcbf248617327ab81e425d42072acb7ccfb171c111a61a30657b2ddcba"
+depends = ["aeson", "autodocodec", "scientific", "unordered-containers", "validity", "validity-aeson", "validity-containers", "validity-text"]
+
+[[locked]]
 name = "base-orphans"
 vendored = "0.9.4"
 sha256 = "sha256:d144b6dc9be81f222f77b463a13a07779482a9a25fd823c836587344bb6a2eb8"
@@ -553,10 +559,40 @@ sha256 = "sha256:6ed1373a801c523b46345b3e8c4831464a458a7826df452a94eb5e6dce35b7b
 depends = []
 
 [[locked]]
+name = "validity-aeson"
+vendored = "0.2.0.5"
+sha256 = "sha256:bf6220dc94d4867fdd6cc53622e99f31b468dae5d21b38e2de8cab13beffac61"
+depends = ["aeson", "validity", "validity-scientific", "validity-text", "validity-unordered-containers", "validity-vector"]
+
+[[locked]]
+name = "validity-containers"
+vendored = "0.5.0.5"
+sha256 = "sha256:f539703d1ac8a38624d037364544c3c1182d95df838bc7e8fd6af8856d92a835"
+depends = ["validity"]
+
+[[locked]]
 name = "validity-scientific"
 vendored = "0.2.0.3"
 sha256 = "sha256:dc6e75d1507db2edcdbecdf01f82bd7c761e6c5aa30f250894343bf3dd0fe97e"
 depends = ["scientific", "validity"]
+
+[[locked]]
+name = "validity-text"
+vendored = "0.3.1.3"
+sha256 = "sha256:22483f0c3efe6dc4c100fd611e5950b40a15dfaa9a4d662a19fee6a8d8e07c2e"
+depends = ["validity"]
+
+[[locked]]
+name = "validity-unordered-containers"
+vendored = "0.2.0.3"
+sha256 = "sha256:65bbcb4e5e8d47da96f79a4eeab37fb8a84d155b66f89b5421a41b1b5663b755"
+depends = ["hashable", "unordered-containers", "validity"]
+
+[[locked]]
+name = "validity-vector"
+vendored = "0.2.0.3"
+sha256 = "sha256:e6496a0ef3ee5c97a7c5cf28943ff7982ed6bfcd9276b95ff75517da009a375b"
+depends = ["hashable", "validity", "vector"]
 
 [[locked]]
 name = "vector"
