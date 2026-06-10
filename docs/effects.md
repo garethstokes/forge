@@ -8,7 +8,7 @@ nav_order: 3
 crucible models each agent capability as a dynamic `effectful` effect. A function
 that talks to a model carries `LLM :> es` in its constraint; one that calls tools
 carries `Chat :> es`; one that emits streaming deltas carries `Emit :> es`. The
-constraint is the capability manifest: the type says exactly what the function can
+constraint is the capability list: the type says exactly what the function can
 do, and you choose the interpreter at the program edge — scripted for tests, live
 for production, cassette for hermetic replay — without touching the logic inside.
 

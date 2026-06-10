@@ -173,11 +173,9 @@ case typed of
   Left e   -> putStrLn ("decode error: " <> e.message)
 ```
 
-## Interop with manifest
+## One codec, many uses
 
-The same `HasCodec` instance that makes a type usable as a `Skill` output also
-makes it persistable as a manifest column without any additional derivation. A type
-defined once — `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec` — can be used as a skill output, as a tool argument codec
-(via `schemaValue` → `schema`), and as a manifest entity field, all from the
-same single codec. See [Tool calling](tool-calling.md) for the tool schema path and
+A type defined once — `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec` — can be used as a skill output and as a tool argument codec
+(via `schemaValue` → `schema`), all from the same single codec. See
+[Tool calling](tool-calling.md) for the tool schema path and
 [Getting started](getting-started.md) for the end-to-end wiring.

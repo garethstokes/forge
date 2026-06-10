@@ -43,8 +43,7 @@ main = do
 - **Cassettes** — record a live conversation and replay it deterministically,
   the slider between a live eval and a hermetic test.
 - **Codecs** — one autodocodec `HasCodec` per type drives prompt schemas, tool
-  `input_schema`, and JSON encode/decode (and makes the type persistable by
-  sibling project [manifest](https://github.com/garethstokes/manifest)).
+  `input_schema`, and JSON encode/decode.
 
 ## Pages
 
