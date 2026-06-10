@@ -196,6 +196,30 @@ instance DbType Money where
   dbType = dimap (\(Money n) -> n) Money (dbType @Int)
 ```
 
+### The codec is a profunctor
+
+`dbType :: Codec a a` is a profunctor. A `Codec` pairs an encoder (the contravariant
+side, a value to its wire form) with a decoder (the covariant side, the wire form back to
+a value), so you build a new column type by mapping an existing codec rather than writing
+encode and decode by hand:
+
+- `dimap f g` maps both sides at once: encode through `f`, decode through `g` (the `Money`
+  case above).
+- `lmap f` maps only the encode side; `rmap g` only the decode side.
+- `refine k` runs a decoded value through `k :: b -> Either DecodeError c`, rejecting
+  invalid input. A validated newtype composes `lmap` on encode with `refine` on decode:
+
+```haskell
+newtype Age = Age Int
+instance DbType Age where
+  dbType = refine (\n -> if n >= 0 then Right (Age n) else Left (DecodeError "negative age"))
+                  (lmap (\(Age n) -> n) (dbType @Int))
+```
+
+The SQL type rides along unchanged through all of these, so a mapped type keeps its base
+type's column (`Age` is still a `BIGINT`). `Maybe a` is handled for any `DbType a`, so a
+nullable column needs no extra work.
+
 The same newtype pattern gives type-safe identifiers. Use the newtype as the
 primary key and as foreign keys that point at it:
 

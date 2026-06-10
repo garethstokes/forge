@@ -108,6 +108,7 @@ module Manifest
   , rmap
   , refine
   , nullable
+  , DecodeError (..)
   , SqlType (..)
     -- * JSONB columns
   , Json (..)
@@ -271,6 +272,7 @@ import Manifest.Migrate
 import Manifest.Error
   ( DbError(..)
   , DbException(..)
+  , DecodeError(..)
   )
 import Manifest.Session
   ( Db

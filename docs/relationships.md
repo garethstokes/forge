@@ -180,6 +180,41 @@ instance HasRelation Employee "reports" where
 Both load through the ordinary paths (`load #manager e`, `load #reports e`, or their
 D-path equivalents) with no special handling at the call site.
 
+## Many-to-many
+
+There is no implicit junction. A many-to-many relationship is modelled as an explicit
+join entity: a table whose rows are the pairings, with a foreign key to each side. The
+join row is a first-class entity, so it can carry its own data (an enrolment date, a
+role) and is loaded and saved like any other.
+
+A student takes many courses and a course has many students, joined by `Enrollment`:
+
+```haskell
+data EnrollmentT f = Enrollment
+  { enrollmentId      :: Field f (Pk Int)
+  , enrollmentStudent :: Field f Int        -- FK -> students.student_id
+  , enrollmentCourse  :: Field f Int        -- FK -> courses.course_id
+  } deriving Generic
+```
+
+Each side `hasMany` the join entity, and the join entity `belongsTo` each side:
+
+```haskell
+instance HasRelation Student "enrollments" where
+  type Target      Student "enrollments" = [Enrollment]
+  type Cardinality Student "enrollments" = 'Many
+  relSpec = hasMany (Proxy @"enrollmentStudent")   -- enrolments whose student FK = this student
+
+instance HasRelation Enrollment "course" where
+  type Target      Enrollment "course" = Course
+  type Cardinality Enrollment "course" = 'One
+  relSpec = belongsTo (Proxy @"enrollmentCourse")  -- the course this enrolment points at
+```
+
+To read a student's courses, load the enrolments, then the course each belongs to
+(`load #enrollments student`, then `load #course` on each). `Course` declares the mirror
+side (`hasMany (Proxy @"enrollmentCourse")`) to walk it the other way.
+
 ## Unit-of-Work integration
 
 Loaded children are managed. Whether you obtain them via `load`, `with`,
