@@ -30,7 +30,7 @@ import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
 import Crucible.Skill (Skill, skill, call)
-import Crucible.SAP (DecodeError(..))
+import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)

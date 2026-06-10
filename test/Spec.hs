@@ -21,7 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
 import GHC.Generics (Generic)
-import Crucible.SAP (stripToJson, decodeLLM, DecodeError(..))
+import Crucible.Decode (stripToJson, decodeLLM, DecodeError (..))
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
 import Effectful (Eff, runEff, runPureEff)
 import qualified Data.Text.IO as TIO

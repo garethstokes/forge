@@ -1,7 +1,10 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Crucible.SAP (stripToJson, decodeLLM, DecodeError(..)) where
+-- | Tolerant decoding of LLM replies: strip markdown fences / surrounding
+-- prose, extract the first balanced JSON bracket group, parse it, and decode
+-- through an autodocodec 'JSONCodec'.
+module Crucible.Decode (stripToJson, decodeLLM, DecodeError (..)) where
 
 import Data.Aeson (Value)
 import qualified Data.Aeson as A

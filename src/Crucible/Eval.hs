@@ -20,7 +20,7 @@ import Effectful
 import NeatInterpolation (text)
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
 import Crucible.Codec (JSONCodec, object, field, str, bool)
-import Crucible.SAP (decodeLLM, DecodeError(..))
+import Crucible.Decode (decodeLLM, DecodeError (..))
 
 -- | What a case's output is checked against.
 data Expectation a

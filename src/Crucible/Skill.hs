@@ -32,7 +32,7 @@ import Autodocodec (toJSONVia)
 
 import Crucible.Codec (JSONCodec, schemaText)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
-import Crucible.SAP (decodeLLM, DecodeError(..))
+import Crucible.Decode (decodeLLM, DecodeError (..))
 
 -- | A declared LLM skill: a task instruction plus input/output codecs.
 data Skill i o = Skill

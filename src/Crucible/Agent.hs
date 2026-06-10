@@ -18,7 +18,7 @@ import NeatInterpolation (text)
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
 import Crucible.Tool (Tools, callTool, ToolCall(..))
 import Crucible.Codec (JSONCodec, schemaText)
-import Crucible.SAP (decodeLLM, DecodeError(..))
+import Crucible.Decode (decodeLLM, DecodeError (..))
 import Crucible.Decision (Decision, Step(..), reduce)
 
 -- | The agent's running context: the conversation so far.
