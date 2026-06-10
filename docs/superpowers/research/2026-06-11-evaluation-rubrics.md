@@ -215,6 +215,15 @@ targeted graders over one omnibus grader
   first-class metric, and human corrections auto-fed back into the judge
   prompt as few-shot examples
   ([Align Evals](https://blog.langchain.com/introducing-align-evals/)).
+- **Laminar**: open-source (Apache 2.0) agent observability platform whose
+  distinctive eval idea is the failure-to-dataset pipeline: production traces
+  are clustered by error, and every error cluster you fix can be converted
+  into an eval dataset, with a labeling queue for manual annotation
+  ([laminar](https://laminar.sh/), github lmnr-ai/lmnr). This is §3's
+  "start from failures" workflow productised end-to-end — the stealable
+  concept for crucible is the convention, not the platform: every triaged
+  failure becomes a regression case in the suite, so the eval set grows from
+  real failures rather than invented ones.
 
 ### 5. Recent work (Dec 2025 – Jun 2026)
 
@@ -298,6 +307,28 @@ it matters which one you mean:
   spend scarce human labels preferentially on contested cases (judge vote
   splits) rather than uniformly, which is the Neyman-allocation insight from
   the BAI-with-judges paper applied to the §2 calibration workflow.
+
+**Turn-level beats whole-conversation judging ("signal turn" evals).** Not an
+established literature term, but the underlying practice is well supported:
+judge single turns against their bounded context, and reserve
+whole-conversation judging for one question only — was the user's goal
+achieved (goal success rate), not "was this conversation good". Turn-level
+judgements are more reliable for the same reason binary criteria beat Likert
+scales: one bounded judgement per call. When a multi-turn trace fails,
+attribute the failure to the earliest defective turn — Hamel's FAQ: "focus on
+the first failure observed in a trace, as upstream errors cause downstream
+issues" ([evals FAQ](https://hamel.dev/blog/posts/evals-faq/)) — rather than
+letting an omnibus judge average the cascade into a vague low score. "Mind
+the Goal" formalises this as goal-segmented evaluation with a
+root-cause-of-failure taxonomy pointing at the earliest defective turn
+([Mind the Goal](https://arxiv.org/abs/2510.03696)); framework writeups draw
+the same turn-level vs conversation-level distinction
+([Confident AI](https://www.confident-ai.com/blog/multi-turn-llm-evaluation-in-2026)).
+For crucible: `testSkill` judging one output against one rubric is already
+the right shape — keep it. If multi-turn agent traces ever become a target,
+the recipe is per-turn rubric checks plus one separate goal-completion check,
+with the report naming the first failing turn, not a conversation-quality
+score.
 
 ## Recommendations for crucible
 
@@ -486,3 +517,6 @@ Added 2026-06-11, follow-up sweep of Dec 2025 – Jun 2026 papers (§5):
 - https://arxiv.org/abs/2511.02603 (CGES: confidence-guided early stopping for self-consistency)
 - https://arxiv.org/abs/2601.21471 (Best-arm identification with LLM judges and limited human audits)
 - https://arxiv.org/abs/2605.10405 (Valid best-model identification via low-rank factorization)
+- https://arxiv.org/abs/2510.03696 (Mind the Goal: goal-oriented eval, root-cause-of-failure turn attribution)
+- https://www.confident-ai.com/blog/multi-turn-llm-evaluation-in-2026 (turn-level vs conversation-level)
+- https://laminar.sh/ (Laminar: error-cluster-to-eval-dataset pipeline, Apache 2.0)
