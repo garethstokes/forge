@@ -60,6 +60,10 @@ Both behave like their non-streaming counterparts (`Anthropic.run`,
 the server. The assembled `Text` (or `Either ChatError Text` for the Chat path)
 is returned together with cumulative `Usage` once the stream closes.
 
+`Crucible.LLM.OpenAI.Stream` provides the OpenAI pair with identical
+signatures (`OpenAI.stream`, `OpenAI.streamChat`, taking an `OpenAIConfig`);
+import it under the same `OpenAI` alias as the parent module.
+
 ## Worked example
 
 The `app/Main.hs` smoke test demonstrates the text path:

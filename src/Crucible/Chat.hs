@@ -27,18 +27,25 @@ module Crucible.Chat
   , runToolAgent
   , runToolAgentN
   , defaultMaxIterations
+  , blockJson
+  , turnContentJson
+  , parseTurn
   ) where
 
 import Control.Exception (Exception)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Data.ByteString.Lazy as LBS
 
 import Effectful
 import Effectful.Dispatch.Dynamic (reinterpret, send)
 import Effectful.State.Static.Local (evalState, get, put)
 
 import qualified Data.Aeson as A
-import Data.Aeson (Value)
+import Data.Aeson (Value (String), (.=), (.:))
+import qualified Data.Aeson.Types as AT
+import qualified Data.Vector as V
 
 import Crucible.LLM (Role (Assistant, User))
 import Crucible.Tool (Tool (..), ToolName)
@@ -131,3 +138,56 @@ runToolAgentN cap tools question = loop cap [Message User [TextBlock question]]
 -- under the scripted and live interpreters alike (needs only @Chat :> es@).
 runToolAgent :: (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
 runToolAgent = runToolAgentN defaultMaxIterations
+
+-- | crucible's canonical content-block JSON for a 'Block' (the Anthropic
+-- content shape, which doubles as the provider-neutral cassette format).
+blockJson :: Block -> Value
+blockJson (TextBlock t) =
+  A.object ["type" .= A.String "text", "text" .= t]
+blockJson (ToolUseBlock (ToolUse i n a)) =
+  A.object ["type" .= A.String "tool_use", "id" .= i, "name" .= n, "input" .= a]
+blockJson (ToolResultBlock i v) =
+  A.object
+    [ "type" .= A.String "tool_result"
+    , "tool_use_id" .= i
+    , "content" .= resultText v
+    ]
+  where
+    resultText (String s) = A.String s
+    resultText other      = A.String (TE.decodeUtf8 (LBS.toStrict (A.encode other)))
+
+-- | Encode a 'Turn' as a content-block object, for recording to a chat
+-- cassette. Round-trips: @parseTurn (encode (turnContentJson t)) == Right t@.
+-- Provider-neutral: both the Anthropic and OpenAI cassette interpreters use it.
+turnContentJson :: Turn -> Value
+turnContentJson (Turn t uses) =
+  A.object ["content" .= A.Array (V.fromList (map blockJson blocks))]
+  where
+    blocks = [TextBlock t | not (T.null t)] ++ map ToolUseBlock uses
+
+-- | Parse a content-block object (a cassette line, or an Anthropic
+-- @/v1/messages@ response body) into a 'Turn': concatenated @text@ blocks,
+-- plus every @tool_use@ block.
+parseTurn :: Text -> Either String Turn
+parseTurn t = do
+  v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 t))
+  AT.parseEither
+    (A.withObject "resp" $ \o -> do
+        blocks <- o .: "content"
+        rbs    <- mapM parseRBlock blocks
+        pure (Turn (T.concat [tx | RText tx <- rbs]) [u | RUse u <- rbs]))
+    v
+
+data RBlock = RText Text | RUse ToolUse | RSkip
+
+parseRBlock :: Value -> AT.Parser RBlock
+parseRBlock = A.withObject "block" $ \o -> do
+  ty <- o .: "type" :: AT.Parser Text
+  case ty of
+    "text"     -> RText <$> o .: "text"
+    "tool_use" -> do
+      i   <- o .: "id"
+      n   <- o .: "name"
+      inp <- o .: "input"
+      pure (RUse (ToolUse i n inp))
+    _ -> pure RSkip

@@ -37,6 +37,7 @@ import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetrya
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
 import qualified Crucible.LLM.OpenAI as OpenAI
+import qualified Crucible.LLM.OpenAI.Stream as OS
 import qualified Crucible.Chat as Chat
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), Block(..), ToolUse(..), ChatError(..))
@@ -751,6 +752,61 @@ main = runChecks
   , check "OpenAI isRetryable: 500" True  (OpenAI.isRetryable (OpenAIStatusError 500 ""))
   , check "OpenAI isRetryable: 400" False (OpenAI.isRetryable (OpenAIStatusError 400 ""))
   , check "OpenAI isRetryable: no-content" False (OpenAI.isRetryable (OpenAINoContent ""))
+  , check "OpenAI isRetryable: stream timeout is not retryable"
+      False (OpenAI.isRetryable (OpenAIStreamTimeout 1000))
+  -- crucible-l5c: OpenAI streaming (pure core)
+  , check "OpenAI stream: [DONE] sentinel"
+      [OS.EvDone]
+      (OS.parseEvents "data: [DONE]")
+  , check "OpenAI stream: content delta"
+      [OS.EvText "Hel"]
+      (OS.parseEvents (sseFrame (object
+        ["choices" .= A.toJSON [object ["delta" .= object ["content" .= String "Hel"]]]])))
+  , check "OpenAI stream: tool_call first fragment carries id+name"
+      [OS.EvToolDelta 0 (Just "call_1") (Just "get_weather") "{\"ci"]
+      (OS.parseEvents (sseFrame (object
+        ["choices" .= A.toJSON [object ["delta" .= object ["tool_calls" .= A.toJSON
+          [object ["index" .= Number 0, "id" .= String "call_1",
+                   "function" .= object ["name" .= String "get_weather", "arguments" .= String "{\"ci"]]]]]]])))
+  , check "OpenAI stream: final usage chunk (empty choices)"
+      [OS.EvUsage 40 12]
+      (OS.parseEvents (sseFrame (object
+        ["choices" .= A.toJSON ([] :: [Value]),
+         "usage" .= object ["prompt_tokens" .= Number 40, "completion_tokens" .= Number 12]])))
+  , check "OpenAI stream keystone: text + usage assemble"
+      ("pong", Usage 27 4)
+      (let body = sseBody
+             [ object ["choices" .= A.toJSON [object ["delta" .= object ["content" .= String "po"]]]]
+             , object ["choices" .= A.toJSON [object ["delta" .= object ["content" .= String "ng"]]]]
+             , object ["choices" .= A.toJSON ([] :: [Value]),
+                       "usage" .= object ["prompt_tokens" .= Number 27, "completion_tokens" .= Number 4]]
+             ] <> "data: [DONE]\n\n"
+           (frames, _) = splitFrames body
+           a = foldl' OS.stepAcc OS.emptyAcc (concatMap OS.parseEvents frames)
+       in (a.text, a.usage))
+  , check "OpenAI stream keystone: tool args reassemble across chunks"
+      [ToolUse "call_1" "get_weather" (object ["city" .= String "Brisbane"])]
+      (let body = sseBody
+             [ object ["choices" .= A.toJSON [object ["delta" .= object ["tool_calls" .= A.toJSON
+                 [object ["index" .= Number 0, "id" .= String "call_1",
+                          "function" .= object ["name" .= String "get_weather", "arguments" .= String "{\"city\":"]]]]]]]
+             , object ["choices" .= A.toJSON [object ["delta" .= object ["tool_calls" .= A.toJSON
+                 [object ["index" .= Number 0,
+                          "function" .= object ["arguments" .= String "\"Brisbane\"}"]]]]]]]
+             ]
+           (frames, _) = splitFrames body
+           a = foldl' OS.stepAcc OS.emptyAcc (concatMap OS.parseEvents frames)
+       in OS.finishAcc a)
+  -- crucible-l5c: cassette format is provider-neutral (recorded turns replay under OpenAI)
+  , do let cassettePath = "/tmp/crucible-openai-cassette-test.jsonl"
+           cassette =
+             TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "" [ToolUse "u1" "get_weather" (object ["city" .= String "Brisbane"])])))) <> "\n"
+             <> TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "Sunny in Brisbane!" [])))) <> "\n"
+       TIO.writeFile cassettePath cassette
+       r <- runEff (OpenAI.replayChat cassettePath (runToolAgent [weatherToolC] "weather in Brisbane?"))
+       check "OpenAI.replayChat: replays the shared cassette format"
+         (Right "Sunny in Brisbane!")
+         r
   -- crucible-dak: hermetic cassette replay drives a tool loop
   , do let cassettePath = "/tmp/crucible-chat-cassette-test.jsonl"
            cassette =

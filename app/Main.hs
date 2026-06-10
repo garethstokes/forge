@@ -26,6 +26,9 @@ import Crucible.LLM.Anthropic
   )
 import qualified Crucible.LLM.Anthropic as Anthropic
 import qualified Crucible.LLM.Anthropic.Stream as Anthropic
+import Crucible.LLM.OpenAI (defaultOpenAIConfig)
+import qualified Crucible.LLM.OpenAI as OpenAI
+import qualified Crucible.LLM.OpenAI.Stream as OpenAI
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
@@ -125,3 +128,45 @@ main = do
           | a == b    -> TIO.putStrLn ("chat cassette: OK replay matches: " <> a)
           | otherwise -> TIO.putStrLn ("chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
         _ -> TIO.putStrLn "chat cassette: a run failed"
+      -- OpenAI: the same skills and loops, only the interpreter changes.
+      mOpenKey <- lookupEnv "OPENAI_API_KEY"
+      case mOpenKey of
+        Nothing -> TIO.putStrLn "OPENAI_API_KEY not set; skipping OpenAI demo"
+        Just okey -> do
+          let ocfg = defaultOpenAIConfig (T.pack okey)
+          otyped <- runEff (OpenAI.run ocfg (call classify "I absolutely love this!"))
+          case otyped of
+            Right o  -> TIO.putStrLn ("openai typed fn: " <> sentLabel o)
+            Left e   -> TIO.putStrLn ("openai typed fn decode error: " <> e.message)
+          let oWeatherTool = Tl.Tool "get_weather" weatherSchema
+                (\_ -> pure (A.String "It is 26C and sunny."))
+          (oAns, oUsage) <- runEff (OpenAI.usageChat ocfg (runToolAgent [oWeatherTool] toolQuestion))
+          case oAns of
+            Right a  -> TIO.putStrLn ("openai tool agent: " <> a)
+            Left err -> TIO.putStrLn ("openai tool agent error: " <> T.pack (show err))
+          TIO.putStrLn ("openai usage: " <> T.pack (show (usTotalTokens oUsage)) <> " tokens")
+          TIO.putStr "openai stream: "
+          (oStreamed, osUsage) <-
+            runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
+                      (OpenAI.stream ocfg (complete prompt)))
+          TIO.putStrLn ""
+          TIO.putStrLn ("openai stream usage: " <> T.pack (show (usTotalTokens osUsage)) <> " tokens"
+                        <> " (len " <> T.pack (show (T.length oStreamed)) <> ")")
+          TIO.putStr "openai stream tool: "
+          (oToolStream, otUsage) <-
+            runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
+                      (OpenAI.streamChat ocfg (runToolAgent [oWeatherTool] toolQuestion)))
+          TIO.putStrLn ""
+          case oToolStream of
+            Right a  -> TIO.putStrLn ("openai stream tool result: " <> a)
+            Left err -> TIO.putStrLn ("openai stream tool error: " <> T.pack (show err))
+          TIO.putStrLn ("openai stream tool usage: " <> T.pack (show (usTotalTokens otUsage)) <> " tokens")
+          let oChatCassette = "/tmp/crucible-openai-chat-cassette.jsonl"
+          TIO.writeFile oChatCassette ""
+          oRecorded <- runEff (OpenAI.recordChat oChatCassette ocfg (runToolAgent [oWeatherTool] toolQuestion))
+          oReplayed <- runEff (OpenAI.replayChat oChatCassette (runToolAgent [oWeatherTool] toolQuestion))
+          case (oRecorded, oReplayed) of
+            (Right a, Right b)
+              | a == b    -> TIO.putStrLn ("openai chat cassette: OK replay matches: " <> a)
+              | otherwise -> TIO.putStrLn ("openai chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
+            _ -> TIO.putStrLn "openai chat cassette: a run failed"

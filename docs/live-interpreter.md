@@ -105,25 +105,31 @@ failure is not retried.
 ## The OpenAI interpreter
 
 `Crucible.LLM.OpenAI` is the OpenAI twin, with the same qualified grammar:
-`OpenAI.run` and `OpenAI.usage` discharge `LLM`, `OpenAI.runChat` and
-`OpenAI.usageChat` discharge `Chat` with native tool-calling, all against
+`OpenAI.run`, `OpenAI.usage`, `OpenAI.record`, `OpenAI.replay` discharge
+`LLM`; `OpenAI.runChat`, `OpenAI.usageChat`, `OpenAI.recordChat`,
+`OpenAI.replayChat` discharge `Chat` with native tool-calling; and
+`OpenAI.stream` / `OpenAI.streamChat` (from `Crucible.LLM.OpenAI.Stream`,
+imported under the same alias) stream with `Emit`, all against
 `POST /v1/chat/completions`. Swapping providers is a one-line change at the
 `runEff` edge:
 
 ```haskell
 import qualified Crucible.LLM.OpenAI as OpenAI
+import qualified Crucible.LLM.OpenAI.Stream as OpenAI
 
 let cfg = defaultOpenAIConfig (T.pack key)   -- model "gpt-4o-mini" by default
 r <- runEff (OpenAI.run cfg (call classify "I absolutely love this!"))
 ```
 
-`OpenAIConfig` carries the same knobs as `AnthropicConfig` minus
-`streamIdleSecs` (no streaming interpreter yet): `apiKey`, `model`,
+`OpenAIConfig` carries the same knobs as `AnthropicConfig`: `apiKey`, `model`,
 `maxTokens` (sent as `max_completion_tokens`), `timeoutSecs`, `maxRetries`,
-`baseDelayMicros`. Errors mirror too: `OpenAIHttpError`, `OpenAIStatusError`,
-`OpenAINoContent`, with the same `isRetryable` classification and the same
-jittered backoff. Cassette record/replay and streaming are currently
-Anthropic-only.
+`baseDelayMicros`, `streamIdleSecs`. Errors mirror too: `OpenAIHttpError`,
+`OpenAIStatusError`, `OpenAINoContent`, `OpenAIStreamTimeout`, with the same
+`isRetryable` classification and the same jittered backoff.
+
+The cassette format is provider-neutral (it is crucible's own turn
+serialization, defined in `Crucible.Chat`), so a conversation recorded with
+`Anthropic.recordChat` replays under `OpenAI.replayChat` and vice versa.
 
 ## Further reading
 

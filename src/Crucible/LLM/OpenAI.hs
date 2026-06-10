@@ -45,6 +45,10 @@ module Crucible.LLM.OpenAI
   , runChat
   , usage
   , usageChat
+  , record
+  , replay
+  , recordChat
+  , replayChat
   , completionsRequest
   , withOpenAIRetry
   ) where
@@ -52,12 +56,13 @@ module Crucible.LLM.OpenAI
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import qualified Data.Text.IO as TIO
 
 import qualified Data.ByteString.Lazy as LBS
 
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret)
-import Effectful.State.Static.Local (modify, runState)
+import Effectful.State.Static.Local (evalState, get, modify, put, runState)
 
 import Control.Exception (Exception, handle, throwIO)
 import Control.Monad.Catch (Handler (Handler))
@@ -100,6 +105,7 @@ data OpenAIError
   = OpenAIHttpError   HttpException
   | OpenAIStatusError Int Text
   | OpenAINoContent   Text
+  | OpenAIStreamTimeout Int  -- ^ no chunk within the idle window (microseconds)
   deriving (Show)
 
 instance Exception OpenAIError
@@ -107,9 +113,10 @@ instance Exception OpenAIError
 -- | Whether a failure is worth retrying: network/timeout errors and HTTP 429 /
 -- 5xx are transient; other 4xx and a content-shape failure are permanent.
 isRetryable :: OpenAIError -> Bool
-isRetryable (OpenAIHttpError _)     = True
-isRetryable (OpenAIStatusError s _) = s == 429 || s >= 500
-isRetryable (OpenAINoContent _)     = False
+isRetryable (OpenAIHttpError _)      = True
+isRetryable (OpenAIStatusError s _)  = s == 429 || s >= 500
+isRetryable (OpenAINoContent _)      = False
+isRetryable (OpenAIStreamTimeout _)  = False
 
 -- | What the live interpreter needs: an API key, a model id, a token cap,
 -- and knobs for timeout + retry behaviour.
@@ -120,6 +127,7 @@ data OpenAIConfig = OpenAIConfig
   , timeoutSecs     :: Int  -- ^ request timeout in seconds
   , maxRetries      :: Int  -- ^ retries on transient failures
   , baseDelayMicros :: Int  -- ^ backoff base delay, microseconds
+  , streamIdleSecs  :: Int  -- ^ mid-stream per-chunk idle timeout, seconds
   }
   deriving (Eq, Show)
 
@@ -134,6 +142,7 @@ defaultOpenAIConfig key =
     , timeoutSecs = 60
     , maxRetries = 3
     , baseDelayMicros = 500000
+    , streamIdleSecs = 60
     }
 
 -- | Upper bound on a single backoff delay (30s), so exponential growth is capped.
@@ -189,6 +198,74 @@ usageChat cfg action = do
         (turn, u) <- liftIO (converseOnce cfg mgr specs msgs)
         modify (<> u)
         pure turn)
+    action
+
+-- | Like 'run', but also TEE each reply to a cassette file (one JSON-encoded
+-- reply per line, appended in call order). Replays via 'replay'. The cassette
+-- format is provider-neutral; a cassette recorded here also replays under
+-- @Anthropic.replay@ and vice versa. Use as @OpenAI.record@.
+record :: (IOE :> es) => FilePath -> OpenAIConfig -> Eff (LLM : es) a -> Eff es a
+record path cfg action = do
+  mgr <- liftIO (newOpenAIManager cfg)
+  interpret
+    (\_ (Complete msgs) -> liftIO $ do
+        reply <- openaiComplete cfg mgr msgs
+        TIO.appendFile path (encodeText (A.String reply) <> "\n")
+        pure reply)
+    action
+
+-- | Replay a cassette recorded by 'record': each 'Complete' pops the next
+-- recorded reply in order. Deterministic; no network. Exhausting the cassette
+-- yields @""@. Use as @OpenAI.replay@.
+replay :: (IOE :> es) => FilePath -> Eff (LLM : es) a -> Eff es a
+replay path action = do
+  contents <- liftIO (TIO.readFile path)
+  let replies =
+        [ either (const ln) Prelude.id $ do
+            v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 ln))
+            AT.parseEither A.parseJSON v
+        | ln <- T.lines contents
+        , not (T.null ln)
+        ]
+  reinterpret (evalState replies) (\_ -> \case
+    Complete _ -> do
+      rs <- get
+      case rs of
+        (x : xs) -> put xs >> pure x
+        []       -> pure "")
+    action
+
+-- | Like 'runChat', but also TEE each assistant 'Turn' to a cassette file
+-- (one content-JSON line, in crucible's provider-neutral turn format).
+-- Replays via 'replayChat'. Use as @OpenAI.recordChat@.
+recordChat :: (IOE :> es) => FilePath -> OpenAIConfig -> Eff (Chat : es) a -> Eff es a
+recordChat path cfg action = do
+  mgr <- liftIO (newOpenAIManager cfg)
+  interpret
+    (\_ (Converse specs msgs) -> liftIO $ do
+        (turn, _u) <- converseOnce cfg mgr specs msgs
+        TIO.appendFile path (encodeText (Chat.turnContentJson turn) <> "\n")
+        pure turn)
+    action
+
+-- | Replay a cassette recorded by 'recordChat' (or @Anthropic.recordChat@;
+-- the format is shared): each 'Converse' pops the next recorded 'Turn'.
+-- Deterministic; no network. Exhausting the cassette, or an unparseable line,
+-- yields @Turn "" []@. Use as @OpenAI.replayChat@.
+replayChat :: (IOE :> es) => FilePath -> Eff (Chat : es) a -> Eff es a
+replayChat path action = do
+  contents <- liftIO (TIO.readFile path)
+  let turns =
+        [ either (const (Turn "" [])) Prelude.id (Chat.parseTurn ln)
+        | ln <- T.lines contents
+        , not (T.null ln)
+        ]
+  reinterpret (evalState turns) (\_ -> \case
+    Converse _ _ -> do
+      ts <- get
+      case ts of
+        (t : rest) -> put rest >> pure t
+        []         -> pure (Turn "" []))
     action
 
 -- | One chat round-trip, with usage: POST the conversation + tool specs, parse

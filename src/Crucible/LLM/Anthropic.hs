@@ -88,7 +88,7 @@ import qualified Data.Aeson.Types as AT
 import qualified Data.Vector as V
 
 import qualified Crucible.Chat as Chat
-import Crucible.Chat (Block (..), Chat (..), ToolUse (..), Turn (..))
+import Crucible.Chat (Block (..), Chat (..), ToolUse (..), Turn (..), blockJson, parseTurn, turnContentJson)
 import Crucible.LLM (LLM (..), Message (..), Role (..))
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
@@ -386,55 +386,6 @@ chatRequestJson cfg specs msgs =
 chatMsgJson :: Chat.Message -> Value
 chatMsgJson (Chat.Message r blocks) =
   A.object ["role" .= anthropicRole r, "content" .= A.Array (V.fromList (map blockJson blocks))]
-
--- | Encode a 'Turn' to the Anthropic content shape (reusing 'blockJson'), for
--- recording to a chat cassette. Round-trips: @parseTurn (encode (turnContentJson t)) == Right t@.
-turnContentJson :: Turn -> Value
-turnContentJson (Turn t uses) =
-  A.object ["content" .= A.Array (V.fromList (map blockJson blocks))]
-  where
-    blocks = [TextBlock t | not (T.null t)] ++ map ToolUseBlock uses
-
-blockJson :: Block -> Value
-blockJson (TextBlock t) =
-  A.object ["type" .= A.String "text", "text" .= t]
-blockJson (ToolUseBlock (ToolUse i n a)) =
-  A.object ["type" .= A.String "tool_use", "id" .= i, "name" .= n, "input" .= a]
-blockJson (ToolResultBlock i v) =
-  A.object
-    [ "type" .= A.String "tool_result"
-    , "tool_use_id" .= i
-    , "content" .= resultText v
-    ]
-  where
-    resultText (String s) = A.String s
-    resultText other      = A.String (TE.decodeUtf8 (LBS.toStrict (A.encode other)))
-
--- | Parse a @/v1/messages@ response body into a 'Turn': concatenated @text@
--- blocks, plus every @tool_use@ block.
-parseTurn :: Text -> Either String Turn
-parseTurn t = do
-  v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 t))
-  AT.parseEither
-    (A.withObject "resp" $ \o -> do
-        blocks <- o .: "content"
-        rbs    <- mapM parseRBlock blocks
-        pure (Turn (T.concat [tx | RText tx <- rbs]) [u | RUse u <- rbs]))
-    v
-
-data RBlock = RText Text | RUse ToolUse | RSkip
-
-parseRBlock :: Value -> AT.Parser RBlock
-parseRBlock = A.withObject "block" $ \o -> do
-  ty <- o .: "type" :: AT.Parser Text
-  case ty of
-    "text"     -> RText <$> o .: "text"
-    "tool_use" -> do
-      i   <- o .: "id"
-      n   <- o .: "name"
-      inp <- o .: "input"
-      pure (RUse (ToolUse i n inp))
-    _ -> pure RSkip
 
 -- | Read the @usage@ object from a @\/v1\/messages@ response body. A body without
 -- a well-formed @usage@ yields 'mempty' — usage is telemetry, not correctness.
