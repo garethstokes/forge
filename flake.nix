@@ -25,7 +25,14 @@
               pkgs.git
               pkgs.haskellPackages.alex
               pkgs.haskellPackages.happy
+              pkgs.zlib
             ];
+            # Template Haskell (e.g. neat-interpolation's [text| |] quasiquoter)
+            # loads the package closure at compile time and needs libz.so on the
+            # loader path; zinc builds zlib but does not expose its shared lib.
+            shellHook = ''
+              export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.zlib ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+            '';
           };
         });
     };

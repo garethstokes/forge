@@ -329,6 +329,12 @@ sha256 = "sha256:d78e3c432221b9755a31b429b9714899b0279b40b0e5408da26f79f57cc38fa
 depends = ["appar", "byteorder", "network"]
 
 [[locked]]
+name = "megaparsec"
+vendored = "9.7.1"
+sha256 = "sha256:f3e094c0134c60e151563852087390a9ef1261890067d5ec3bef9c1e0a3b7cc2"
+depends = ["case-insensitive", "parser-combinators", "scientific"]
+
+[[locked]]
 name = "mime-types"
 vendored = "0.1.2.2"
 sha256 = "sha256:6246915bd67ce2924e17119dfd7568927678d4d69cdf042765f0a7bf3b792935"
@@ -354,6 +360,12 @@ sha256 = "sha256:adc5872e68c23c0d147b0476764798a9088255dd3a2f3b3808e77189aa5e514
 depends = []
 
 [[locked]]
+name = "neat-interpolation"
+vendored = "0.5.1.4"
+sha256 = "sha256:72bc9eb565f5f7cedc616ffb1f06d8fdff6e0b8fd9f2facf7d7b4ab98ba6ec85"
+depends = ["megaparsec"]
+
+[[locked]]
 name = "network"
 vendored = "3.2.8.0"
 sha256 = "sha256:6b61d17403a55cf8df5ae5080e9a23a74d5a53f97730029ddfd6e387a4591fe8"
@@ -375,6 +387,12 @@ depends = ["th-compat"]
 name = "os-string"
 vendored = "2.0.10"
 sha256 = "sha256:b5fbc1fd0f4a06e2f561c369b13a44d243fb8659c84dae2034ab9cc6ff4b76ca"
+depends = []
+
+[[locked]]
+name = "parser-combinators"
+vendored = "1.3.1"
+sha256 = "sha256:c3fc5d68a238548220f601cdd136bb8158f5028c98ab7a1009f7cd17ac4b1074"
 depends = []
 
 [[locked]]

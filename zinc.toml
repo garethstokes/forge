@@ -12,7 +12,7 @@ version = "0.1.0"
 
 [build.lib]
 source-dirs = ["src"]
-depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls", "http-types", "retry", "exceptions", "aeson", "autodocodec", "autodocodec-schema", "vector", "scientific"]
+depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls", "http-types", "retry", "exceptions", "aeson", "autodocodec", "autodocodec-schema", "vector", "scientific", "neat-interpolation"]
 
 [build.exe.crucible-anthropic]
 source-dirs = ["app"]
@@ -70,3 +70,6 @@ repo = "https://github.com/haskell/aeson.git"
 
 [dependencies.autodocodec-schema]
 repo = "https://github.com/NorfairKing/autodocodec"
+
+[dependencies.neat-interpolation]
+repo = "https://github.com/nikita-volkov/neat-interpolation.git"
