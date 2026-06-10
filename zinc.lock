@@ -1,4 +1,28 @@
 [[locked]]
+name = "OneTuple"
+vendored = "0.4.3"
+sha256 = "sha256:3cda7bdacb05f0a9269c84c3777fc8a6ccabb858f90a42b58dcd0dbc4285f387"
+depends = []
+
+[[locked]]
+name = "QuickCheck"
+vendored = "2.18.0.0"
+sha256 = "sha256:93dbe8b443d65ed9c813688c6efed99f135f936d00cd4a1e701f89768e1300d4"
+depends = ["random", "splitmix"]
+
+[[locked]]
+name = "StateVar"
+vendored = "1.2.2"
+sha256 = "sha256:a2594fd3e5616272a3a57f79fea0745c6e026ed47ad6f2d00d7bdd8e875df9a8"
+depends = []
+
+[[locked]]
+name = "aeson"
+vendored = "2.3.0.0"
+sha256 = "sha256:85d29fa5c1a001a180775deca509e04760957438b5b9015a53945613d15dd7f3"
+depends = ["OneTuple", "QuickCheck", "character-ps", "data-fix", "dlist", "hashable", "indexed-traversable", "integer-conversion", "integer-logarithms", "network-uri", "primitive", "scientific", "semialign", "strict", "tagged", "text-iso8601", "text-short", "th-abstraction", "these", "time-compat", "unordered-containers", "uuid-types", "vector", "witherable"]
+
+[[locked]]
 name = "appar"
 vendored = "0.1.8"
 sha256 = "sha256:987f58ce38956b63606b966f1a71bbd44df31ad554e994407c59180ae720d962"
@@ -15,6 +39,12 @@ name = "async"
 vendored = "2.2.6"
 sha256 = "sha256:e23227160530a51211b872bde1cfdc23ad905a11770f1c13eab77e69eaa50727"
 depends = ["hashable", "unordered-containers"]
+
+[[locked]]
+name = "autodocodec"
+vendored = "0.5.0.0"
+sha256 = "sha256:39e1dc6981dadac0cf9a3c7ba5a0505581b4f0c59fb084a54406b44e6b96c813"
+depends = ["aeson", "dlist", "hashable", "scientific", "unordered-containers", "validity", "validity-scientific", "vector"]
 
 [[locked]]
 name = "base-orphans"
@@ -47,6 +77,12 @@ sha256 = "sha256:e039c6b15487ea10d749dd1227c04c4899dba452f15b2ca517eca5270ff2c90
 depends = []
 
 [[locked]]
+name = "bifunctors"
+vendored = "5.6.3"
+sha256 = "sha256:5691f963cef6d38e5081326607d3f38ecad26f9d9d2b07938136ee82665bca9f"
+depends = ["assoc", "comonad", "tagged", "th-abstraction"]
+
+[[locked]]
 name = "blaze-builder"
 vendored = "0.4.4.1"
 sha256 = "sha256:3b04e36a08274a9e0fc47aeeb9aa44b7d999710352651f578ef4f96a22db2384"
@@ -75,6 +111,24 @@ name = "cereal"
 vendored = "0.5.8.3"
 sha256 = "sha256:b38f90fd5f3bc4a83f12cf618227aa42d7e5b1e4e6b6e9a7f0f5b9bf5c03fc82"
 depends = []
+
+[[locked]]
+name = "character-ps"
+vendored = "0.1"
+sha256 = "sha256:9d77c226252e74a1bafc17e14eb718a230c2c8964e748d510fc7b22e0f1d8fdb"
+depends = []
+
+[[locked]]
+name = "comonad"
+vendored = "5.0.10"
+sha256 = "sha256:eb029eb5e2a9a143ce864d674421d7d8e06c61dbe3c71a81122ed1883f7b967e"
+depends = ["distributive", "indexed-traversable", "tagged"]
+
+[[locked]]
+name = "contravariant"
+vendored = "1.5.6"
+sha256 = "sha256:f0ea7f39aa485b8a3b55a70061bac4e25802c6d35aa06e1f697a75ee34a80092"
+depends = ["StateVar"]
 
 [[locked]]
 name = "cookie"
@@ -167,6 +221,24 @@ sha256 = "sha256:dd70c45638b9cb97e517e2e9063d48afb4c53d26a0edbc3c166811e3f365289
 depends = ["data-default"]
 
 [[locked]]
+name = "data-fix"
+vendored = "0.3.4"
+sha256 = "sha256:5839acf340c4e0cffedff441b67d1df97d47391ae3bba442fe5512e53c1588ea"
+depends = ["hashable"]
+
+[[locked]]
+name = "distributive"
+vendored = "0.6.3"
+sha256 = "sha256:5f354e2dab8d51e22d9e25b90b05b21981eb3df1419242743535f85246c60a14"
+depends = ["tagged"]
+
+[[locked]]
+name = "dlist"
+vendored = "1.0"
+sha256 = "sha256:8a35237d3b310f8b5bc012ea57163d0b967288692b96ccd1fd47665d71506241"
+depends = []
+
+[[locked]]
 name = "ech-config"
 vendored = "0.0.1"
 sha256 = "sha256:2734c971809dfc3a097dd1e0db23d37ecbb7c20e004a1077f39d0550176def2a"
@@ -219,6 +291,30 @@ name = "http-types"
 vendored = "0.12.5"
 sha256 = "sha256:8906f88a81bd7204cd32d3842f3959b4788a08bdf3ca59704991b3d969b29f7d"
 depends = ["case-insensitive"]
+
+[[locked]]
+name = "indexed-traversable"
+vendored = "0.1.5"
+sha256 = "sha256:c57267ddd2db5f81b2134b57b8371e019d3cb83a8790b0241275257bfc049f40"
+depends = []
+
+[[locked]]
+name = "indexed-traversable-instances"
+vendored = "0.1.2.1"
+sha256 = "sha256:e246afd293e07a1006bc1257669f4fbc3e6a012ddbc01bcfc395c3ac738a7e09"
+depends = ["OneTuple", "indexed-traversable", "tagged", "unordered-containers", "vector"]
+
+[[locked]]
+name = "integer-conversion"
+vendored = "0.1.1"
+sha256 = "sha256:7d21999a091607b9ef55839b151bf856f14cd86c837263953822e071bd9a02a5"
+depends = ["primitive"]
+
+[[locked]]
+name = "integer-logarithms"
+vendored = "1.0.5"
+sha256 = "sha256:8845c5f5ca0e0178a7af94af631911776da1dbc3094b9c0eb64b9eb4f5b00a49"
+depends = []
 
 [[locked]]
 name = "iproute"
@@ -306,6 +402,24 @@ sha256 = "sha256:ae0368e4954cc04f58f943fd1b97ea145b11ebf0c2dfc7306d391fd42d29a93
 depends = []
 
 [[locked]]
+name = "scientific"
+vendored = "0.3.8.1"
+sha256 = "sha256:a9aea6b498fd0a34dfe2f16661b5f14c68a3e99235138405f538276a10ebf38b"
+depends = ["hashable", "integer-logarithms", "primitive"]
+
+[[locked]]
+name = "semialign"
+vendored = "1.4"
+sha256 = "sha256:fed400fabe8e447f51a830fce354d6621dca0f7617dcc611f6f313d226359581"
+depends = ["hashable", "indexed-traversable", "indexed-traversable-instances", "semigroupoids", "tagged", "these", "unordered-containers", "vector"]
+
+[[locked]]
+name = "semigroupoids"
+vendored = "6.0.2"
+sha256 = "sha256:454f5450cdc54cd78ba656cb48258ed31cbc777abb36f2fb448649b51cb80e37"
+depends = ["base-orphans", "bifunctors", "comonad", "contravariant", "hashable", "tagged", "transformers-compat", "unordered-containers"]
+
+[[locked]]
 name = "serialise"
 vendored = "0.2.6.1"
 sha256 = "sha256:5e68358502487f4809c5224b4fe1c5c6a6f6ff4a4a5c6029c9374e364d093f1f"
@@ -337,10 +451,28 @@ sha256 = "sha256:cbd052090028a56ce537d2fd701a37b24ae740ade20c0786e857052bfb7f12e
 depends = []
 
 [[locked]]
+name = "tagged"
+vendored = "0.8.10"
+sha256 = "sha256:a7edbbc13e05a0b95106d080878dc14a648e740197b953ebfb579b2bba10f0f8"
+depends = []
+
+[[locked]]
+name = "text-iso8601"
+vendored = "0.2.0.0"
+sha256 = "sha256:fd24acf4e088ea144715c61a76a5452ba83056d6c209ce1afbcba5f73bce67a9"
+depends = ["integer-conversion", "time-compat"]
+
+[[locked]]
 name = "text-short"
 vendored = "0.1.6.1"
 sha256 = "sha256:6120998856717b1574986d6e524ed2c59c5802f0e04400feb962c1aa42a4037f"
 depends = ["hashable"]
+
+[[locked]]
+name = "th-abstraction"
+vendored = "0.7.2.0"
+sha256 = "sha256:b28d0fa4403181ec355e69746808bfbad454bbf0aacf6e0c6e9d9512c84d5fdd"
+depends = []
 
 [[locked]]
 name = "th-compat"
@@ -353,6 +485,12 @@ name = "these"
 vendored = "1.2.1"
 sha256 = "sha256:5833b42d4e1ee7de41fd491bab8748741002f28025bb247c553ff140bb93b5fb"
 depends = ["assoc", "hashable"]
+
+[[locked]]
+name = "time-compat"
+vendored = "1.9.9"
+sha256 = "sha256:f0bf651e8867da023b4cd078727abdc7191ef34049386c3e01afc7406dff1d29"
+depends = ["base-orphans", "hashable"]
 
 [[locked]]
 name = "time-hourglass"
@@ -403,6 +541,24 @@ sha256 = "sha256:4a0caf5ccd36dbf3b12c33b2321f5476829e9b30449c53a72d85e5ce836fd5d
 depends = ["hashable"]
 
 [[locked]]
+name = "uuid-types"
+vendored = "1.0.6.1"
+sha256 = "sha256:484af73f46fa7bbb8dcc01be081562d35d43fd85ec6a2f80aef53f34cefebc97"
+depends = ["hashable", "random"]
+
+[[locked]]
+name = "validity"
+vendored = "0.12.1.0"
+sha256 = "sha256:6ed1373a801c523b46345b3e8c4831464a458a7826df452a94eb5e6dce35b7bd"
+depends = []
+
+[[locked]]
+name = "validity-scientific"
+vendored = "0.2.0.3"
+sha256 = "sha256:dc6e75d1507db2edcdbecdf01f82bd7c761e6c5aa30f250894343bf3dd0fe97e"
+depends = ["scientific", "validity"]
+
+[[locked]]
 name = "vector"
 vendored = "0.13.2.0"
 sha256 = "sha256:7902181c9739a2dd76b2a2411a7844fcb409331c94be29ae7d8ff4a9da362210"
@@ -413,6 +569,12 @@ name = "vector-stream"
 vendored = "0.1.0.1"
 sha256 = "sha256:6f11252cc98ea7ec922585d272705c5ee5f8210ddad42ae91466d017a592d484"
 depends = []
+
+[[locked]]
+name = "witherable"
+vendored = "0.5"
+sha256 = "sha256:0f7e74ca548f3e1c39bd35e7f6ec32afd792f8d7091cbece83fc83a073a5c8c1"
+depends = ["base-orphans", "hashable", "indexed-traversable", "indexed-traversable-instances", "unordered-containers", "vector"]
 
 [[locked]]
 name = "zlib"

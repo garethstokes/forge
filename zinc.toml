@@ -12,7 +12,7 @@ version = "0.1.0"
 
 [build.lib]
 source-dirs = ["src"]
-depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls", "http-types", "retry", "exceptions"]
+depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls", "http-types", "retry", "exceptions", "aeson", "autodocodec"]
 
 [build.exe.crucible-anthropic]
 source-dirs = ["app"]
@@ -56,3 +56,13 @@ vendored = "0.22.0"
 
 [dependencies.retry]
 repo = "https://github.com/Soostone/retry.git"
+
+# aeson + autodocodec for the domain codec layer (autodocodec = codec + JSON
+# Schema, as used by sibling project manifest for shared-types jsonb persistence).
+# Resolved from git by `zinc add`; the closure (aeson 2.3.0.0, autodocodec
+# 0.5.0.0, ~27 deps) is shared with manifest in the zinc store on GHC 9.10.1.
+[dependencies.autodocodec]
+repo = "https://github.com/NorfairKing/autodocodec"
+
+[dependencies.aeson]
+repo = "https://github.com/haskell/aeson.git"
