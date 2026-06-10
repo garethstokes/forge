@@ -11,20 +11,36 @@ as a small set of capabilities — talking to a model, calling tools, streaming,
 recording — each a dynamic effect you discharge with an interpreter you choose:
 scripted for tests, live for production, a cassette for hermetic replay.
 
+Declare a skill once: a typed input, a typed output, a prompt template. The
+output type's JSON schema rides the prompt; the reply is decoded back into your
+type, with bad replies re-asked automatically.
+
 ```haskell
--- a typed skill: a prompt in, a decoded value out
-data Sentiment = Sentiment { sentLabel :: Text } deriving (Show, Generic)
-instance HasCodec Sentiment where codec = genericCodec
+data Verdict = Verdict { sentiment :: Text, confidence :: Double }
+  deriving (Show, Generic)
+instance HasCodec Verdict where codec = genericCodec
 
-classify :: Skill Text Sentiment
+classify :: Skill Text Verdict
 classify = skill "classify" str codec
-  (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
+  (\review -> [text|Classify the sentiment of this product review: ${review}|])
+```
 
+Then pick an interpreter at the edge. The same `call` runs live, streams
+token-by-token, or replays a recording, without touching the skill:
+
+```haskell
 main :: IO ()
 main = do
   cfg <- defaultAnthropicConfig <$> getKey
-  r <- runEff (Anthropic.run cfg (call classify "I absolutely love this!"))
-  print r   -- Right (Sentiment {sentLabel = "positive"})
+
+  -- live: structured output, typed on arrival
+  Right v <- runEff (Anthropic.run cfg (call classify "Arrived broken. Refund please."))
+  print v.sentiment                   -- "negative"
+  print v.confidence                  -- 0.98
+
+  -- record once, then replay with no network: a hermetic test from a real run
+  _ <- runEff (Anthropic.record "run.jsonl" cfg (call classify review))
+  r <- runEff (Anthropic.replay "run.jsonl"     (call classify review))
 ```
 
 ## What's in the box
