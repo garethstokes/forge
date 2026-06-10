@@ -7,8 +7,8 @@ nav_order: 1
 
 crucible is a typed LLM-agent substrate for Haskell, built on
 [`effectful`](https://hackage.haskell.org/package/effectful). It models an agent
-as a small set of capabilities — talking to a model, calling tools, streaming,
-recording — each a dynamic effect you discharge with an interpreter you choose:
+as a small set of capabilities (talking to a model, calling tools, streaming,
+recording), each a dynamic effect you discharge with an interpreter you choose:
 scripted for tests, live for production, a cassette for hermetic replay.
 
 Declare a skill once: a typed input, a typed output, a prompt template. The
@@ -45,33 +45,33 @@ main = do
 
 ## What's in the box
 
-- **Effects** — `LLM` (`complete`), `Chat` (`converse`/`runToolAgent`), `Tools`,
+- **Effects**: `LLM` (`complete`), `Chat` (`converse`/`runToolAgent`), `Tools`,
   and `Emit` (streaming deltas), each with scripted, live, and cassette
   interpreters.
-- **Typed skills** — declare a `Skill` with input/output codecs; the output
+- **Typed skills**: declare a `Skill` with input/output codecs; the output
   schema is injected into the prompt and the reply tolerantly decoded.
-- **Native tool-calling** — advertise tools and let the model drive a
+- **Native tool-calling**: advertise tools and let the model drive a
   request→run→result loop (`runToolAgent`), capped and self-correcting.
-- **Streaming** — server-sent events surfaced as an `Emit` effect; print tokens
+- **Streaming**: server-sent events surfaced as an `Emit` effect; print tokens
   live while still getting the assembled result + token `Usage`.
-- **Usage & cost** — a `Usage` monoid summed across calls, plus a pure
+- **Usage & cost**: a `Usage` monoid summed across calls, plus a pure
   `estimateCost`.
-- **Cassettes** — record a live conversation and replay it deterministically,
-  the slider between a live eval and a hermetic test.
-- **Codecs** — one autodocodec `HasCodec` per type drives prompt schemas, tool
+- **Cassettes**: record a live conversation and replay it deterministically, so
+  one recorded run serves as both a live eval and a hermetic test.
+- **Codecs**: one autodocodec `HasCodec` per type drives prompt schemas, tool
   `input_schema`, and JSON encode/decode.
 
 ## Pages
 
-- [Getting started](getting-started.md) — config, a first live call, a typed
+- [Getting started](getting-started.md): config, a first live call, a typed
   function, a cassette replay.
-- [Effects](effects.md) — the capability effects and their interpreters.
-- [Typed functions](typed-functions.md) — `skill`/`call`, codecs, schema
+- [Effects](effects.md): the capability effects and their interpreters.
+- [Typed functions](typed-functions.md): `skill`/`call`, codecs, schema
   injection, tolerant decode, retries.
-- [Tool calling](tool-calling.md) — `runToolAgent`, the loop, the cap, tool
+- [Tool calling](tool-calling.md): `runToolAgent`, the loop, the cap, tool
   schemas.
-- [Streaming](streaming.md) — the `Emit` effect and the streaming interpreters.
-- [Usage & cassettes](usage-and-cassettes.md) — token accounting and
+- [Streaming](streaming.md): the `Emit` effect and the streaming interpreters.
+- [Usage & cassettes](usage-and-cassettes.md): token accounting and
   record/replay.
-- [The live interpreter](live-interpreter.md) — `AnthropicConfig`, robustness,
-  the wire path.
+- [The live interpreter](live-interpreter.md): `AnthropicConfig`, errors and
+  retries, the wire path.

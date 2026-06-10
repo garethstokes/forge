@@ -9,8 +9,8 @@ crucible models each agent capability as a dynamic `effectful` effect. A functio
 that talks to a model carries `LLM :> es` in its constraint; one that calls tools
 carries `Chat :> es`; one that emits streaming deltas carries `Emit :> es`. The
 constraint is the capability list: the type says exactly what the function can
-do, and you choose the interpreter at the program edge — scripted for tests, live
-for production, cassette for hermetic replay — without touching the logic inside.
+do, and you choose the interpreter at the program edge (scripted for tests, live
+for production, cassette for hermetic replay) without touching the logic inside.
 
 ## The LLM effect
 
@@ -49,7 +49,7 @@ result <- runEff (Anthropic.run cfg (complete msgs))
 `Anthropic.record` to lock in real responses for deterministic CI. See
 [Usage & cassettes](usage-and-cassettes.md).
 
-The logic — building `msgs`, calling `complete`, decoding the reply — is identical
+The logic (building `msgs`, calling `complete`, decoding the reply) is identical
 in all three cases. You choose the interpreter once, at `runEff`.
 
 ## The Chat effect
@@ -118,9 +118,9 @@ see it. See [Tool calling](tool-calling.md) for `Tool` construction and the loop
 
 ## Swapping interpreters
 
-The key insight is that the interpreter is the only thing that changes between a
-unit test and a production call. The logic in the middle — prompt construction,
-`call`, `runToolAgent`, codec decode — is interpreter-agnostic. A contrived side-by-side:
+The interpreter is the only thing that changes between a unit test and a
+production call. The logic in the middle (prompt construction, `call`,
+`runToolAgent`, codec decode) is interpreter-agnostic. A contrived side-by-side:
 
 ```haskell
 -- hermetic: no IO, no network

@@ -8,8 +8,8 @@ nav_order: 5
 crucible's native tool-calling lets the model drive a loop: you advertise a set
 of `Tool` values, ask a question, and the model issues calls, receives results,
 and keeps going until it produces a text answer. You write the tool functions in
-Haskell; the loop bookkeeping — serialising calls, running handlers, feeding
-results back — is handled by `runToolAgent`.
+Haskell; the loop bookkeeping (serialising calls, running handlers, feeding
+results back) is handled by `runToolAgent`.
 
 ## Constructing a tool
 
@@ -78,7 +78,7 @@ weatherTool = Tl.Tool "get_weather" weatherSchema
 ```
 
 `run` runs in the same `Eff es` stack as the agent, so it can carry any
-effects you have wired in — IO, database access, other LLM calls.
+effects you have wired in: IO, database access, other LLM calls.
 
 ## The tool-agent loop
 
@@ -102,7 +102,7 @@ The loop, in plain terms:
    `Right text`.
 
 Unknown-tool requests and handler exceptions are fed back as error
-`tool_result` values so the model can self-correct — a transient hallucinated
+`tool_result` values so the model can self-correct; a transient hallucinated
 tool name rarely survives the next round.
 
 ## Capping the loop
@@ -154,14 +154,14 @@ case toolAns of
 ```
 
 `Anthropic.usageChat` discharges the `Chat` effect against the live Anthropic
-API and returns the result alongside cumulative `Usage` — input and output
+API and returns the result alongside cumulative `Usage`: input and output
 tokens summed across every round of the tool loop. For straight results without
 token accounting, use `Anthropic.runChat` instead.
 
 ## Listing available tools
 
 `toolsHelp :: [Tool es] -> Text` returns a human-readable summary of the tools
-in a list — useful for system prompts that tell the model what capabilities are
+in a list, useful for system prompts that tell the model what capabilities are
 available before the conversation begins.
 
 ## Further reading

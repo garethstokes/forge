@@ -9,7 +9,7 @@ The standard `Anthropic.run` and `Anthropic.runChat` interpreters wait for the
 complete response before returning. Streaming interpreters instead surface each
 token chunk as it arrives, so your application can print or forward partial
 output without waiting for the full generation. The assembled result and token
-`Usage` are still returned at the end — nothing is lost, output just arrives
+`Usage` are still returned at the end; nothing is lost, output just arrives
 sooner.
 
 ## The Emit effect
@@ -27,9 +27,9 @@ edge:
 
 | Interpreter    | Behaviour |
 |----------------|-----------|
-| `runEmitIO`    | Pass each delta to an `IO` sink: `(Text -> IO ()) -> Eff (Emit:es) a -> Eff es a`. The standard choice for live applications — print each chunk as it arrives. |
+| `runEmitIO`    | Pass each delta to an `IO` sink: `(Text -> IO ()) -> Eff (Emit:es) a -> Eff es a`. The standard choice for live applications: print each chunk as it arrives. |
 | `ignoreEmit`   | Discard all deltas: `Eff (Emit:es) a -> Eff es a`. Useful when you want the streaming interpreter's efficiency but do not need incremental output. |
-| `runEmitList`  | Collect deltas in arrival order alongside the result: `Eff (Emit:es) a -> Eff es (a, [Text])`. The natural choice for tests — inspect the exact chunks the model produced. |
+| `runEmitList`  | Collect deltas in arrival order alongside the result: `Eff (Emit:es) a -> Eff es (a, [Text])`. The natural choice for tests: inspect the exact chunks the model produced. |
 
 `Emit` is orthogonal to `LLM` and `Chat`. Swapping between the three `Emit`
 interpreters does not touch the rest of your effect stack.
@@ -78,7 +78,7 @@ import Crucible.LLM (complete)
       (Anthropic.stream cfg (complete prompt)) )
 ```
 
-The tool-agent path is the same shape — substitute `Anthropic.streamChat` and
+The tool-agent path is the same shape, substituting `Anthropic.streamChat` and
 `runToolAgent`:
 
 ```haskell
@@ -102,7 +102,7 @@ Typed skills (`call`) run under the `LLM` effect, so they compose with the
 streaming path without changes: pass `call classify input` where you would pass
 `complete prompt`. The token chunks are emitted as they arrive; the assembled
 text is decoded through the output codec at the end. Incremental typed decoding
-— decoding partial JSON as chunks arrive — is out of scope.
+(decoding partial JSON as chunks arrive) is out of scope.
 
 ## Further reading
 

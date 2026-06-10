@@ -13,7 +13,7 @@ from `app/Main.hs`, the end-to-end smoke executable.
 ## 1. Config
 
 `defaultAnthropicConfig :: Text -> AnthropicConfig` constructs a fully populated
-config from an API key, with sensible defaults already filled in: the model is
+config from an API key. The defaults: the model is
 `claude-haiku-4-5-20251001`, the token cap is 1 024, the request timeout is 60 s,
 and the retry budget is 3 attempts with a 500 ms backoff base. For a first call you
 need only read the key from the environment and pass it in:
@@ -72,7 +72,7 @@ interpreter](live-interpreter.md) for the wire details.
 Instead of parsing free text yourself, declare a `Skill`: it binds an input codec,
 an output codec, and a task instruction into a reusable value. `call` builds the
 prompt, injects the output schema, and tolerantly decodes the reply. Start with a
-`HasCodec` instance for your output type — one `genericCodec` line covers any
+`HasCodec` instance for your output type; one `genericCodec` line covers any
 single-constructor record:
 
 ```haskell
@@ -136,8 +136,8 @@ replayed <- runEff (Anthropic.replay cassette (complete prompt))
 print (live == replayed)   -- True
 ```
 
-Commit the cassette alongside your tests. The cassette is the slider: pull it toward
-`Anthropic.replay` in CI, leave it at `Anthropic.record` during development. A chat
+Commit the cassette alongside your tests. Run `Anthropic.record` during
+development and switch to `Anthropic.replay` in CI. A chat
 cassette (`Anthropic.recordChat` / `Anthropic.replayChat`) covers the full
 `Chat`/`runToolAgent` path the same way. See
 [Usage & cassettes](usage-and-cassettes.md) for the full record/replay API and the

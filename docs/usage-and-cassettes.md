@@ -22,8 +22,8 @@ data Usage = Usage
 
 `Usage` is a `Monoid`: `mempty` is zero tokens and `mappend` sums them
 component-wise. The usage-returning interpreters accumulate a single `Usage`
-across every call inside the `Eff` computation — including every round of a
-tool-agent loop — and return it alongside the result:
+across every call inside the `Eff` computation, including every round of a
+tool-agent loop, and return it alongside the result:
 
 ```haskell
 Anthropic.usage     :: AnthropicConfig -> Eff (LLM:es)  a -> Eff es (a, Usage)
@@ -80,7 +80,7 @@ computations with `mconcat`.
 ## Cassettes
 
 A cassette is a plain text file, one JSON-encoded response per line, written by
-a live run and replayed deterministically later — no network, same bytes every
+a live run and replayed deterministically later: no network, same bytes every
 time. There are two cassette pairs, one for each effect:
 
 | Record | Replay | Covers |
@@ -88,8 +88,8 @@ time. There are two cassette pairs, one for each effect:
 | `Anthropic.record path cfg` | `Anthropic.replay path` | `LLM` / `complete` |
 | `Anthropic.recordChat path cfg` | `Anthropic.replayChat path` | `Chat` / `runToolAgent` |
 
-The `record*` interpreters behave identically to their live counterparts — they
-issue real network calls — but tee each response to the cassette file in call
+The `record*` interpreters behave identically to their live counterparts (they
+issue real network calls) but tee each response to the cassette file in call
 order. The `replay*` interpreters read responses back in the same order,
 returning them without any IO.
 
@@ -120,7 +120,7 @@ replayedAns <- runEff
 
 case (recordedAns, replayedAns) of
   (Right a, Right b) | a == b ->
-    putStrLn ("chat cassette: OK — " <> T.unpack a)
+    putStrLn ("chat cassette OK: " <> T.unpack a)
   _ -> putStrLn "chat cassette: MISMATCH"
 ```
 

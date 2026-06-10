@@ -5,8 +5,8 @@ nav_order: 4
 
 # Typed functions
 
-A typed skill wraps a prompt pattern — an instruction, an input codec, and an
-output codec — into a single reusable value. Calling it produces a decoded,
+A typed skill wraps a prompt pattern (an instruction, an input codec, and an
+output codec) into a single reusable value. Calling it produces a decoded,
 strongly-typed result rather than raw text. Schema generation, prompt construction,
 tolerant JSON extraction, and decode-failure retries are all handled for you.
 
@@ -81,8 +81,8 @@ the facade combinators from `Crucible.Codec`:
 | `field`    | `Text -> (o -> f) -> JSONCodec f -> ObjectCodec o f` |
 | `anyValue` | `JSONCodec Value` |
 
-An `enum` example — a classifier whose output is one of three variants, without a
-`data` type:
+An `enum` example: a classifier whose output is one of three variants, without a
+`data` type.
 
 ```haskell
 import Crucible.Codec (str, enum)
@@ -105,7 +105,7 @@ injected into the system prompt.
 
 The instruction is an ordinary `i -> Text`. crucible writes prompts with
 [`neat-interpolation`](https://hackage.haskell.org/package/neat-interpolation)'s
-`[text| … |]` quasiquoter — multi-line templates with `${var}` interpolation,
+`[text| … |]` quasiquoter: multi-line templates with `${var}` interpolation,
 where the quasiquoter strips the block's leading indentation so the source mirrors
 the output. Interpolated values must be `Text` identifiers in scope, so bind any
 non-`Text` piece to a `let`/`where` first. Enable it with
@@ -133,8 +133,8 @@ Respond ONLY with JSON matching this schema:
 
 The model sees the contract before it generates a single token. For `enum` codecs
 the schema enumerates the permitted string values; for records it lists required
-fields and their types. You can inspect what will be sent by calling
-`schemaText fn.output` directly — useful for prompt tuning.
+fields and their types. To inspect what will be sent (for prompt tuning, say),
+call `schemaText fn.output` directly.
 
 ## Tolerant decode
 
@@ -149,7 +149,7 @@ Model output is rarely pristine JSON. `decodeLLM :: JSONCodec a -> Text -> Eithe
 A failure at any step produces `Left (DecodeError { message, raw })`. Access the
 human-readable description via `e.message` and the raw model reply via `e.raw`.
 On failure `call` feeds `e.message` back to the model as a `User` message and
-retries — see above.
+retries, as described above.
 
 ## Worked example: record output
 
@@ -175,7 +175,7 @@ case typed of
 
 ## One codec, many uses
 
-A type defined once — `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec` — can be used as a skill output and as a tool argument codec
+A type defined once, as `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec`, can be used as a skill output and as a tool argument codec
 (via `schemaValue` → `schema`), all from the same single codec. See
 [Tool calling](tool-calling.md) for the tool schema path and
 [Getting started](getting-started.md) for the end-to-end wiring.

@@ -7,8 +7,8 @@ nav_order: 8
 
 The live interpreter is the Anthropic-specific layer that translates crucible's
 effect algebra into HTTP requests. It handles configuration, connection
-management, error classification, and retry logic. Everything above it —
-`complete`, `call`, `runToolAgent` — is interpreter-agnostic and unchanged.
+management, error classification, and retry logic. Everything above it
+(`complete`, `call`, `runToolAgent`) is interpreter-agnostic and unchanged.
 
 ## AnthropicConfig
 
@@ -16,7 +16,7 @@ management, error classification, and retry logic. Everything above it —
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
-| `apiKey` | `Text` | — | Anthropic API key (`sk-ant-…`). |
+| `apiKey` | `Text` | (required) | Anthropic API key (`sk-ant-…`). |
 | `model` | `Text` | `claude-haiku-4-5-20251001` | Model identifier sent as `model` in each request. |
 | `maxTokens` | `Int` | `1024` | `max_tokens` per request. |
 | `timeoutSecs` | `Int` | `60` | Per-request HTTP timeout in seconds. |
@@ -76,12 +76,12 @@ data AnthropicError
 
 | Error | Retryable? |
 |-------|------------|
-| `AnthropicHttpError` | Yes — connection reset, DNS failure, etc. |
-| `AnthropicStatusError 429 _` | Yes — rate-limit. |
-| `AnthropicStatusError 5xx _` | Yes — server error. |
-| `AnthropicStatusError 4xx _` | No — bad request, auth failure, etc. |
-| `AnthropicNoContent` | No — the model returned nothing usable. |
-| `AnthropicStreamTimeout _` | No — retry at the call site with a fresh request. |
+| `AnthropicHttpError` | Yes (connection reset, DNS failure, etc.). |
+| `AnthropicStatusError 429 _` | Yes (rate limit). |
+| `AnthropicStatusError 5xx _` | Yes (server error). |
+| `AnthropicStatusError 4xx _` | No (bad request, auth failure, etc.). |
+| `AnthropicNoContent` | No (the model returned nothing usable). |
+| `AnthropicStreamTimeout _` | No (retry at the call site with a fresh request). |
 
 ## Retry behaviour
 
