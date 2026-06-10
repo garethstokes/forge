@@ -29,21 +29,19 @@ import Crucible.LLM.Anthropic
   , runLLMCassette
   )
 import GHC.Generics (Generic)
+import qualified Data.Aeson as A
 import Crucible.Function (LlmFn, llmFn, call)
 import Crucible.Codec (str)
-import Crucible.Codec.Generic (HasCodec (codec))
-import qualified Crucible.Json.Decode as D
+import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
-import Crucible.Schema (Schema (SObj, SStr))
-import Crucible.Json.Value (Value (JString))
 import Crucible.Emit (runEmitIO)
 import Crucible.LLM.Anthropic.Stream (runLLMAnthropicStream, runChatAnthropicStream)
 import System.IO (hFlush, stdout)
 
 data Sentiment = Sentiment { sentLabel :: T.Text } deriving (Show, Generic)
-instance HasCodec Sentiment   -- default genericCodec
+instance HasCodec Sentiment where codec = genericCodec
 
 prompt :: [Message]
 prompt =
@@ -73,9 +71,14 @@ main = do
       typed <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
-        Left err -> TIO.putStrLn ("typed fn decode error: " <> T.pack (D.message err))
-      let weatherTool = Tl.Tool "get_weather" (SObj [("city", SStr)])
-            (\_ -> pure (JString "It is 26C and sunny."))
+        Left err -> TIO.putStrLn ("typed fn decode error: " <> T.pack err)
+      let weatherSchema = A.object
+            [ "type" A..= A.String "object"
+            , "properties" A..= A.object [ "city" A..= A.object ["type" A..= A.String "string"] ]
+            , "required" A..= A.toJSON [A.String "city"]
+            ]
+          weatherTool = Tl.Tool "get_weather" weatherSchema
+            (\_ -> pure (A.String "It is 26C and sunny."))
       (toolAns, usage) <- runEff (runChatAnthropicUsage cfg (runToolAgent [weatherTool] "Use the tool to get the weather in Brisbane, then tell me."))
       case toolAns of
         Right a  -> TIO.putStrLn ("tool agent: " <> a)
@@ -97,8 +100,8 @@ main = do
       TIO.putStrLn ("stream usage: " <> T.pack (show (usTotalTokens sUsage)) <> " tokens"
                     <> " (len " <> T.pack (show (T.length streamed)) <> ")")
       -- Streaming tool-agent (deltas printed live).
-      let weatherTool2 = Tl.Tool "get_weather" (SObj [("city", SStr)])
-            (\_ -> pure (JString "It is 26C and sunny."))
+      let weatherTool2 = Tl.Tool "get_weather" weatherSchema
+            (\_ -> pure (A.String "It is 26C and sunny."))
       TIO.putStr "stream tool: "
       (toolStream, tUsage) <-
         runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
@@ -110,8 +113,8 @@ main = do
       TIO.putStrLn ("stream tool usage: " <> T.pack (show (usTotalTokens tUsage)) <> " tokens")
       -- Chat cassette: record a live tool-agent run, then replay it (no network).
       let chatCassette = "/tmp/crucible-chat-cassette.jsonl"
-          weatherTool3 = Tl.Tool "get_weather" (SObj [("city", SStr)])
-            (\_ -> pure (JString "It is 26C and sunny."))
+          weatherTool3 = Tl.Tool "get_weather" weatherSchema
+            (\_ -> pure (A.String "It is 26C and sunny."))
           toolQuestion = "Use the tool to get the weather in Brisbane, then tell me."
       TIO.writeFile chatCassette ""  -- fresh cassette
       recordedAns <- runEff (recordChatAnthropic chatCassette cfg (runToolAgent [weatherTool3] toolQuestion))
