@@ -102,7 +102,35 @@ Typed skills (`call`) run under the `LLM` effect, so they compose with the
 streaming path without changes: pass `call classify input` where you would pass
 `complete prompt`. The token chunks are emitted as they arrive; the assembled
 text is decoded through the output codec at the end. Incremental typed decoding
-(decoding partial JSON as chunks arrive) is out of scope.
+of a single JSON object (decoding partial JSON as chunks arrive) is out of
+scope; for row-based data there is a supported middle ground below.
+
+## Row-based data (JSONL)
+
+For datasets, ask the model for JSONL (one JSON object per line, no markdown
+fences) and consume typed rows as each line completes. `Crucible.Rows`
+reinterprets `Emit`: deltas are buffered, and the moment a newline lands the
+finished line is decoded through a codec and handed to your sink. You do not
+wait for the full response to act on the first row.
+
+```haskell
+import Crucible.Rows (runRowsWith)
+
+data City = City { cityName :: Text, population :: Int }
+  deriving (Show, Generic)
+instance HasCodec City where codec = genericCodec
+
+(text, usage) <- runEff
+  ( runRowsWith (codec @City) (either logBadRow insertRow)
+      (Anthropic.stream cfg
+        (complete [Message User "List the 20 largest cities as JSONL, one object per line, fields cityName and population. No fences."])) )
+```
+
+Each row arrives as `Either DecodeError City`: a line that does not parse
+(a stray fence, prose) is a `Left` carrying the raw line, and later rows still
+decode. A non-blank trailing line without a final newline is flushed as the
+last row. `runRows` is the collecting variant (rows returned alongside the
+result), useful in tests and batch jobs.
 
 ## Further reading
 

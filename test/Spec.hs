@@ -41,6 +41,7 @@ import qualified Crucible.Chat as Chat
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
+import Crucible.Rows (splitRows, runRows)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import Control.Concurrent (threadDelay)
@@ -143,6 +144,10 @@ sseBody vs = BC.intercalate "\n\n" (map (\v -> "data: " <> LBS.toStrict (A.encod
 runBody :: BC.ByteString -> StreamAcc
 runBody body = let (frames, _) = splitFrames body
                in foldl' stepAcc emptyAcc (map parseEvent frames)
+
+-- crucible-39v: a row codec for the JSONL streaming tests
+rowCodec :: JSONCodec Int
+rowCodec = C.object (C.field "n" id C.int)
 
 -- Helper: extract the "type" field from a JSON Schema Value (for robust schema checks).
 schemaType :: Value -> Maybe Value
@@ -654,6 +659,23 @@ main = runChecks
   , check "turnContentJson: round-trips tool-only"
       (Right (Turn "" [ToolUse "u" "f" (object [])]))
       (parseTurn (TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "" [ToolUse "u" "f" (object [])]))))))
+  -- crucible-39v: streaming JSONL rows over Emit
+  , check "splitRows: completed lines + remainder"
+      (["{\"n\":1}", "{\"n\":2}"], "{\"n\":")
+      (splitRows "{\"n\":1}\n{\"n\":2}\n{\"n\":")
+  , check "rows: deltas split across line boundaries decode as rows"
+      ((), [Right 1, Right 2])
+      (runPureEff (runRows rowCodec (emit "{\"n\":1}\n{\"n\"" >> emit ":2}\n")))
+  , check "rows: trailing line without newline is flushed"
+      ((), [Right 1, Right 2])
+      (runPureEff (runRows rowCodec (emit "{\"n\":1}\n" >> emit "{\"n\":2}")))
+  , check "rows: a bad line yields Left, later rows still decode"
+      [False, True]
+      (map (either (const False) (const True))
+        (snd (runPureEff (runRows rowCodec (emit "garbage\n{\"n\":7}\n")))))
+  , check "rows: blank lines are skipped"
+      ((), [Right 5])
+      (runPureEff (runRows rowCodec (emit "\n{\"n\":5}\n\n")))
   -- crucible-luz: OpenAI interpreter (pure wire-format coverage)
   , check "OpenAI requestJson: native system role + max_completion_tokens"
       (object
