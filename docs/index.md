@@ -18,7 +18,7 @@ instance HasCodec Sentiment where codec = genericCodec
 
 classify :: LlmFn Text Sentiment
 classify = llmFn "classify" str codec
-  (\s -> "Classify the sentiment as positive, negative, or neutral for: " <> s)
+  (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
 
 main :: IO ()
 main = do

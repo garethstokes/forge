@@ -77,10 +77,12 @@ single-constructor record:
 
 ```haskell
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 import GHC.Generics (Generic)
 import qualified Data.Text as T
 import Effectful (runEff)
+import NeatInterpolation (text)
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Function (LlmFn, llmFn, call)
@@ -93,7 +95,7 @@ instance HasCodec Sentiment where codec = genericCodec
 
 classify :: LlmFn T.Text Sentiment
 classify = llmFn "classify" str codec
-  (\s -> "Classify the sentiment as positive, negative, or neutral for: " <> s)
+  (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
 
 main :: IO ()
 main = do

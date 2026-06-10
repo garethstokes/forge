@@ -95,11 +95,30 @@ polarityCodec = enum [("positive", Positive), ("negative", Negative), ("neutral"
 
 classify :: LlmFn Text Polarity
 classify = llmFn "classify-polarity" str polarityCodec
-  (\s -> "Classify the sentiment of: " <> s)
+  (\s -> [text|Classify the sentiment of: ${s}|])
 ```
 
 The codec provides both the JSON encode/decode path and the JSON Schema that is
 injected into the system prompt.
+
+## Writing instructions
+
+The instruction is an ordinary `i -> Text`. crucible writes prompts with
+[`neat-interpolation`](https://hackage.haskell.org/package/neat-interpolation)'s
+`[text| … |]` quasiquoter — multi-line templates with `${var}` interpolation,
+where the quasiquoter strips the block's leading indentation so the source mirrors
+the output. Interpolated values must be `Text` identifiers in scope, so bind any
+non-`Text` piece to a `let`/`where` first. Enable it with
+`{-# LANGUAGE QuasiQuotes #-}` and `import NeatInterpolation (text)`:
+
+```haskell
+summarise :: LlmFn Text Text
+summarise = llmFn "summarise" str str
+  (\doc -> [text|
+    Summarise the document below in one sentence.
+
+    ${doc}|])
+```
 
 ## Schema injection
 
@@ -140,7 +159,7 @@ instance HasCodec Sentiment where codec = genericCodec
 
 let classify :: LlmFn T.Text Sentiment
     classify = llmFn "classify" str codec
-      (\s -> "Classify the sentiment as positive, negative, or neutral for: " <> s)
+      (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
 
 typed <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
 case typed of
