@@ -18,7 +18,7 @@ module Crucible.Chat
   ( ToolUseId
   , ToolUse (..)
   , Block (..)
-  , ChatMsg (..)
+  , Message (..)
   , Turn (..)
   , Chat (..)
   , converse
@@ -60,7 +60,7 @@ data Block
   | ToolResultBlock ToolUseId Value   -- ^ a result (or error) for a prior tool_use
   deriving (Eq, Show)
 
-data ChatMsg = ChatMsg Role [Block]
+data Message = Message Role [Block]
   deriving (Eq, Show)
 
 -- | The assistant's reply: any text, plus any tool_use requests.
@@ -73,10 +73,10 @@ data Turn = Turn
 -- | One tool-aware conversation step. The interpreter is given the tool specs
 -- (name + input schema) to advertise, and the conversation so far.
 data Chat :: Effect where
-  Converse :: [(ToolName, Value)] -> [ChatMsg] -> Chat m Turn
+  Converse :: [(ToolName, Value)] -> [Message] -> Chat m Turn
 type instance DispatchOf Chat = Dynamic
 
-converse :: (Chat :> es) => [(ToolName, Value)] -> [ChatMsg] -> Eff es Turn
+converse :: (Chat :> es) => [(ToolName, Value)] -> [Message] -> Eff es Turn
 converse specs msgs = send (Converse specs msgs)
 
 -- | A tool-loop failure: the iteration budget was exhausted.
@@ -102,7 +102,7 @@ defaultMaxIterations = 10
 -- | Like 'runToolAgent' but with an explicit iteration cap. On exhaustion
 -- returns @Left ('ToolLoopExceeded' cap)@ — the actual budget used.
 runToolAgentN :: (Chat :> es) => Int -> [Tool es] -> Text -> Eff es (Either ChatError Text)
-runToolAgentN cap tools question = loop cap [ChatMsg User [TextBlock question]]
+runToolAgentN cap tools question = loop cap [Message User [TextBlock question]]
   where
     specs = [(t.name, t.schema) | t <- tools]
 
@@ -116,10 +116,10 @@ runToolAgentN cap tools question = loop cap [ChatMsg User [TextBlock question]]
             else do
               results <- mapM runOne turn.toolUses
               let assistant =
-                    ChatMsg Assistant
+                    Message Assistant
                       ( [TextBlock turn.text | not (T.null turn.text)]
                           ++ map ToolUseBlock turn.toolUses )
-                  userResults = ChatMsg User results
+                  userResults = Message User results
               loop (n - 1) (msgs ++ [assistant, userResults])
 
     runOne u = case filter ((== u.name) . (.name)) tools of

@@ -87,7 +87,8 @@ import Data.Aeson (Value (..), (.=), (.:))
 import qualified Data.Aeson.Types as AT
 import qualified Data.Vector as V
 
-import Crucible.Chat (Block (..), Chat (..), ChatMsg (..), ToolUse (..), Turn (..))
+import qualified Crucible.Chat as Chat
+import Crucible.Chat (Block (..), Chat (..), ToolUse (..), Turn (..))
 import Crucible.LLM (LLM (..), Message (..), Role (..))
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
@@ -199,7 +200,7 @@ replay path action = do
 -- | One chat round-trip, with usage: POST the conversation + tool specs, parse
 -- the assistant 'Turn' (throwing 'AnthropicNoContent' if malformed), and read
 -- the usage from the same body.
-converseOnce :: AnthropicConfig -> Manager -> [(ToolName, Value)] -> [ChatMsg] -> IO (Turn, Usage)
+converseOnce :: AnthropicConfig -> Manager -> [(ToolName, Value)] -> [Chat.Message] -> IO (Turn, Usage)
 converseOnce cfg mgr specs msgs = do
   body <- postMessages cfg mgr (chatRequestJson cfg specs msgs)
   turn <- either (\_ -> throwIO (AnthropicNoContent body)) pure (parseTurn body)
@@ -371,7 +372,7 @@ extractText t = do
 -- | Build the @/v1/messages@ request body for a chat turn: the model + token
 -- cap, the advertised @tools@ (each @{name, input_schema}@), and the
 -- conversation @messages@ as content-block arrays.
-chatRequestJson :: AnthropicConfig -> [(ToolName, Value)] -> [ChatMsg] -> Value
+chatRequestJson :: AnthropicConfig -> [(ToolName, Value)] -> [Chat.Message] -> Value
 chatRequestJson cfg specs msgs =
   A.object
     [ "model" .= cfg.model
@@ -382,8 +383,8 @@ chatRequestJson cfg specs msgs =
   where
     toolSpec n s = A.object ["name" .= A.String n, "input_schema" .= s]
 
-chatMsgJson :: ChatMsg -> Value
-chatMsgJson (ChatMsg r blocks) =
+chatMsgJson :: Chat.Message -> Value
+chatMsgJson (Chat.Message r blocks) =
   A.object ["role" .= anthropicRole r, "content" .= A.Array (V.fromList (map blockJson blocks))]
 
 -- | Encode a 'Turn' to the Anthropic content shape (reusing 'blockJson'), for

@@ -35,8 +35,9 @@ import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
+import qualified Crucible.Chat as Chat
 import Crucible.Chat
-  (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
+  (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
@@ -442,7 +443,7 @@ main = runChecks
   , check "runChatScripted: pops the canned turn"
       (Turn "hello" [])
       (runPureEff (runChatScripted [Turn "hello" []]
-        (converse [] [ChatMsg User [TextBlock "hi"]])))
+        (converse [] [Chat.Message User [TextBlock "hi"]])))
   -- M12 Task 3: runToolAgent loop
   , check "runToolAgent: runs the tool, then returns final text"
       (Right "Sunny in Brisbane!")
@@ -505,7 +506,7 @@ main = runChecks
             [ "type" .= String "object"
             , "properties" .= A.object ["city" .= A.object ["type" .= String "string"]]
             , "required" .= A.toJSON [String "city"] ])]
-        [ChatMsg User [TextBlock "hi"]])
+        [Chat.Message User [TextBlock "hi"]])
   -- A#4: parseUsage
   , check "parseUsage: reads input/output tokens"
       (Usage 12 7)
