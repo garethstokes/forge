@@ -9,7 +9,7 @@ version = "0.1.0.0"
 [build.lib]
 source-dirs = ["src"]
 ghc-options = ["-Wall", "-XOverloadedStrings"]
-depends = ["base", "text", "time", "bytestring", "aeson", "manifest", "crucible"]
+depends = ["base", "text", "time", "bytestring", "aeson", "manifest", "crucible", "effectful", "effectful-core", "async"]
 
 [build.test.spec]
 source-dirs = ["test"]
