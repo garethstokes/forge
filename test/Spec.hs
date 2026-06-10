@@ -1,10 +1,11 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 module Main (main) where
 import Harness (check, runChecks)
 import Data.Aeson (Value(..), object, (.=))
@@ -15,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Function (LlmFn, llmFn, withRetries, fnPrompt, call, fnOutput, fnName)
+import Crucible.Function (LlmFn (..), llmFn, withRetries, fnPrompt, call)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -32,7 +33,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
-import Crucible.LLM.Anthropic (AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, acStreamIdleSecs, turnContentJson, runChatCassette)
+import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson, runChatCassette)
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
@@ -73,7 +74,7 @@ data ToolCall = GetWeather Text | AddNums Int Int deriving (Eq, Show)
 newtype Answer = Answer Text deriving (Eq, Show)
 
 -- M12 Task 3: runToolAgent fixture
--- toolSchema is now an aeson Value (JSON Schema object)
+-- Tool's schema field is an aeson Value (JSON Schema object)
 weatherToolSchema :: A.Value
 weatherToolSchema = A.object
   [ "type" A..= A.String "object"
@@ -337,11 +338,11 @@ main = runChecks
       (let rep = runPureEff (runLLMScripted [] (runEval id (pure . Data.Text.toUpper)
                    [ Case "abc" "upper" (Exactly "ABC")
                    , Case "xy"  "nonempty" (Predicate (not . Data.Text.null)) ]))
-       in (passRate rep, meanScore rep))
+       in (rep.passRate, rep.meanScore))
   , check "eval: detects a mismatch"
       0.0
-      (passRate (runPureEff (runLLMScripted []
-        (runEval id (pure . Data.Text.toUpper) [Case "abc" "wrong" (Exactly "abc")]))))
+      ((runPureEff (runLLMScripted []
+        (runEval id (pure . Data.Text.toUpper) [Case "abc" "wrong" (Exactly "abc")]))).passRate)
   , check "eval: report renders per-case + summary"
       True
       (Data.Text.isInfixOf "pass-rate:" (renderReport (runPureEff (runLLMScripted []
@@ -349,13 +350,13 @@ main = runChecks
   -- M10 Task 2: LLM-as-judge (Rubric) on scripted data
   , check "eval: LLM-as-judge passes a rubric (scripted verdict)"
       (1.0, "looks like a greeting")
-      (let rep = runPureEff (runLLMScripted ["{\"vPass\":true,\"vWhy\":\"looks like a greeting\"}"]
+      (let rep = runPureEff (runLLMScripted ["{\"pass\":true,\"why\":\"looks like a greeting\"}"]
                    (runEval id (pure . id) [Case "hi" "greeting" (Rubric "must be a greeting")]))
-       in (passRate rep, rationale (resScore (head (results rep)))))
+       in (rep.passRate, (head rep.results).score.rationale))
   , check "eval: LLM-as-judge fails a rubric (scripted verdict)"
       0.0
-      (passRate (runPureEff (runLLMScripted ["{\"vPass\":false,\"vWhy\":\"not a greeting\"}"]
-        (runEval id (pure . id) [Case "42" "greeting" (Rubric "must be a greeting")]))))
+      ((runPureEff (runLLMScripted ["{\"pass\":false,\"why\":\"not a greeting\"}"]
+        (runEval id (pure . id) [Case "42" "greeting" (Rubric "must be a greeting")]))).passRate)
   -- effectful capability manifest: agent runs end-to-end through interpreters
   , check "effectful agent: tool then answer"
       "sunny in Brisbane"
@@ -369,13 +370,13 @@ main = runChecks
       True
       (either (const True) (const False)
         (runPureEff (runLLMScripted ["not json"] (call (withRetries 0 classifyFn) "x"))))
-  , check "llmFn: fnName is stored" "classify" (fnName classifyFn)
+  , check "llmFn: fnName is stored" "classify" classifyFn.name
   , check "fnPrompt: system message carries the output schema"
       True
       (case fnPrompt classifyFn "hi" of
          (Message System s : _) ->
            T.isPrefixOf "Respond ONLY with JSON" s
-             && T.isInfixOf (schemaText (fnOutput classifyFn)) s
+             && T.isInfixOf (schemaText classifyFn.output) s
          _ -> False)
   , check "fnPrompt: user message carries instruction + rendered input"
       True
@@ -411,7 +412,7 @@ main = runChecks
   -- crucible-mgs: stream idle timeout config + error
   , check "config: default stream idle is 60s"
       (60 :: Int)
-      (acStreamIdleSecs (defaultAnthropicConfig "k"))
+      ((defaultAnthropicConfig "k").streamIdleSecs)
   , check "isRetryable: stream timeout is not retryable"
       False
       (isRetryable (AnthropicStreamTimeout 1000))
@@ -547,7 +548,7 @@ main = runChecks
   , check "stepAcc: text stream assembles text + usage"
       ("Hello", Usage 25 2)
       (let a = foldl' stepAcc emptyAcc [EvUsageIn 25, EvText "Hel", EvText "lo", EvUsageOut 2]
-       in (saText a, saUsage a))
+       in (a.text, a.usage))
   , check "stepAcc: tool stream reassembles tool_use args"
       ([ToolUse "tu_1" "get_weather" (object ["city" .= String "Brisbane"])], Usage 40 12)
       (let a = foldl' stepAcc emptyAcc
@@ -555,7 +556,7 @@ main = runChecks
                  , EvToolStart 0 "tu_1" "get_weather"
                  , EvToolJson 0 "{\"city\":", EvToolJson 0 "\"Brisbane\"}"
                  , EvBlockStop 0, EvUsageOut 12 ]
-       in (saTools a, saUsage a))
+       in (a.tools, a.usage))
   , check "stepAcc: interleaved tool blocks keep separate args"
       ([ ToolUse "tu_a" "alpha" (object ["x" .= Number 1])
        , ToolUse "tu_b" "beta"  (object ["y" .= Number 2]) ])
@@ -565,7 +566,7 @@ main = runChecks
                  , EvToolJson 0 "{\"x\":", EvToolJson 1 "{\"y\":"
                  , EvToolJson 0 "1}",      EvToolJson 1 "2}"
                  , EvBlockStop 0, EvBlockStop 1 ]
-       in saTools a)
+       in a.tools)
   -- A#3: keystone — full SSE body through the pure core
   , check "stream keystone: text response"
       ("Hello world", [], Usage 25 3)
@@ -575,7 +576,7 @@ main = runChecks
                  , object ["type" .= String "content_block_delta", "index" .= Number 0, "delta" .= object ["type" .= String "text_delta", "text" .= String " world"]]
                  , object ["type" .= String "message_delta", "delta" .= object [], "usage" .= object ["output_tokens" .= Number 3]]
                  , object ["type" .= String "message_stop"] ])
-       in (saText a, saTools a, saUsage a))
+       in (a.text, a.tools, a.usage))
   , check "stream keystone: tool_use response"
       ("", [ToolUse "tu_1" "get_weather" (object ["city" .= String "Brisbane"])], Usage 40 12)
       (let a = runBody (sseBody
@@ -585,7 +586,7 @@ main = runChecks
                  , object ["type" .= String "content_block_delta", "index" .= Number 0, "delta" .= object ["type" .= String "input_json_delta", "partial_json" .= String "\"Brisbane\"}"]]
                  , object ["type" .= String "content_block_stop", "index" .= Number 0]
                  , object ["type" .= String "message_delta", "delta" .= object [], "usage" .= object ["output_tokens" .= Number 12]] ])
-       in (saText a, saTools a, saUsage a))
+       in (a.text, a.tools, a.usage))
   -- crucible-mgs: timedRead
   , do r <- timedRead 200000 (pure (BC.pack "hi"))
        check "timedRead: fast read passes through" (BC.pack "hi") r

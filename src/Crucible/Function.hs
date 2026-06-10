@@ -1,5 +1,8 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
@@ -33,21 +36,21 @@ import Crucible.SAP (decodeLLM)
 
 -- | A declared LLM function: a task instruction plus input/output codecs.
 data LlmFn i o = LlmFn
-  { fnName        :: Text        -- ^ for introspection / evals
-  , fnInstruction :: i -> Text   -- ^ the task (may reference input fields)
-  , fnInput       :: JSONCodec i -- ^ used to render the input value into the prompt
-  , fnOutput      :: JSONCodec o -- ^ schema injection + tolerant decode
-  , fnRetries     :: Int         -- ^ decode-failure retries
+  { name        :: Text        -- ^ for introspection / evals
+  , instruction :: i -> Text   -- ^ the task (may reference input fields)
+  , input       :: JSONCodec i -- ^ used to render the input value into the prompt
+  , output      :: JSONCodec o -- ^ schema injection + tolerant decode
+  , retries     :: Int         -- ^ decode-failure retries
   }
 
--- | Construct an 'LlmFn'; @fnRetries@ defaults to 2.
+-- | Construct an 'LlmFn'; @retries@ defaults to 2.
 llmFn :: Text -> JSONCodec i -> JSONCodec o -> (i -> Text) -> LlmFn i o
-llmFn name inC outC instr =
-  LlmFn { fnName = name, fnInstruction = instr, fnInput = inC, fnOutput = outC, fnRetries = 2 }
+llmFn n inC outC instr =
+  LlmFn { name = n, instruction = instr, input = inC, output = outC, retries = 2 }
 
 -- | Override the decode-failure retry budget.
 withRetries :: Int -> LlmFn i o -> LlmFn i o
-withRetries n fn = fn { fnRetries = n }
+withRetries n fn = fn { retries = n }
 
 -- | Encode a value to JSON text via its codec.
 jsonText :: A.Value -> Text
@@ -57,30 +60,30 @@ jsonText = TE.decodeUtf8 . LB.toStrict . A.encode
 -- the output-schema contract, and a User message with the instruction plus the
 -- rendered input. Exposed for introspection/debugging and tested directly.
 fnPrompt :: LlmFn i o -> i -> [Message]
-fnPrompt fn input =
+fnPrompt LlmFn{output = outC, instruction = instr, input = inC} inp =
   [ Message System [text|
       Respond ONLY with JSON matching this schema:
       ${schema}|]
   , Message User [text|
-      ${instruction}
+      ${task}
 
       Input:
       ${rendered}|]
   ]
   where
-    schema      = schemaText (fnOutput fn)
-    instruction = fnInstruction fn input
-    rendered    = jsonText (toJSONVia (fnInput fn) input)
+    schema   = schemaText outC
+    task     = instr inp
+    rendered = jsonText (toJSONVia inC inp)
 
 -- | Run a typed function: build the prompt, call the model, and decode the reply
 -- against the output codec. On a decode failure, re-ask with the parse error fed
--- back (up to 'fnRetries' times); on exhaustion return 'Left'.
+-- back (up to 'retries' times); on exhaustion return 'Left'.
 call :: (LLM :> es) => LlmFn i o -> i -> Eff es (Either String o)
-call fn input = loop (fnRetries fn) (fnPrompt fn input)
+call fn@LlmFn{output = outC, retries = rets} inp = loop rets (fnPrompt fn inp)
   where
     loop n msgs = do
       raw <- complete msgs
-      case decodeLLM (fnOutput fn) raw of
+      case decodeLLM outC raw of
         Right o -> pure (Right o)
         Left err
           | n <= 0    -> pure (Left err)

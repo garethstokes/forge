@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
@@ -88,9 +89,11 @@ main = do
       -- Illustrative per-MTok rates (not authoritative pricing).
       -- (show on a small Double prints scientific notation, e.g. 6.1e-4)
       let rates = Rates 1.0 5.0
+      let usageIn  = let Usage { inputTokens  = n } = usage in n
+          usageOut = let Usage { outputTokens = n } = usage in n
       TIO.putStrLn
-        ( "usage: " <> T.pack (show (usInputTokens usage)) <> " in + "
-            <> T.pack (show (usOutputTokens usage)) <> " out = "
+        ( "usage: " <> T.pack (show usageIn) <> " in + "
+            <> T.pack (show usageOut) <> " out = "
             <> T.pack (show (usTotalTokens usage)) <> " tokens"
             <> "; est. cost $" <> T.pack (show (estimateCost rates usage)) )
       -- Streaming: print tokens as they arrive (text path).

@@ -1,3 +1,7 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+
 -- | Provider-agnostic token-usage accounting. Intended for use by live LLM interpreters.
 --
 -- 'Usage' is a 'Monoid' whose '<>' sums token counts, so accumulating usage
@@ -13,8 +17,8 @@ module Crucible.Usage
 
 -- | Input and output token counts from a single response, or summed across many.
 data Usage = Usage
-  { usInputTokens  :: !Int
-  , usOutputTokens :: !Int
+  { inputTokens  :: !Int
+  , outputTokens :: !Int
   }
   deriving (Eq, Show)
 
@@ -26,13 +30,13 @@ instance Monoid Usage where
 
 -- | Total tokens billed (input + output).
 usTotalTokens :: Usage -> Int
-usTotalTokens (Usage i o) = i + o
+usTotalTokens u = u.inputTokens + u.outputTokens
 
 -- | Per-million-token rates. Anthropic quotes prices per MTok, so these are
 -- "dollars (or any unit) per 1,000,000 tokens".
 data Rates = Rates
-  { rInputPerMTok  :: !Double
-  , rOutputPerMTok :: !Double
+  { inputPerMTok  :: !Double
+  , outputPerMTok :: !Double
   }
   deriving (Eq, Show)
 

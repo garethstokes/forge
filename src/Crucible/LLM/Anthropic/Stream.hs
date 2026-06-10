@@ -1,7 +1,10 @@
 {-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts   #-}
 {-# LANGUAGE GADTs              #-}
 {-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE NoFieldSelectors   #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators      #-}
@@ -133,10 +136,10 @@ data PartialTool = PartialTool ToolUseId ToolName Text
 
 -- | Running accumulation across one streamed response.
 data StreamAcc = StreamAcc
-  { saText    :: Text                 -- concatenated text deltas
-  , saPartial :: [(Int, PartialTool)] -- in-progress tool_use blocks, by index
-  , saTools   :: [ToolUse]            -- completed tool_uses, in completion order
-  , saUsage   :: Usage
+  { text    :: Text                 -- concatenated text deltas
+  , partial :: [(Int, PartialTool)] -- in-progress tool_use blocks, by index
+  , tools   :: [ToolUse]            -- completed tool_uses, in completion order
+  , usage   :: Usage
   }
   deriving (Eq, Show)
 
@@ -146,17 +149,17 @@ emptyAcc = StreamAcc "" [] [] mempty
 -- | Fold one event into the accumulator (and the IO loop 'emit's text deltas).
 stepAcc :: StreamAcc -> StreamEvent -> StreamAcc
 stepAcc acc = \case
-  EvText t            -> acc { saText = saText acc <> t }
-  EvToolStart i tid n -> acc { saPartial = (i, PartialTool tid n "") : saPartial acc }
-  EvToolJson i frag   -> acc { saPartial = map (bump i frag) (saPartial acc) }
-  EvBlockStop i       -> case lookup i (saPartial acc) of
+  EvText t            -> acc { text = acc.text <> t }
+  EvToolStart i tid n -> acc { partial = (i, PartialTool tid n "") : acc.partial }
+  EvToolJson i frag   -> acc { partial = map (bump i frag) acc.partial }
+  EvBlockStop i       -> case lookup i acc.partial of
     Nothing                       -> acc  -- non-tool block stop (e.g. text); ignore
     Just (PartialTool tid n js) -> acc
-      { saPartial = filter ((/= i) . fst) (saPartial acc)
-      , saTools   = saTools acc ++ [ToolUse tid n (parseArgs js)]
+      { partial = filter ((/= i) . fst) acc.partial
+      , tools   = acc.tools ++ [ToolUse tid n (parseArgs js)]
       }
-  EvUsageIn n  -> acc { saUsage = (saUsage acc) { usInputTokens  = n } }
-  EvUsageOut n -> acc { saUsage = (saUsage acc) { usOutputTokens = n } }
+  EvUsageIn n  -> acc { usage = acc.usage { inputTokens  = n } }
+  EvUsageOut n -> acc { usage = acc.usage { outputTokens = n } }
   EvOther      -> acc
   where
     bump i frag (j, pt@(PartialTool tid n js))
@@ -242,9 +245,9 @@ runLLMAnthropicStream cfg action = do
         acc <- bracket
                  (liftIO (openStream cfg mgr (addStream (requestJson cfg msgs))))
                  (liftIO . responseClose)
-                 (streamLoop (acStreamIdleSecs cfg * 1000000))
-        modify (<> saUsage acc)
-        pure (saText acc))
+                 (streamLoop (cfg.streamIdleSecs * 1000000))
+        modify (<> acc.usage)
+        pure acc.text)
     action
 
 -- | Stream the chat path: interpret 'Chat' against Anthropic SSE, 'emit'ting each
@@ -260,7 +263,7 @@ runChatAnthropicStream cfg action = do
         acc <- bracket
                  (liftIO (openStream cfg mgr (addStream (chatRequestJson cfg specs msgs))))
                  (liftIO . responseClose)
-                 (streamLoop (acStreamIdleSecs cfg * 1000000))
-        modify (<> saUsage acc)
-        pure (Turn (saText acc) (saTools acc)))
+                 (streamLoop (cfg.streamIdleSecs * 1000000))
+        modify (<> acc.usage)
+        pure (Turn acc.text acc.tools))
     action

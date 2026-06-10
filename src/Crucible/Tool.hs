@@ -1,11 +1,15 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+
 module Crucible.Tool
   ( ToolName, ToolCall(..), toolCallCodec, anyValue
   , Tool(..), Tools(..), callTool, runTools, toolsHelp
@@ -24,19 +28,19 @@ import Effectful.Dispatch.Dynamic (send, interpret)
 type ToolName = Text
 
 -- | A tool invocation as the model emits it: a name and raw args.
-data ToolCall = ToolCall { tcName :: ToolName, tcArgs :: Value }
+data ToolCall = ToolCall { name :: ToolName, args :: Value }
   deriving (Eq, Show)
 
 toolCallCodec :: JSONCodec ToolCall
-toolCallCodec = object (ToolCall <$> field "tool" tcName str <*> field "args" tcArgs anyValue)
+toolCallCodec = object (ToolCall <$> field "tool" (.name) str <*> field "args" (.args) anyValue)
 
 -- | A named tool: an args schema (shown in the prompt) and a runner in the
 -- ambient effect row @Eff es@. Pure tools are polymorphic in @es@ (via 'pure');
 -- an IO tool would carry @IOE :> es@.
 data Tool es = Tool
-  { toolName   :: ToolName
-  , toolSchema :: Value
-  , toolRun    :: Value -> Eff es Value }
+  { name   :: ToolName
+  , schema :: Value
+  , run    :: Value -> Eff es Value }
 
 -- | The tool-dispatch capability as a dynamic effect.
 data Tools :: Effect where
@@ -49,14 +53,14 @@ callTool n v = send (CallTool n v)
 -- | Interpret Tools against a toolbox; unknown tool -> Left.
 runTools :: [Tool es] -> Eff (Tools : es) a -> Eff es a
 runTools tools = interpret $ \_ -> \case
-  CallTool name args -> case filter ((== name) . toolName) tools of
-    (t : _) -> Right <$> toolRun t args
-    []      -> pure (Left ("unknown tool: " <> name))
+  CallTool tname targs -> case filter ((== tname) . (.name)) tools of
+    (t : _) -> Right <$> t.run targs
+    []      -> pure (Left ("unknown tool: " <> tname))
 
 -- | A prose listing of the toolbox for the system prompt.
 toolsHelp :: [Tool es] -> Text
 toolsHelp ts = T.intercalate "\n"
-  [ "- " <> toolName t <> "(args: " <> renderSchemaValue (toolSchema t) <> ")" | t <- ts ]
+  [ "- " <> t.name <> "(args: " <> renderSchemaValue t.schema <> ")" | t <- ts ]
 
 -- | Render a JSON schema Value as compact JSON text.
 renderSchemaValue :: Value -> Text

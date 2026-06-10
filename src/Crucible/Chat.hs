@@ -1,8 +1,11 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -44,9 +47,9 @@ type ToolUseId = Text
 
 -- | A model request to invoke a tool.
 data ToolUse = ToolUse
-  { tuId   :: ToolUseId
-  , tuName :: ToolName
-  , tuArgs :: Value
+  { id   :: ToolUseId
+  , name :: ToolName
+  , args :: Value
   }
   deriving (Eq, Show)
 
@@ -62,8 +65,8 @@ data ChatMsg = ChatMsg Role [Block]
 
 -- | The assistant's reply: any text, plus any tool_use requests.
 data Turn = Turn
-  { turnText     :: Text
-  , turnToolUses :: [ToolUse]
+  { text     :: Text
+  , toolUses :: [ToolUse]
   }
   deriving (Eq, Show)
 
@@ -101,27 +104,27 @@ defaultMaxIterations = 10
 runToolAgentN :: (Chat :> es) => Int -> [Tool es] -> Text -> Eff es (Either ChatError Text)
 runToolAgentN cap tools question = loop cap [ChatMsg User [TextBlock question]]
   where
-    specs = [(toolName t, toolSchema t) | t <- tools]
+    specs = [(t.name, t.schema) | t <- tools]
 
     loop n msgs = do
       turn <- converse specs msgs
-      if null (turnToolUses turn)
-        then pure (Right (turnText turn))
+      if null turn.toolUses
+        then pure (Right turn.text)
         else
           if n <= 0
             then pure (Left (ToolLoopExceeded cap))
             else do
-              results <- mapM runOne (turnToolUses turn)
+              results <- mapM runOne turn.toolUses
               let assistant =
                     ChatMsg Assistant
-                      ( [TextBlock (turnText turn) | not (T.null (turnText turn))]
-                          ++ map ToolUseBlock (turnToolUses turn) )
+                      ( [TextBlock turn.text | not (T.null turn.text)]
+                          ++ map ToolUseBlock turn.toolUses )
                   userResults = ChatMsg User results
               loop (n - 1) (msgs ++ [assistant, userResults])
 
-    runOne u = case filter ((== tuName u) . toolName) tools of
-      (t : _) -> ToolResultBlock (tuId u) <$> toolRun t (tuArgs u)
-      []      -> pure (ToolResultBlock (tuId u) (A.String ("unknown tool: " <> tuName u)))
+    runOne u = case filter ((== u.name) . (.name)) tools of
+      (t : _) -> ToolResultBlock u.id <$> t.run u.args
+      []      -> pure (ToolResultBlock u.id (A.String ("unknown tool: " <> u.name)))
 
 -- | Drive a native tool-calling loop to a final text answer, capped at
 -- 'defaultMaxIterations'. See 'runToolAgentN' for a custom cap. Total: works

@@ -1,7 +1,10 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
@@ -108,13 +111,13 @@ isRetryable (AnthropicStreamTimeout _)  = False
 -- | What the live interpreter needs: an API key, a model id, a token cap,
 -- and knobs for timeout + retry behaviour.
 data AnthropicConfig = AnthropicConfig
-  { acApiKey          :: Text
-  , acModel           :: Text
-  , acMaxTokens       :: Int
-  , acTimeoutSecs     :: Int  -- ^ request timeout in seconds
-  , acMaxRetries      :: Int  -- ^ retries on transient failures
-  , acBaseDelayMicros :: Int  -- ^ backoff base delay, microseconds
-  , acStreamIdleSecs  :: Int  -- ^ mid-stream per-chunk idle timeout, seconds
+  { apiKey          :: Text
+  , model           :: Text
+  , maxTokens       :: Int
+  , timeoutSecs     :: Int  -- ^ request timeout in seconds
+  , maxRetries      :: Int  -- ^ retries on transient failures
+  , baseDelayMicros :: Int  -- ^ backoff base delay, microseconds
+  , streamIdleSecs  :: Int  -- ^ mid-stream per-chunk idle timeout, seconds
   }
   deriving (Eq, Show)
 
@@ -123,13 +126,13 @@ data AnthropicConfig = AnthropicConfig
 defaultAnthropicConfig :: Text -> AnthropicConfig
 defaultAnthropicConfig key =
   AnthropicConfig
-    { acApiKey = key
-    , acModel = "claude-haiku-4-5-20251001"
-    , acMaxTokens = 1024
-    , acTimeoutSecs = 60
-    , acMaxRetries = 3
-    , acBaseDelayMicros = 500000
-    , acStreamIdleSecs = 60
+    { apiKey = key
+    , model = "claude-haiku-4-5-20251001"
+    , maxTokens = 1024
+    , timeoutSecs = 60
+    , maxRetries = 3
+    , baseDelayMicros = 500000
+    , streamIdleSecs = 60
     }
 
 -- | Upper bound on a single backoff delay (30s), so exponential growth is capped.
@@ -142,7 +145,7 @@ newAnthropicManager :: AnthropicConfig -> IO Manager
 newAnthropicManager cfg =
   newManager
     tlsManagerSettings
-      { managerResponseTimeout = responseTimeoutMicro (acTimeoutSecs cfg * 1000000) }
+      { managerResponseTimeout = responseTimeoutMicro (cfg.timeoutSecs * 1000000) }
 
 -- | Interpret @LLM@ against the live Anthropic Messages API. One shared TLS
 -- manager is created up front; each 'Complete' is one @POST \/v1\/messages@ with
@@ -274,7 +277,7 @@ messagesRequest cfg bodyJson = do
   pure base
     { method = "POST"
     , requestHeaders =
-        [ ("x-api-key", TE.encodeUtf8 (acApiKey cfg))
+        [ ("x-api-key", TE.encodeUtf8 cfg.apiKey)
         , ("anthropic-version", "2023-06-01")
         , ("content-type", "application/json")
         ]
@@ -282,19 +285,19 @@ messagesRequest cfg bodyJson = do
     }
 
 -- | Wrap an IO action in the shared retry policy: jittered exponential backoff
--- capped at 'maxBackoffMicros', up to 'acMaxRetries', retrying 'AnthropicError's
+-- capped at 'maxBackoffMicros', up to 'maxRetries', retrying 'AnthropicError's
 -- for which 'isRetryable' holds.
 withAnthropicRetry :: AnthropicConfig -> IO a -> IO a
 withAnthropicRetry cfg action =
   recovering
-    (capDelay maxBackoffMicros (fullJitterBackoff (acBaseDelayMicros cfg))
-       <> limitRetries (acMaxRetries cfg))
+    (capDelay maxBackoffMicros (fullJitterBackoff cfg.baseDelayMicros)
+       <> limitRetries cfg.maxRetries)
     [ \_ -> Handler (\(e :: AnthropicError) -> pure (isRetryable e)) ]
     (\_ -> action)
 
 -- | POST a JSON request body to @/v1/messages@ and return the raw 2xx response
 -- body, retrying transient failures (network/timeout, 429, 5xx) with jittered
--- exponential backoff up to 'acMaxRetries'. A non-2xx response throws
+-- exponential backoff up to 'maxRetries'. A non-2xx response throws
 -- 'AnthropicStatusError'; a network/timeout failure throws 'AnthropicHttpError'.
 -- Shared by the text completion and the chat interpreter.
 postMessages :: AnthropicConfig -> Manager -> Value -> IO Text
@@ -315,8 +318,8 @@ postMessages cfg mgr bodyJson =
 anthropicCompleteUsage :: AnthropicConfig -> Manager -> [Message] -> IO (Text, Usage)
 anthropicCompleteUsage cfg mgr msgs = do
   body <- postMessages cfg mgr (requestJson cfg msgs)
-  text <- either (\_ -> throwIO (AnthropicNoContent body)) pure (extractText body)
-  pure (text, parseUsage body)
+  txt <- either (\_ -> throwIO (AnthropicNoContent body)) pure (extractText body)
+  pure (txt, parseUsage body)
 
 -- | One text round-trip, discarding usage (the original behaviour).
 anthropicComplete :: AnthropicConfig -> Manager -> [Message] -> IO Text
@@ -327,8 +330,8 @@ anthropicComplete cfg mgr msgs = fst <$> anthropicCompleteUsage cfg mgr msgs
 requestJson :: AnthropicConfig -> [Message] -> Value
 requestJson cfg msgs =
   A.object $
-    [ "model" .= acModel cfg
-    , "max_tokens" .= acMaxTokens cfg
+    [ "model" .= cfg.model
+    , "max_tokens" .= cfg.maxTokens
     ]
       ++ systemField
       ++ [ "messages" .= A.Array (V.fromList [turn m | m <- conversation]) ]
@@ -365,8 +368,8 @@ extractText t = do
 chatRequestJson :: AnthropicConfig -> [(ToolName, Value)] -> [ChatMsg] -> Value
 chatRequestJson cfg specs msgs =
   A.object
-    [ "model" .= acModel cfg
-    , "max_tokens" .= acMaxTokens cfg
+    [ "model" .= cfg.model
+    , "max_tokens" .= cfg.maxTokens
     , "tools" .= A.Array (V.fromList [ toolSpec n s | (n, s) <- specs ])
     , "messages" .= A.Array (V.fromList (map chatMsgJson msgs))
     ]
