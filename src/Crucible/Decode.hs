@@ -15,8 +15,9 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Autodocodec (JSONCodec, parseJSONVia)
 
--- | A structured parse failure carrying both the error message and the
--- original (un-stripped) LLM reply text.
+-- | A structured parse failure carrying both the error message and the raw
+-- input that failed to decode: the original (un-stripped) LLM reply text in
+-- 'decodeLLM', or the JSON-encoded tool arguments in 'Crucible.Tool.invoke'.
 data DecodeError = DecodeError { message :: Text, raw :: Text }
   deriving (Eq, Show)
 
