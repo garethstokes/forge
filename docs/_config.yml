@@ -1,0 +1,12 @@
+title: crucible
+description: A typed LLM-agent substrate for Haskell on effectful.
+remote_theme: just-the-docs/just-the-docs
+url: https://garethstokes.github.io
+baseurl: /crucible
+search_enabled: true
+heading_anchors: true
+markdown_ext: "markdown,mkdown,mkdn,mkd,md,lhs"
+aux_links:
+  GitHub: https://github.com/garethstokes/crucible
+exclude:
+  - superpowers/
