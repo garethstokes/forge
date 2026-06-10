@@ -28,8 +28,12 @@ Build order A → B → C → D. This spec covers only A.
 vary in shape, so they are raw `jsonb` (`Aeson Value`) in v1; typed per-family codecs are
 a later refinement.
 
-**App housing** (which package/repo the eval app lives in) is an implementation-plan
-decision, not a schema decision; this spec defines the entities only.
+**App housing (decided):** the eval project is a **new package** at
+`examples/manifest-evals/`, added to Manifest's zinc `[workspace] members`, depending on
+the local `manifest` library via a workspace/path dependency. It is a separate project that
+uses Manifest, but co-located so library changes are instantly available during the heavy
+co-development phase (it can be extracted to a sibling repo later). The Manifest library
+extensions in §5 land in `manifest` itself first; the eval package builds on top.
 
 ---
 
@@ -247,11 +251,12 @@ in scope here (or as tiny pre-tasks in the plan):
    text via the `time` library, already a dependency).
 2. **`DbType Double`.** `scoreValue`/`rmMean` are `Double`; add a `DbType Double` instance
    (`SqlDouble` → `double precision`). Small, parallel to the existing `Int` instance.
-3. **Unique indexes (desired, not strictly blocking).** The `(dataset, version)` uniqueness
-   wants a `UNIQUE` index; the just-built `indexes` feature does `gin`/`btree` only. v1 can
-   enforce uniqueness with an app-level check plus a one-line manual `CREATE UNIQUE INDEX`
-   in the migration, OR the `indexes` feature gains a `unique` builder (a clean small
-   extension, mirroring `gin`/`btree`). The plan picks one; the schema does not block on it.
+3. **Unique indexes (decided: extend the feature).** The `(dataset, version)` uniqueness
+   wants a `UNIQUE` index; the just-built `indexes` feature does `gin`/`btree` (single
+   column) only. We extend it with a multi-column **`unique`** builder
+   (`unique [#dvDataset, #dvVersion]` → `CREATE UNIQUE INDEX … (dv_dataset, dv_version)`),
+   mirroring `gin`/`btree` and reconciled the same create-only way. This is reusable beyond
+   the eval schema and is a Manifest library change (§5 lands in `manifest` first).
 
 ---
 
