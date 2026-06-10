@@ -17,7 +17,7 @@ depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "
 [build.exe.crucible-anthropic]
 source-dirs = ["app"]
 main = "Main.hs"
-depends = ["base", "text", "crucible", "effectful", "effectful-core", "aeson", "autodocodec"]
+depends = ["base", "text", "crucible", "effectful", "effectful-core", "aeson", "autodocodec", "neat-interpolation"]
 
 [build.test.spec]
 source-dirs = ["test"]

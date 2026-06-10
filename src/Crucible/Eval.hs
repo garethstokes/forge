@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 module Crucible.Eval
   ( Case(..), Expectation(..), Score(..), Verdict(..)
   , Result(..), Report(..)
@@ -11,6 +12,7 @@ module Crucible.Eval
 import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
+import NeatInterpolation (text)
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
 import Crucible.Codec (JSONCodec, object, field, str, bool)
 import Crucible.SAP (decodeLLM)
@@ -40,11 +42,13 @@ verdictCodec = object (Verdict <$> field "vPass" vPass bool <*> field "vWhy" vWh
 judge :: (LLM :> es) => (a -> Text) -> Text -> a -> Eff es Score
 judge render rubric actual = do
   raw <- complete
-    [ Message System "You are a strict grader. Respond ONLY with JSON {\"vPass\": <bool>, \"vWhy\": <string>}."
-    , Message User ("Rubric: " <> rubric <> "\nOutput to grade: " <> render actual) ]
+    [ Message System [text|You are a strict grader. Respond ONLY with JSON {"vPass": <bool>, "vWhy": <string>}.|]
+    , Message User [text|Rubric: ${rubric}
+Output to grade: ${graded}|] ]
   pure $ case decodeLLM verdictCodec raw of
     Right v -> Score (if vPass v then 1.0 else 0.0) (vWhy v)
     Left e  -> Score 0.0 ("judge parse error: " <> T.pack e)
+  where graded = render actual
 
 -- | Score one output against its expectation. Pure for Exactly/Predicate; the
 -- model is consulted only for Rubric.

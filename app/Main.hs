@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 -- | M8 smoke executable. Proves the effectful substrate talks to the real
 -- Anthropic provider end-to-end, and that the @recordLLM@/cassette slider works:
@@ -30,6 +31,7 @@ import Crucible.LLM.Anthropic
   )
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
+import NeatInterpolation (text)
 import Crucible.Function (LlmFn, llmFn, call)
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
@@ -67,7 +69,7 @@ main = do
         else TIO.putStrLn "MISMATCH" >> exitFailure
       let classify :: LlmFn T.Text Sentiment
           classify = llmFn "classify" str codec
-            (\s -> "Classify the sentiment as positive, negative, or neutral for: " <> s)
+            (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
       typed <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
