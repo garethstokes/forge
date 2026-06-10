@@ -5,35 +5,35 @@ nav_order: 4
 
 # Typed functions
 
-A typed function wraps a prompt pattern — an instruction, an input codec, and an
+A typed skill wraps a prompt pattern — an instruction, an input codec, and an
 output codec — into a single reusable value. Calling it produces a decoded,
 strongly-typed result rather than raw text. Schema generation, prompt construction,
 tolerant JSON extraction, and decode-failure retries are all handled for you.
 
-## LlmFn and llmFn
+## Skill and skill
 
-`LlmFn i o` is the declared function type: `i` is the Haskell input, `o` is the
+`Skill i o` is the declared skill type: `i` is the Haskell input, `o` is the
 decoded output. Construct one with:
 
 ```haskell
-llmFn
+skill
   :: Text             -- name (for introspection / evals)
   -> JSONCodec i      -- input codec (renders the input value into the prompt)
   -> JSONCodec o      -- output codec (schema injection + tolerant decode)
   -> (i -> Text)      -- task instruction
-  -> LlmFn i o
+  -> Skill i o
 ```
 
-`fnRetries` defaults to 2. Override it with `withRetries :: Int -> LlmFn i o -> LlmFn i o`.
+`retries` defaults to 2. Override it with `withRetries :: Int -> Skill i o -> Skill i o`.
 
-## Calling a typed function
+## Calling a typed skill
 
 ```haskell
-call :: (LLM :> es) => LlmFn i o -> i -> Eff es (Either String o)
+call :: (LLM :> es) => Skill i o -> i -> Eff es (Either DecodeError o)
 ```
 
 `call` needs only `LLM :> es`. It runs unchanged under `runLLMScripted`,
-`runLLMCassette`, and `runLLMAnthropic`. The steps it performs:
+`Anthropic.replay`, and `Anthropic.run`. The steps it performs:
 
 1. Build a system message: `"Respond ONLY with JSON matching this schema:\n<schema>"`.
 2. Build a user message: the instruction applied to the input, followed by the
@@ -41,11 +41,11 @@ call :: (LLM :> es) => LlmFn i o -> i -> Eff es (Either String o)
 3. Call `complete` to get the raw model reply.
 4. Run `decodeLLM` on the reply.
 5. On a decode failure: append the raw reply and the parse error to the conversation
-   and loop back to step 3, up to `fnRetries` times.
+   and loop back to step 3, up to `retries` times.
 6. On exhaustion: return `Left err`.
 
 The retry loop feeds the error back to the model so it can self-correct. With
-`fnRetries = 2` a transient formatting glitch rarely survives to `Left`.
+`retries = 2` a transient formatting glitch rarely survives to `Left`.
 
 ## Codecs
 
@@ -86,15 +86,15 @@ An `enum` example — a classifier whose output is one of three variants, withou
 
 ```haskell
 import Crucible.Codec (str, enum)
-import Crucible.Function (llmFn, call)
+import Crucible.Skill (skill, call)
 
 data Polarity = Positive | Negative | Neutral deriving (Eq, Show)
 
 polarityCodec :: JSONCodec Polarity
 polarityCodec = enum [("positive", Positive), ("negative", Negative), ("neutral", Neutral)]
 
-classify :: LlmFn Text Polarity
-classify = llmFn "classify-polarity" str polarityCodec
+classify :: Skill Text Polarity
+classify = skill "classify-polarity" str polarityCodec
   (\s -> [text|Classify the sentiment of: ${s}|])
 ```
 
@@ -112,8 +112,8 @@ non-`Text` piece to a `let`/`where` first. Enable it with
 `{-# LANGUAGE QuasiQuotes #-}` and `import NeatInterpolation (text)`:
 
 ```haskell
-summarise :: LlmFn Text Text
-summarise = llmFn "summarise" str str
+summarise :: Skill Text Text
+summarise = skill "summarise" str str
   (\doc -> [text|
     Summarise the document below in one sentence.
 
@@ -134,11 +134,11 @@ Respond ONLY with JSON matching this schema:
 The model sees the contract before it generates a single token. For `enum` codecs
 the schema enumerates the permitted string values; for records it lists required
 fields and their types. You can inspect what will be sent by calling
-`schemaText (fnOutput fn)` directly — useful for prompt tuning.
+`schemaText fn.output` directly — useful for prompt tuning.
 
 ## Tolerant decode
 
-Model output is rarely pristine JSON. `decodeLLM :: JSONCodec a -> Text -> Either String a` handles the common impurities:
+Model output is rarely pristine JSON. `decodeLLM :: JSONCodec a -> Text -> Either DecodeError a` handles the common impurities:
 
 1. `stripToJson` scans forward to the first `{` or `[`, extracts the balanced
    bracket group (respecting string literals), and returns that substring. Markdown
@@ -146,32 +146,38 @@ Model output is rarely pristine JSON. `decodeLLM :: JSONCodec a -> Text -> Eithe
 2. The extracted text is parsed as JSON via `aeson`.
 3. The JSON value is decoded through the codec via autodocodec's `parseJSONVia`.
 
-Each step's failure is a `Left String`. On failure `call` feeds the error back to
-the model as a `User` message and retries — see above.
+A failure at any step produces `Left (DecodeError { message, raw })`. Access the
+human-readable description via `e.message` and the raw model reply via `e.raw`.
+On failure `call` feeds `e.message` back to the model as a `User` message and
+retries — see above.
 
 ## Worked example: record output
 
 From `app/Main.hs`, the canonical end-to-end demo:
 
 ```haskell
+import Crucible.Skill (Skill, skill, call)
+import Crucible.Decode (DecodeError (..))
+import qualified Crucible.LLM.Anthropic as Anthropic
+
 data Sentiment = Sentiment { sentLabel :: T.Text } deriving (Show, Generic)
 instance HasCodec Sentiment where codec = genericCodec
 
-let classify :: LlmFn T.Text Sentiment
-    classify = llmFn "classify" str codec
+let classify :: Skill T.Text Sentiment
+    classify = skill "classify" str codec
       (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
 
-typed <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
+typed <- runEff (Anthropic.run cfg (call classify "I absolutely love this!"))
 case typed of
   Right o  -> putStrLn (T.unpack (sentLabel o))   -- "positive"
-  Left err -> putStrLn ("decode error: " <> err)
+  Left e   -> putStrLn ("decode error: " <> e.message)
 ```
 
 ## Interop with manifest
 
-The same `HasCodec` instance that makes a type usable as an `LlmFn` output also
+The same `HasCodec` instance that makes a type usable as a `Skill` output also
 makes it persistable as a manifest column without any additional derivation. A type
-defined once — `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec` — can be used as an LLM-function output, as a tool argument codec
-(via `schemaValue` → `toolSchema`), and as a manifest entity field, all from the
+defined once — `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec` — can be used as a skill output, as a tool argument codec
+(via `schemaValue` → `schema`), and as a manifest entity field, all from the
 same single codec. See [Tool calling](tool-calling.md) for the tool schema path and
 [Getting started](getting-started.md) for the end-to-end wiring.

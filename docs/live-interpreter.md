@@ -16,16 +16,16 @@ management, error classification, and retry logic. Everything above it —
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
-| `acApiKey` | `Text` | — | Anthropic API key (`sk-ant-…`). |
-| `acModel` | `Text` | `claude-haiku-4-5-20251001` | Model identifier sent as `model` in each request. |
-| `acMaxTokens` | `Int` | `1024` | `max_tokens` per request. |
-| `acTimeoutSecs` | `Int` | `60` | Per-request HTTP timeout in seconds. |
-| `acMaxRetries` | `Int` | `3` | Maximum retry attempts for retryable errors. |
-| `acBaseDelayMicros` | `Int` | `500000` | Base backoff delay in microseconds (500 ms). |
-| `acStreamIdleSecs` | `Int` | `60` | Streaming idle timeout: if no chunk arrives within this many seconds the stream is abandoned with `AnthropicStreamTimeout`. |
+| `apiKey` | `Text` | — | Anthropic API key (`sk-ant-…`). |
+| `model` | `Text` | `claude-haiku-4-5-20251001` | Model identifier sent as `model` in each request. |
+| `maxTokens` | `Int` | `1024` | `max_tokens` per request. |
+| `timeoutSecs` | `Int` | `60` | Per-request HTTP timeout in seconds. |
+| `maxRetries` | `Int` | `3` | Maximum retry attempts for retryable errors. |
+| `baseDelayMicros` | `Int` | `500000` | Base backoff delay in microseconds (500 ms). |
+| `streamIdleSecs` | `Int` | `60` | Streaming idle timeout: if no chunk arrives within this many seconds the stream is abandoned with `AnthropicStreamTimeout`. |
 
 `defaultAnthropicConfig :: Text -> AnthropicConfig` fills every field except
-`acApiKey` with the defaults above. Override individual fields with record
+`apiKey` with the defaults above. Override individual fields with record
 update:
 
 ```haskell
@@ -33,14 +33,14 @@ import Crucible.LLM.Anthropic (defaultAnthropicConfig)
 import qualified Data.Text as T
 
 let cfg = (defaultAnthropicConfig (T.pack key))
-      { acModel     = "claude-opus-4-5-20251001"
-      , acMaxTokens = 4096
+      { model     = "claude-opus-4-5-20251001"
+      , maxTokens = 4096
       }
 ```
 
 ## The wire path
 
-`runLLMAnthropic` and `runChatAnthropic` both POST to `/v1/messages` on the
+`Anthropic.run` and `Anthropic.runChat` both POST to `/v1/messages` on the
 Anthropic API. The differences are at the content-block level:
 
 - **`LLM` path**: sends a flat `[Message]` list; the first text content block
@@ -49,12 +49,12 @@ Anthropic API. The differences are at the content-block level:
   blocks; the response is parsed into a `Turn` carrying assembled text and any
   tool-use requests, which the `runToolAgent` loop then acts on.
 
-`runLLMAnthropicStream` and `runChatAnthropicStream` (from
+`Anthropic.stream` and `Anthropic.streamChat` (from
 `Crucible.LLM.Anthropic.Stream`) use the same endpoint with
 `"stream": true` and process the server-sent event stream, emitting each delta
 via `Emit`. See [Streaming](streaming.md).
 
-The cassette interpreters (`runLLMCassette`, `runChatCassette`) are the
+The cassette interpreters (`Anthropic.replay`, `Anthropic.replayChat`) are the
 deterministic counterpart: they read pre-recorded responses from a file instead
 of hitting the network, making them zero-dependency drop-ins for CI. See
 [Usage & cassettes](usage-and-cassettes.md).
@@ -86,15 +86,15 @@ data AnthropicError
 ## Retry behaviour
 
 When a retryable error occurs the interpreter waits before trying again. The
-wait is jittered exponential backoff: the base delay is `acBaseDelayMicros`,
+wait is jittered exponential backoff: the base delay is `baseDelayMicros`,
 doubled on each attempt, with a random jitter applied so concurrent clients do
-not thunderherd on a 429. Retries stop after `acMaxRetries` attempts; on
+not thunderherd on a 429. Retries stop after `maxRetries` attempts; on
 exhaustion the error is re-thrown.
 
-The request timeout (`acTimeoutSecs`) and the streaming idle timeout
-(`acStreamIdleSecs`) are both enforced independently: a request that hangs at
-the HTTP level is killed after `acTimeoutSecs`; a streaming response that stalls
-mid-generation without producing a chunk for `acStreamIdleSecs` seconds raises
+The request timeout (`timeoutSecs`) and the streaming idle timeout
+(`streamIdleSecs`) are both enforced independently: a request that hangs at
+the HTTP level is killed after `timeoutSecs`; a streaming response that stalls
+mid-generation without producing a chunk for `streamIdleSecs` seconds raises
 `AnthropicStreamTimeout`.
 
 ## Further reading

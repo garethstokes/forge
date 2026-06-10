@@ -12,18 +12,18 @@ recording — each a dynamic effect you discharge with an interpreter you choose
 scripted for tests, live for production, a cassette for hermetic replay.
 
 ```haskell
--- a typed function: a prompt in, a decoded value out
+-- a typed skill: a prompt in, a decoded value out
 data Sentiment = Sentiment { sentLabel :: Text } deriving (Show, Generic)
 instance HasCodec Sentiment where codec = genericCodec
 
-classify :: LlmFn Text Sentiment
-classify = llmFn "classify" str codec
+classify :: Skill Text Sentiment
+classify = skill "classify" str codec
   (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
 
 main :: IO ()
 main = do
   cfg <- defaultAnthropicConfig <$> getKey
-  r <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
+  r <- runEff (Anthropic.run cfg (call classify "I absolutely love this!"))
   print r   -- Right (Sentiment {sentLabel = "positive"})
 ```
 
@@ -32,7 +32,7 @@ main = do
 - **Effects** — `LLM` (`complete`), `Chat` (`converse`/`runToolAgent`), `Tools`,
   and `Emit` (streaming deltas), each with scripted, live, and cassette
   interpreters.
-- **Typed functions** — declare an `LlmFn` with input/output codecs; the output
+- **Typed skills** — declare a `Skill` with input/output codecs; the output
   schema is injected into the prompt and the reply tolerantly decoded.
 - **Native tool-calling** — advertise tools and let the model drive a
   request→run→result loop (`runToolAgent`), capped and self-correcting.
@@ -51,7 +51,7 @@ main = do
 - [Getting started](getting-started.md) — config, a first live call, a typed
   function, a cassette replay.
 - [Effects](effects.md) — the capability effects and their interpreters.
-- [Typed functions](typed-functions.md) — `llmFn`/`call`, codecs, schema
+- [Typed functions](typed-functions.md) — `skill`/`call`, codecs, schema
   injection, tolerant decode, retries.
 - [Tool calling](tool-calling.md) — `runToolAgent`, the loop, the cap, tool
   schemas.

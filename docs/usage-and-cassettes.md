@@ -15,8 +15,8 @@ addresses both through the `Usage` type and the cassette interpreter pair.
 
 ```haskell
 data Usage = Usage
-  { usInputTokens  :: Int
-  , usOutputTokens :: Int
+  { inputTokens  :: Int
+  , outputTokens :: Int
   }
 ```
 
@@ -26,15 +26,15 @@ across every call inside the `Eff` computation — including every round of a
 tool-agent loop — and return it alongside the result:
 
 ```haskell
-runLLMAnthropicUsage  :: AnthropicConfig -> Eff (LLM:es)  a -> Eff es (a, Usage)
-runChatAnthropicUsage :: AnthropicConfig -> Eff (Chat:es) a -> Eff es (a, Usage)
+Anthropic.usage     :: AnthropicConfig -> Eff (LLM:es)  a -> Eff es (a, Usage)
+Anthropic.usageChat :: AnthropicConfig -> Eff (Chat:es) a -> Eff es (a, Usage)
 ```
 
 A convenience accessor covers the common case:
 
 ```haskell
 usTotalTokens :: Usage -> Int
-usTotalTokens u = usInputTokens u + usOutputTokens u
+usTotalTokens u = u.inputTokens + u.outputTokens
 ```
 
 ## Cost estimation
@@ -43,8 +43,8 @@ usTotalTokens u = usInputTokens u + usOutputTokens u
 
 ```haskell
 data Rates = Rates
-  { rInputPerMTok  :: Double
-  , rOutputPerMTok :: Double
+  { inputPerMTok  :: Double
+  , outputPerMTok :: Double
   }
 
 estimateCost :: Rates -> Usage -> Double
@@ -56,17 +56,20 @@ publishes per-million-token rates on their pricing page; pass them as
 
 ```haskell
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
+import qualified Crucible.LLM.Anthropic as Anthropic
 
 (toolAns, usage) <- runEff
-  ( runChatAnthropicUsage cfg
+  ( Anthropic.usageChat cfg
       (runToolAgent [weatherTool]
         "Use the tool to get the weather in Brisbane, then tell me.") )
 
 -- Illustrative per-MTok rates (not authoritative pricing).
 let rates = Rates 1.0 5.0
+    usageIn  = let Usage { inputTokens  = n } = usage in n
+    usageOut = let Usage { outputTokens = n } = usage in n
 putStrLn
-  ( "usage: " <> show (usInputTokens usage) <> " in + "
-      <> show (usOutputTokens usage) <> " out = "
+  ( "usage: " <> show usageIn <> " in + "
+      <> show usageOut <> " out = "
       <> show (usTotalTokens usage) <> " tokens"
       <> "; est. cost $" <> show (estimateCost rates usage) )
 ```
@@ -82,12 +85,12 @@ time. There are two cassette pairs, one for each effect:
 
 | Record | Replay | Covers |
 |--------|--------|--------|
-| `recordLLMAnthropic path cfg` | `runLLMCassette path` | `LLM` / `complete` |
-| `recordChatAnthropic path cfg` | `runChatCassette path` | `Chat` / `runToolAgent` |
+| `Anthropic.record path cfg` | `Anthropic.replay path` | `LLM` / `complete` |
+| `Anthropic.recordChat path cfg` | `Anthropic.replayChat path` | `Chat` / `runToolAgent` |
 
 The `record*` interpreters behave identically to their live counterparts — they
 issue real network calls — but tee each response to the cassette file in call
-order. The `run*Cassette` interpreters read responses back in the same order,
+order. The `replay*` interpreters read responses back in the same order,
 returning them without any IO.
 
 ## The record/replay slider
@@ -95,8 +98,7 @@ returning them without any IO.
 `app/Main.hs` demonstrates the full cycle for the chat path:
 
 ```haskell
-import Crucible.LLM.Anthropic
-  ( recordChatAnthropic, runChatCassette )
+import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.Chat (runToolAgent)
 
 let chatCassette = "/tmp/crucible-chat-cassette.jsonl"
@@ -108,12 +110,12 @@ writeFile chatCassette ""  -- fresh cassette
 
 -- live: hits the network, writes each response to the cassette
 recordedAns <- runEff
-  ( recordChatAnthropic chatCassette cfg
+  ( Anthropic.recordChat chatCassette cfg
       (runToolAgent [weatherTool3] toolQuestion) )
 
 -- replay: reads the cassette, no network required
 replayedAns <- runEff
-  ( runChatCassette chatCassette
+  ( Anthropic.replayChat chatCassette
       (runToolAgent [weatherTool3] toolQuestion) )
 
 case (recordedAns, replayedAns) of
@@ -124,10 +126,10 @@ case (recordedAns, replayedAns) of
 
 The workflow for CI:
 
-1. During development, run with `recordChatAnthropic` (or `recordLLMAnthropic`)
+1. During development, run with `Anthropic.recordChat` (or `Anthropic.record`)
    to capture real model responses.
 2. Commit the cassette file alongside the test.
-3. In CI, swap to `runChatCassette` (or `runLLMCassette`). The test runs
+3. In CI, swap to `Anthropic.replayChat` (or `Anthropic.replay`). The test runs
    hermetically with no API key and no network dependency.
 
 The cassette file is the slider: pull it one way for a live eval, the other for

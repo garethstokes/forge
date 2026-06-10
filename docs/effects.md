@@ -36,17 +36,17 @@ result = runEff (runLLMScripted ["pong"] (complete msgs))
 -- result = "pong"  (no network)
 ```
 
-**Live:** `runLLMAnthropic :: (IOE :> es) => AnthropicConfig -> Eff (LLM:es) a -> Eff es a` discharges `LLM` against the real Anthropic Messages API. Same call,
+**Live:** `Anthropic.run :: (IOE :> es) => AnthropicConfig -> Eff (LLM:es) a -> Eff es a` discharges `LLM` against the real Anthropic Messages API. Same call,
 different interpreter at the edge:
 
 ```haskell
-import Crucible.LLM.Anthropic (runLLMAnthropic, defaultAnthropicConfig)
+import qualified Crucible.LLM.Anthropic as Anthropic
 
-result <- runEff (runLLMAnthropic cfg (complete msgs))
+result <- runEff (Anthropic.run cfg (complete msgs))
 ```
 
-**Cassette (replay):** `runLLMCassette :: (IOE :> es) => FilePath -> Eff (LLM:es) a -> Eff es a` replays a previously recorded cassette. Pairs with
-`recordLLMAnthropic` to lock in real responses for deterministic CI. See
+**Cassette (replay):** `Anthropic.replay :: (IOE :> es) => FilePath -> Eff (LLM:es) a -> Eff es a` replays a previously recorded cassette. Pairs with
+`Anthropic.record` to lock in real responses for deterministic CI. See
 [Usage & cassettes](usage-and-cassettes.md).
 
 The logic — building `msgs`, calling `complete`, decoding the reply — is identical
@@ -59,7 +59,7 @@ flat `[Message]` and returns `Text`, `Chat` works with content blocks and return
 `Turn` (assembled text plus any tool-use requests):
 
 ```haskell
-converse :: (Chat :> es) => [(ToolName, Value)] -> [ChatMsg] -> Eff es Turn
+converse :: (Chat :> es) => [(ToolName, Value)] -> [Chat.Message] -> Eff es Turn
 ```
 
 Most callers do not call `converse` directly. `runToolAgent` drives the
@@ -77,12 +77,12 @@ On loop exhaustion both return `Left (ToolLoopExceeded cap)`. See
 pops canned `Turn` values. An exhausted script yields a text-only empty `Turn` so
 loops terminate cleanly.
 
-**Live:** `runChatAnthropic` (plain result) and `runChatAnthropicUsage` (result plus
+**Live:** `Anthropic.runChat` (plain result) and `Anthropic.usageChat` (result plus
 `Usage`) discharge `Chat` against the Anthropic API with native tool-calling
 (`tool_use` / `tool_result` content blocks).
 
-**Cassette:** `recordChatAnthropic` / `runChatCassette` mirror the `LLM` cassette
-pair for full tool-agent conversations. See [Usage & cassettes](usage-and-cassettes.md).
+**Cassette:** `Anthropic.recordChat` / `Anthropic.replayChat` mirror the `LLM`
+cassette pair for full tool-agent conversations. See [Usage & cassettes](usage-and-cassettes.md).
 
 ## The Emit effect
 
@@ -100,7 +100,7 @@ emit :: (Emit :> es) => Text -> Eff es ()
 | `runEmitList`  | Collect deltas in arrival order alongside the result (for tests). |
 
 `Emit` is orthogonal to `LLM` and `Chat`: the streaming interpreters
-(`runLLMAnthropicStream`, `runChatAnthropicStream`) carry both an `Emit` constraint
+(`Anthropic.stream`, `Anthropic.streamChat`) carry both an `Emit` constraint
 and produce the same assembled `Text`/`(Either ChatError Text)` result the
 non-streaming paths do. See [Streaming](streaming.md).
 
@@ -108,8 +108,8 @@ non-streaming paths do. See [Streaming](streaming.md).
 
 | Effect | Smart constructor | Interpreters |
 |--------|-------------------|--------------|
-| `LLM`  | `complete`        | `runLLMScripted` · `runLLMAnthropic` · `recordLLMAnthropic` · `runLLMCassette` |
-| `Chat` | `converse`        | `runChatScripted` · `runChatAnthropic` · `runChatAnthropicUsage` · `recordChatAnthropic` · `runChatCassette` |
+| `LLM`  | `complete`        | `runLLMScripted` · `Anthropic.run` · `Anthropic.record` · `Anthropic.replay` |
+| `Chat` | `converse`        | `runChatScripted` · `Anthropic.runChat` · `Anthropic.usageChat` · `Anthropic.recordChat` · `Anthropic.replayChat` |
 | `Emit` | `emit`            | `runEmitIO` · `ignoreEmit` · `runEmitList` |
 | `Tools`| `callTool`        | `runTools` (dispatch to a `[Tool es]` list) |
 
@@ -130,11 +130,11 @@ let pure_result = runEff
 
 -- live: real network
 live_result <- runEff
-  ( runLLMAnthropic cfg
+  ( Anthropic.run cfg
       (complete [Message System "Be terse.", Message User "Ping?"]) )
 ```
 
 Both lines call the same `complete`; only the interpreter at the `runEff` boundary
 differs. The same pattern applies to `runToolAgent` with `runChatScripted` vs
-`runChatAnthropic`, and to any `LlmFn` with `call`. See [The live
+`Anthropic.runChat`, and to any `Skill` with `call`. See [The live
 interpreter](live-interpreter.md) for the Anthropic-specific details.

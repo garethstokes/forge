@@ -13,25 +13,51 @@ results back — is handled by `runToolAgent`.
 
 ## Constructing a tool
 
-A `Tool es` bundles three things:
+### The type-driven constructor (recommended)
+
+The easiest way to build a tool is with the `tool` smart constructor. Define a
+`HasCodec` instance for your argument type and `tool` derives the JSON Schema for
+you, decodes the model's arguments, and surfaces decode failures as an error
+`Value` (the model's self-correction cue):
+
+```haskell
+import Crucible.Tool (tool)
+import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
+import GHC.Generics (Generic)
+
+data Loc = Loc { locCity :: Text } deriving (Show, Generic)
+instance HasCodec Loc where codec = genericCodec
+
+weather :: Tool es
+weather = tool "get_weather" (\(Loc c) -> pure (A.String ("sunny in " <> c)))
+```
+
+The schema is derived from `Loc`'s codec via `schemaValue (codec @Loc)`. The
+`Value` the model sends is decoded into a `Loc` before your handler runs; bad
+args produce an error `Value` (`"bad tool args: …"`) that the model sees as a
+`tool_result` and can recover from.
+
+### The raw constructor (escape hatch)
+
+When you need full control over the schema or want to handle the raw `Value`
+yourself, use the `Tool` constructor directly:
 
 ```haskell
 data Tool es = Tool
-  { toolName   :: ToolName
-  , toolSchema :: Value          -- JSON Schema sent as input_schema
-  , toolRun    :: Value -> Eff es Value
+  { name   :: ToolName
+  , schema :: Value          -- JSON Schema sent as input_schema
+  , run    :: Value -> Eff es Value
   }
 ```
 
-`toolName` is the string the model will use to invoke the tool. `toolSchema` is
-the JSON Schema object advertised to the model as the tool's `input_schema`; the
-model produces a `Value` conforming to that schema, and that same `Value` is
-passed to `toolRun`. `toolRun` returns an Aeson `Value` that becomes the
-`tool_result` content block fed back to the model.
+`name` is the string the model will use to invoke the tool. `schema` is the JSON
+Schema object advertised to the model as the tool's `input_schema`; the model
+produces a `Value` conforming to that schema, and that same `Value` is passed to
+`run`. `run` returns an Aeson `Value` that becomes the `tool_result` content block
+fed back to the model.
 
 The schema is plain Aeson. You can build it with `A.object` literals or derive
-it from a codec with `schemaValue :: JSONCodec a -> Value` from
-`Crucible.Codec`:
+it from a codec with `schemaValue :: JSONCodec a -> Value` from `Crucible.Codec`:
 
 ```haskell
 -- manual schema
@@ -43,11 +69,15 @@ weatherSchema = A.object
   , "required"   A..= A.toJSON [A.String "city"]
   ]
 
--- or from a codec (recommended for non-trivial inputs)
--- toolSchema = schemaValue (codec @WeatherArgs)
+weatherTool :: Tool es
+weatherTool = Tl.Tool "get_weather" weatherSchema
+  (\_ -> pure (A.String "It is 26C and sunny."))
+
+-- or derive the schema from a codec (recommended for non-trivial inputs)
+-- Tool "get_weather" (schemaValue (codec @WeatherArgs)) myHandler
 ```
 
-`toolRun` runs in the same `Eff es` stack as the agent, so it can carry any
+`run` runs in the same `Eff es` stack as the agent, so it can carry any
 effects you have wired in — IO, database access, other LLM calls.
 
 ## The tool-agent loop
@@ -99,7 +129,7 @@ The canonical demo from `app/Main.hs`:
 ```haskell
 import qualified Data.Aeson as A
 import Effectful (runEff)
-import Crucible.LLM.Anthropic (runChatAnthropicUsage, defaultAnthropicConfig)
+import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.Chat (runToolAgent)
 import qualified Crucible.Tool as Tl
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -114,7 +144,7 @@ let weatherSchema = A.object
       (\_ -> pure (A.String "It is 26C and sunny."))
 
 (toolAns, usage) <- runEff
-  ( runChatAnthropicUsage cfg
+  ( Anthropic.usageChat cfg
       (runToolAgent [weatherTool]
         "Use the tool to get the weather in Brisbane, then tell me.") )
 
@@ -123,10 +153,10 @@ case toolAns of
   Left err -> print err
 ```
 
-`runChatAnthropicUsage` discharges the `Chat` effect against the live Anthropic
+`Anthropic.usageChat` discharges the `Chat` effect against the live Anthropic
 API and returns the result alongside cumulative `Usage` — input and output
 tokens summed across every round of the tool loop. For straight results without
-token accounting, use `runChatAnthropic` instead.
+token accounting, use `Anthropic.runChat` instead.
 
 ## Listing available tools
 

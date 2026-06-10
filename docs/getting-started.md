@@ -31,20 +31,20 @@ main = do
 ```
 
 To override a field, use record update:
-`cfg { acModel = "claude-opus-4-5-20251001", acMaxTokens = 4096 }`. See
+`cfg { model = "claude-opus-4-5-20251001", maxTokens = 4096 }`. See
 [The live interpreter](live-interpreter.md) for the full `AnthropicConfig` field
 reference, timeout semantics, and retry behaviour.
 
 ## 2. A first live call
 
 The `LLM` effect exports one smart constructor: `complete :: (LLM :> es) => [Message] -> Eff es Text`. A `Message` pairs a `Role` (`System`, `User`, `Assistant`,
-or `Tool`) with the content text. Discharge the effect with `runLLMAnthropic` and
+or `Tool`) with the content text. Discharge the effect with `Anthropic.run` and
 unwrap to `IO` with `runEff`:
 
 ```haskell
 import Effectful (runEff)
 import Crucible.LLM (Message (..), Role (..), complete)
-import Crucible.LLM.Anthropic (runLLMAnthropic)
+import qualified Crucible.LLM.Anthropic as Anthropic
 
 prompt :: [Message]
 prompt =
@@ -55,21 +55,21 @@ prompt =
 main :: IO ()
 main = do
   let cfg = defaultAnthropicConfig "sk-ant-..."
-  reply <- runEff (runLLMAnthropic cfg (complete prompt))
+  reply <- runEff (Anthropic.run cfg (complete prompt))
   putStrLn reply   -- "pong"
 ```
 
-`runLLMAnthropic` creates one TLS `Manager` upfront and issues one `POST
+`Anthropic.run` creates one TLS `Manager` upfront and issues one `POST
 /v1/messages` per `complete`. The result is the first text content block in the
 response. Network or HTTP failures are thrown as `AnthropicError`; transient ones
-(429, 5xx, connection reset) are retried automatically up to `acMaxRetries` times.
+(429, 5xx, connection reset) are retried automatically up to `maxRetries` times.
 
 See [Effects](effects.md) for a full picture of the effect rows; see [The live
 interpreter](live-interpreter.md) for the wire details.
 
-## 3. A typed function
+## 3. A typed skill
 
-Instead of parsing free text yourself, declare an `LlmFn`: it binds an input codec,
+Instead of parsing free text yourself, declare a `Skill`: it binds an input codec,
 an output codec, and a task instruction into a reusable value. `call` builds the
 prompt, injects the output schema, and tolerantly decodes the reply. Start with a
 `HasCodec` instance for your output type — one `genericCodec` line covers any
@@ -85,60 +85,60 @@ import Effectful (runEff)
 import NeatInterpolation (text)
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
-import Crucible.Function (LlmFn, llmFn, call)
-import Crucible.LLM.Anthropic (runLLMAnthropic)
+import Crucible.Skill (Skill, skill, call)
+import qualified Crucible.LLM.Anthropic as Anthropic
 
 data Sentiment = Sentiment { sentLabel :: T.Text }
   deriving (Show, Generic)
 
 instance HasCodec Sentiment where codec = genericCodec
 
-classify :: LlmFn T.Text Sentiment
-classify = llmFn "classify" str codec
+classify :: Skill T.Text Sentiment
+classify = skill "classify" str codec
   (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
 
 main :: IO ()
 main = do
   let cfg = defaultAnthropicConfig "sk-ant-..."
-  result <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
+  result <- runEff (Anthropic.run cfg (call classify "I absolutely love this!"))
   case result of
     Right o  -> putStrLn (T.unpack (sentLabel o))   -- "positive"
-    Left err -> putStrLn ("decode error: " <> err)
+    Left e   -> putStrLn ("decode error: " <> e.message)
 ```
 
-`call` returns `Either String o`. On a decode failure it re-asks the model (feeding
-back the parse error) up to `fnRetries` times, which defaults to 2. The type
-constraint is only `LLM :> es`, so `call classify` runs unchanged under the
+`call` returns `Either DecodeError o`. On a decode failure it re-asks the model
+(feeding back the parse error) up to `retries` times, which defaults to 2. The
+type constraint is only `LLM :> es`, so `call classify` runs unchanged under the
 scripted interpreter in tests. See [Typed functions](typed-functions.md) for codec
 combinators, schema injection, tolerant decode, and `withRetries`.
 
 ## 4. A hermetic test
 
-`recordLLMAnthropic :: FilePath -> AnthropicConfig -> Eff (LLM:es) a -> Eff es a`
-behaves exactly like `runLLMAnthropic` but tees each reply to a cassette file (one
-JSON-encoded reply per line, appended in call order). `runLLMCassette :: FilePath ->
+`Anthropic.record :: FilePath -> AnthropicConfig -> Eff (LLM:es) a -> Eff es a`
+behaves exactly like `Anthropic.run` but tees each reply to a cassette file (one
+JSON-encoded reply per line, appended in call order). `Anthropic.replay :: FilePath ->
 Eff (LLM:es) a -> Eff es a` replays a recorded cassette: the same calls in the same
 order, no network. The smoke executable in `app/Main.hs` demonstrates both:
 
 ```haskell
-import Crucible.LLM.Anthropic (recordLLMAnthropic, runLLMCassette)
+import qualified Crucible.LLM.Anthropic as Anthropic
 
 let cassette = "/tmp/crucible-cassette.jsonl"
 writeFile cassette ""  -- fresh file
 
 -- live run: hits the network and writes the cassette
-live <- runEff (recordLLMAnthropic cassette cfg (complete prompt))
+live <- runEff (Anthropic.record cassette cfg (complete prompt))
 
 -- replay: reads the cassette, no network
-replayed <- runEff (runLLMCassette cassette (complete prompt))
+replayed <- runEff (Anthropic.replay cassette (complete prompt))
 
 -- they match
 print (live == replayed)   -- True
 ```
 
 Commit the cassette alongside your tests. The cassette is the slider: pull it toward
-`runLLMCassette` in CI, leave it at `recordLLMAnthropic` during development. A chat
-cassette (`recordChatAnthropic` / `runChatCassette`) covers the full
+`Anthropic.replay` in CI, leave it at `Anthropic.record` during development. A chat
+cassette (`Anthropic.recordChat` / `Anthropic.replayChat`) covers the full
 `Chat`/`runToolAgent` path the same way. See
 [Usage & cassettes](usage-and-cassettes.md) for the full record/replay API and the
 `Chat` variants.

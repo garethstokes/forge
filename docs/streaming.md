@@ -5,7 +5,7 @@ nav_order: 6
 
 # Streaming
 
-The standard `runLLMAnthropic` and `runChatAnthropic` interpreters wait for the
+The standard `Anthropic.run` and `Anthropic.runChat` interpreters wait for the
 complete response before returning. Streaming interpreters instead surface each
 token chunk as it arrives, so your application can print or forward partial
 output without waiting for the full generation. The assembled result and token
@@ -36,24 +36,27 @@ interpreters does not touch the rest of your effect stack.
 
 ## The streaming interpreters
 
-Two streaming interpreters live in `Crucible.LLM.Anthropic.Stream`:
+Two streaming interpreters live in `Crucible.LLM.Anthropic.Stream`, used
+qualified under the same `Anthropic` alias:
 
 ```haskell
-runLLMAnthropicStream
+import qualified Crucible.LLM.Anthropic.Stream as Anthropic
+
+Anthropic.stream
   :: (IOE :> es, Emit :> es)
   => AnthropicConfig
   -> Eff (LLM : es) a
   -> Eff es (a, Usage)
 
-runChatAnthropicStream
+Anthropic.streamChat
   :: (IOE :> es, Emit :> es)
   => AnthropicConfig
   -> Eff (Chat : es) a
   -> Eff es (a, Usage)
 ```
 
-Both behave like their non-streaming counterparts (`runLLMAnthropic`,
-`runChatAnthropic`) but emit token deltas via `Emit` as each chunk arrives from
+Both behave like their non-streaming counterparts (`Anthropic.run`,
+`Anthropic.runChat`) but emit token deltas via `Emit` as each chunk arrives from
 the server. The assembled `Text` (or `Either ChatError Text` for the Chat path)
 is returned together with cumulative `Usage` once the stream closes.
 
@@ -66,36 +69,36 @@ import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stdout)
 import Effectful (runEff)
 import Crucible.Emit (runEmitIO)
-import Crucible.LLM.Anthropic.Stream (runLLMAnthropicStream)
+import qualified Crucible.LLM.Anthropic.Stream as Anthropic
 import Crucible.LLM (complete)
 
 -- deltas are printed as they arrive; the assembled Text is in `streamed`
 (streamed, sUsage) <- runEff
   ( runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-      (runLLMAnthropicStream cfg (complete prompt)) )
+      (Anthropic.stream cfg (complete prompt)) )
 ```
 
-The tool-agent path is the same shape — substitute `runChatAnthropicStream` and
+The tool-agent path is the same shape — substitute `Anthropic.streamChat` and
 `runToolAgent`:
 
 ```haskell
-import Crucible.LLM.Anthropic.Stream (runChatAnthropicStream)
+import qualified Crucible.LLM.Anthropic.Stream as Anthropic
 import Crucible.Chat (runToolAgent)
 
 (toolStream, tUsage) <- runEff
   ( runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-      (runChatAnthropicStream cfg
+      (Anthropic.streamChat cfg
         (runToolAgent [weatherTool]
           "Use the tool to get the weather in Brisbane, then tell me.")) )
 ```
 
 During each tool-loop round the model's text reply is streamed live; tool-call
 execution itself is synchronous (the handler runs between rounds). The final
-result is returned exactly as it would be from `runChatAnthropic`.
+result is returned exactly as it would be from `Anthropic.runChat`.
 
-## Streaming and typed functions
+## Streaming and typed skills
 
-Typed functions (`call`) run under the `LLM` effect, so they compose with the
+Typed skills (`call`) run under the `LLM` effect, so they compose with the
 streaming path without changes: pass `call classify input` where you would pass
 `complete prompt`. The token chunks are emitted as they arrive; the assembled
 text is decoded through the output codec at the end. Incremental typed decoding
