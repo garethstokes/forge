@@ -11,6 +11,12 @@ source-dirs = ["src"]
 ghc-options = ["-Wall", "-XOverloadedStrings"]
 depends = ["base", "text", "time", "bytestring", "aeson", "manifest", "crucible"]
 
+[build.test.spec]
+source-dirs = ["test"]
+main = "Spec.hs"
+ghc-options = ["-XOverloadedStrings", "-lpq"]
+depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals"]
+
 [dependencies]
 
 [dependencies.manifest]
