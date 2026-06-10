@@ -17,6 +17,12 @@ main = "Spec.hs"
 ghc-options = ["-XOverloadedStrings", "-lpq"]
 depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals"]
 
+[build.exe.manifest-evals]
+source-dirs = ["app"]
+main = "Main.hs"
+ghc-options = ["-Wall", "-XOverloadedStrings", "-lpq"]
+depends = ["base", "text", "bytestring", "manifest", "manifest-evals"]
+
 [dependencies]
 
 [dependencies.manifest]
