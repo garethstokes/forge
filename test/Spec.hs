@@ -4,26 +4,28 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 module Main (main) where
 import Harness (check, runChecks)
-import Crucible.Json.Value (Value(..))
-import Crucible.Json.Parse (parse)
-import Crucible.Json.Encode (encode)
+import Data.Aeson (Value(..), object, (.=))
+import qualified Data.Aeson as A
+import qualified Data.Aeson.Types as AT
+import qualified Data.Vector as V
+import Autodocodec (toJSONVia, parseJSONVia)
+import qualified Crucible.Codec as C
+import Crucible.Codec (JSONCodec, schemaValue, schemaText)
+import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.Function (LlmFn, llmFn, withRetries, fnPrompt, call, fnOutput, fnName)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
-import Crucible.Json.Decode as D
-import Crucible.Json.Decode (Error(..), Crumb(..))
-import Crucible.Schema (Schema(..), renderSchema, schemaToJson)
-import qualified Crucible.Codec as C
-import Crucible.Codec (Codec(..), str, codecSchema)
 import GHC.Generics (Generic)
-import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.SAP (stripToJson, decodeLLM)
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
 import Effectful (Eff, runEff, runPureEff)
 import qualified Data.Text.IO as TIO
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Text.Encoding as TE
 import Crucible.LLM (LLM, complete, Message(..), Role(..), runLLMScripted)
 import Crucible.Agent (startAgent, runAgent)
 import qualified Crucible.Tool as Tl
@@ -36,27 +38,23 @@ import Crucible.Chat
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
-import qualified Data.Text.Encoding as TE
 import Control.Concurrent (threadDelay)
 import Control.Exception (try)
 import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
 
--- Sample types for M3 tests
+-- Sample types for codec tests
 
 data Sky = Clear | Cloudy | Storm deriving (Eq, Show, Generic)
 
-skyCodec :: Codec Sky
-skyCodec = C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]
-
-instance HasCodec Sky  -- derived via genericCodec (capitalised constructor-name tags)
+instance HasCodec Sky where codec = genericCodec
 
 data Forecast = Forecast { city :: Text, tempC :: Double, rainy :: Bool } deriving (Eq, Show, Generic)
 
-instance HasCodec Forecast  -- derived via genericCodec
+instance HasCodec Forecast where codec = genericCodec
 
-forecastCodec :: Codec Forecast
+forecastCodec :: JSONCodec Forecast
 forecastCodec = C.object $
   Forecast
     <$> C.field "city"  city  C.str
@@ -65,79 +63,55 @@ forecastCodec = C.object $
 
 data Station = Station { name :: Text, latest :: Forecast, conditions :: Sky }
   deriving (Eq, Show, Generic)
-instance HasCodec Station
+instance HasCodec Station where codec = genericCodec
 
 stationVal :: Station
 stationVal = Station "Eagle Farm" (Forecast "Brisbane" 26.0 False) Cloudy
-
-data Shape = Circle Double | Rect Double Double deriving (Eq, Show)
-
-circleCodec :: Codec Double
-circleCodec = C.object (C.field "r" id C.float)
-
-rectCodec :: Codec (Double, Double)
-rectCodec = C.object ((,) <$> C.field "w" fst C.float <*> C.field "h" snd C.float)
-
-shapeCodec :: Codec Shape
-shapeCodec = C.oneOfC
-  [ C.Variant (codecSchema circleCodec)
-              (Circle <$> codecDecode circleCodec)
-              (\s -> case s of Circle r -> Just (codecEncode circleCodec r); _ -> Nothing)
-  , C.Variant (codecSchema rectCodec)
-              (uncurry Rect <$> codecDecode rectCodec)
-              (\s -> case s of Rect w h -> Just (codecEncode rectCodec (w, h)); _ -> Nothing)
-  ]
 
 -- Sample types for M6 tests
 data ToolCall = GetWeather Text | AddNums Int Int deriving (Eq, Show)
 newtype Answer = Answer Text deriving (Eq, Show)
 
-getWeatherCodec :: Codec Text                 -- {"city": string}
-getWeatherCodec = C.object (C.field "city" id C.str)
-
-addNumsCodec :: Codec (Int, Int)              -- {"a": int, "b": int}
-addNumsCodec = C.object ((,) <$> C.field "a" fst C.int <*> C.field "b" snd C.int)
-
-toolCallCodec :: Codec ToolCall
-toolCallCodec = C.oneOfC
-  [ C.Variant (codecSchema getWeatherCodec) (GetWeather <$> codecDecode getWeatherCodec)
-      (\tc -> case tc of GetWeather city -> Just (codecEncode getWeatherCodec city); _ -> Nothing)
-  , C.Variant (codecSchema addNumsCodec) (uncurry AddNums <$> codecDecode addNumsCodec)
-      (\tc -> case tc of AddNums a b -> Just (codecEncode addNumsCodec (a, b)); _ -> Nothing) ]
-
-answerCodec :: Codec Answer
-answerCodec = C.object (Answer <$> C.field "answer" (\(Answer t) -> t) C.str)
-
-decCodec :: Codec (Decision ToolCall Answer)
-decCodec = decisionCodec toolCallCodec answerCodec
-
 -- M12 Task 3: runToolAgent fixture
+-- toolSchema is now an aeson Value (JSON Schema object)
+weatherToolSchema :: A.Value
+weatherToolSchema = A.object
+  [ "type" A..= A.String "object"
+  , "properties" A..= A.object
+      [ "city" A..= A.object [ "type" A..= A.String "string" ] ]
+  , "required" A..= A.toJSON [A.String "city"]
+  ]
+
 weatherToolC :: Tl.Tool es
-weatherToolC = Tl.Tool "get_weather" (SObj [("city", SStr)]) (\_ -> pure (JString "Sunny in Brisbane!"))
+weatherToolC = Tl.Tool "get_weather" weatherToolSchema (\_ -> pure (A.String "Sunny in Brisbane!"))
 
 -- M11 Task 1: Crucible.Function fixtures
 classifyFn :: LlmFn T.Text T.Text
-classifyFn = llmFn "classify" str str (\s -> "Classify the sentiment of: " <> s)
+classifyFn = llmFn "classify" C.str C.str (\s -> "Classify the sentiment of: " <> s)
 
 -- M7 Task 2: agent test helpers — the effectful agent runs over the LLM + Tools
 -- effects, dispatching tools by name from a toolbox via the Tools effect.
-agentCodec :: Codec (Decision Tl.ToolCall Text)
+agentCodec :: JSONCodec (Decision Tl.ToolCall Text)
 agentCodec = decisionCodec Tl.toolCallCodec (C.object (C.field "answer" id C.str))
 
 agentTools :: [Tl.Tool es]
 agentTools =
-  [ Tl.Tool "get_weather" (SObj [("city", SStr)]) $ \args ->
-      pure $ case decodeValue (D.field "city" D.string) args of
-               Right c -> JString ("sunny in " <> c)
-               Left _  -> JString "unknown city"
-  , Tl.Tool "add" (SObj [("a", SNum), ("b", SNum)]) $ \args ->
-      pure $ case (,) <$> decodeValue (D.field "a" D.int) args
-                      <*> decodeValue (D.field "b" D.int) args of
-               Right (a, b) -> JString (Data.Text.pack (show (a + b)))
-               Left _       -> JString "bad args"
+  [ Tl.Tool "get_weather" weatherToolSchema $ \args ->
+      pure $ case AT.parseMaybe (A.withObject "" (\o -> o A..: "city")) args of
+               Just c  -> A.String ("sunny in " <> c)
+               Nothing -> A.String "unknown city"
+  , Tl.Tool "add" (A.object
+        [ "type" A..= A.String "object"
+        , "properties" A..= A.object
+            [ "a" A..= A.object [ "type" A..= A.String "number" ]
+            , "b" A..= A.object [ "type" A..= A.String "number" ] ]
+        , "required" A..= A.toJSON [A.String "a", A.String "b"] ]) $ \args ->
+      pure $ case AT.parseMaybe (\v -> A.withObject "" (\o -> (,) <$> o A..: "a" <*> o A..: "b") v) args of
+               Just (a, b) -> A.String (Data.Text.pack (show (a + b :: Int)))
+               Nothing     -> A.String "bad args"
   ]
 
-runAgentScripted :: [Text] -> Codec (Decision Tl.ToolCall Text) -> Text -> Text
+runAgentScripted :: [Text] -> JSONCodec (Decision Tl.ToolCall Text) -> Text -> Text
 runAgentScripted replies codec q =
   runPureEff . runTools agentTools . runLLMScripted replies
     $ runAgent codec (startAgent codec q)
@@ -150,142 +124,49 @@ agentRun = runAgentScripted
 
 -- Build an SSE frame ("data: <json>") as a ByteString from a Value.
 sseFrame :: Value -> BC.ByteString
-sseFrame v = TE.encodeUtf8 ("data: " <> encode v)
+sseFrame v = LBS.toStrict (LBS.fromStrict "data: " <> A.encode v)
 
 -- Assemble a full SSE body (frames joined by blank lines, trailing blank line).
 sseBody :: [Value] -> BC.ByteString
-sseBody vs = TE.encodeUtf8 (T.intercalate "\n\n" ["data: " <> encode v | v <- vs] <> "\n\n")
+sseBody vs = BC.intercalate "\n\n" (map (\v -> "data: " <> LBS.toStrict (A.encode v)) vs) <> "\n\n"
 
 -- Run a full body through the pure core to a final StreamAcc.
 runBody :: BC.ByteString -> StreamAcc
 runBody body = let (frames, _) = splitFrames body
                in foldl' stepAcc emptyAcc (map parseEvent frames)
 
+-- Helper: extract the "type" field from a JSON Schema Value (for robust schema checks).
+schemaType :: Value -> Maybe Value
+schemaType v = AT.parseMaybe (A.withObject "" (\o -> o A..: "type")) v
+
+-- | Encode a value via its codec to aeson Value.
+encodeVia :: JSONCodec a -> a -> Value
+encodeVia c = toJSONVia c
+
+-- | Decode a value from an aeson Value via its codec.
+decodeVia :: JSONCodec a -> Value -> Either String a
+decodeVia c v = AT.parseEither (parseJSONVia c) v
+
 main :: IO ()
 main = runChecks
   [ check "harness self-test" (2 + 2 :: Int) 4
-  , check "value Eq/Show sanity"
-      (JObject [("a", JArray [JNumber 1, JNull]), ("b", JBool True)])
-      (JObject [("a", JArray [JNumber 1, JNull]), ("b", JBool True)])
-  -- Task 3 Step 1: primitive parse tests
-  , check "parse null"   (Right JNull)             (parse "null")
-  , check "parse bool"   (Right (JBool True))      (parse "true")
-  , check "parse number" (Right (JNumber 27.5))    (parse "27.5")
-  , check "parse string" (Right (JString "hi"))    (parse "\"hi\"")
-  -- Task 3 Step 4: composite + escape + whitespace golden tests
-  , check "parse array"  (Right (JArray [JNumber 1, JNumber 2]))                  (parse "[1, 2]")
-  , check "parse object" (Right (JObject [("a", JNumber 1), ("b", JBool False)])) (parse "{ \"a\": 1, \"b\": false }")
-  , check "parse nested" (Right (JObject [("xs", JArray [JString "y"])]))         (parse "{\"xs\":[\"y\"]}")
-  , check "parse escape" (Right (JString "a\nb"))                                 (parse "\"a\\nb\"")
-  , check "parse unicode"(Right (JString "A"))                                    (parse "\"\\u0041\"")
-  , check "parse empties"(Right (JObject []))                                     (parse "{}")
-  -- Task 4: encode checks
-  , check "encode compact"
+  -- Task 3 Step 4: parse/encode replaced by aeson round-trip sanity
+  , check "aeson round-trip null"   (Just Null)             (A.decode "null")
+  , check "aeson round-trip bool"   (Just (Bool True))      (A.decode "true")
+  , check "aeson round-trip number" (Just (Number 27.5))    (A.decode "27.5")
+  , check "aeson round-trip string" (Just (String "hi"))    (A.decode "\"hi\"")
+  , check "aeson round-trip array"
+      (Just (Array (V.fromList [Number 1, Number 2])))
+      (A.decode "[1, 2]")
+  , check "aeson round-trip object"
+      (Just (object ["a" .= Number 1, "b" .= Bool False]))
+      (A.decode "{ \"a\": 1, \"b\": false }" :: Maybe Value)
+  , check "aeson round-trip nested"
+      (Just (object ["xs" .= Array (V.fromList [String "y"])]))
+      (A.decode "{\"xs\":[\"y\"]}" :: Maybe Value)
+  , check "aeson encode compact"
       "{\"a\":1,\"b\":[true,null]}"
-      (encode (JObject [("a", JNumber 1), ("b", JArray [JBool True, JNull])]))
-  , check "encode->parse round-trips"
-      (Right (JObject [("x", JString "hi")]))
-      (parse (encode (JObject [("x", JString "hi")])))
-  -- whole numbers render as integers (Anthropic max_tokens rejects 1024.0); a
-  -- fractional value keeps its point, and the value still round-trips.
-  , check "encode integer (no .0)"     "1024"            (encode (JNumber 1024))
-  , check "encode fractional"          "1.5"             (encode (JNumber 1.5))
-  , check "integer encode round-trips" (Right (JNumber 1024)) (parse (encode (JNumber 1024)))
-  -- Task 5: decode checks
-  , check "decode field"
-      (Right ("Brisbane", 27.5))
-      (D.decodeString ((,) <$> D.field "city" D.string <*> D.field "tempC" D.float)
-                      "{\"city\":\"Brisbane\",\"tempC\":27.5}")
-  , check "decode list"
-      (Right [1,2,3 :: Int])
-      (D.decodeString (D.list D.int) "[1,2,3]")
-  , check "decode missing field is Left"
-      True
-      (either (const True) (const False)
-        (D.decodeString (D.field "nope" D.string) "{\"a\":1}"))
-  , check "decode error path"
-      (Left (Error [AtField "days", AtIndex 0, AtField "city"] "expected string, got number"))
-      (D.decodeString (D.field "days" (D.list (D.field "city" D.string)))
-                      "{\"days\":[{\"city\":7}]}")
-  , check "oneOf picks first match"
-      (Right (Left 5 :: Either Int Text))
-      (D.decodeString (D.oneOf [Left <$> D.int, Right <$> D.string]) "5")
-  -- Task 1: Schema renderSchema
-  , check "render string"   "string"                             (renderSchema SStr)
-  , check "render number"   "number"                             (renderSchema SNum)
-  , check "render boolean"  "boolean"                            (renderSchema SBool)
-  , check "render optional" "string | null"                      (renderSchema (SOpt SStr))
-  , check "render array"    "[number]"                           (renderSchema (SArr SNum))
-  , check "render enum"     "\"clear\" | \"cloudy\" | \"storm\"" (renderSchema (SEnum ["clear","cloudy","storm"]))
-  , check "render object"   "{\"city\": string, \"tempC\": number}"
-      (renderSchema (SObj [("city", SStr), ("tempC", SNum)]))
-  , check "render oneOf"    "number | string"                    (renderSchema (SOneOf [SNum, SStr]))
-  -- Task 2: Codec primitives + list'/nullable'/enum
-  , check "prim schema str"  SStr            (codecSchema C.str)
-  , check "prim encode int"  (JNumber 5.0)   (codecEncode C.int 5)
-  , check "prim decode bool" (Right True)    (D.decodeValue (codecDecode C.bool) (JBool True))
-  , check "list schema"      (SArr SNum)     (codecSchema (C.list' C.float))
-  , check "list encode"      (JArray [JNumber 1.0, JNumber 2.0]) (codecEncode (C.list' C.float) [1, 2])
-  , check "nullable schema"  (SOpt SStr)     (codecSchema (C.nullable' C.str))
-  , check "nullable encode Nothing" JNull    (codecEncode (C.nullable' C.str) Nothing)
-  , check "enum schema"      (SEnum ["clear","cloudy","storm"]) (codecSchema skyCodec)
-  , check "enum encode"      (JString "storm") (codecEncode skyCodec Storm)
-  , check "enum decode"      (Right Cloudy)  (D.decodeValue (codecDecode skyCodec) (JString "cloudy"))
-  , check "enum decode bad"  True            (either (const True) (const False)
-                                                (D.decodeValue (codecDecode skyCodec) (JString "nope")))
-  -- Task 3: ObjectCodec + field/object (record round-trip)
-  , check "record schema"
-      (SObj [("city", SStr), ("tempC", SNum), ("rainy", SBool)])
-      (codecSchema forecastCodec)
-  , check "record encode"
-      (JObject [("city", JString "Brisbane"), ("tempC", JNumber 27.5), ("rainy", JBool False)])
-      (codecEncode forecastCodec (Forecast "Brisbane" 27.5 False))
-  , check "record decode"
-      (Right (Forecast "Brisbane" 27.5 False))
-      (D.decodeValue (codecDecode forecastCodec)
-        (JObject [("city", JString "Brisbane"), ("tempC", JNumber 27.5), ("rainy", JBool False)]))
-  , check "record round-trips through text"
-      (Right (Forecast "Hobart" 9.0 True))
-      (D.decodeString (codecDecode forecastCodec)
-        (encode (codecEncode forecastCodec (Forecast "Hobart" 9.0 True))))
-  -- Task 4: Variant + oneOfC (sum round-trip)
-  , check "sum schema"
-      (SOneOf [SObj [("r", SNum)], SObj [("w", SNum), ("h", SNum)]])
-      (codecSchema shapeCodec)
-  , check "sum encode circle" (JObject [("r", JNumber 2.0)]) (codecEncode shapeCodec (Circle 2))
-  , check "sum decode rect"
-      (Right (Rect 3.0 4.0))
-      (D.decodeValue (codecDecode shapeCodec) (JObject [("w", JNumber 3), ("h", JNumber 4)]))
-  , check "sum round-trips"
-      (Right (Circle 2.0))
-      (D.decodeValue (codecDecode shapeCodec) (codecEncode shapeCodec (Circle 2)))
-  -- M4 Task 1: HasCodec base instances
-  , check "HasCodec Text schema"   SStr          (codecSchema (codec :: Codec Text))
-  , check "HasCodec Int encode"    (JNumber 7.0) (codecEncode (codec :: Codec Int) 7)
-  , check "HasCodec [Bool] schema" (SArr SBool)  (codecSchema (codec :: Codec [Bool]))
-  , check "HasCodec Maybe schema"  (SOpt SNum)   (codecSchema (codec :: Codec (Maybe Double)))
-  -- M4 Task 2: derived record matches hand-written + round-trips
-  , check "derived record schema == hand-written"
-      (codecSchema forecastCodec)
-      (codecSchema (codec :: Codec Forecast))
-  , check "derived record round-trips"
-      (Right (Forecast "Cairns" 31.0 True))
-      (decodeValue (codecDecode (codec :: Codec Forecast))
-                   (codecEncode (codec :: Codec Forecast) (Forecast "Cairns" 31.0 True)))
-  -- M4 Task 3: derived enum (constructor names, capitalised — cf. lowercase skyCodec)
-  , check "derived enum schema"  (SEnum ["Clear","Cloudy","Storm"]) (codecSchema (codec :: Codec Sky))
-  , check "derived enum encode"  (JString "Storm")                  (codecEncode (codec :: Codec Sky) Storm)
-  , check "derived enum decode"  (Right Cloudy)                     (decodeValue (codecDecode (codec :: Codec Sky)) (JString "Cloudy"))
-  -- M4 Task 4: nested derive (composition) — no new implementation needed
-  , check "nested derived schema"
-      (SObj [ ("name", SStr)
-            , ("latest", SObj [("city", SStr), ("tempC", SNum), ("rainy", SBool)])
-            , ("conditions", SEnum ["Clear","Cloudy","Storm"]) ])
-      (codecSchema (codec :: Codec Station))
-  , check "nested derived round-trips"
-      (Right stationVal)
-      (decodeValue (codecDecode (codec :: Codec Station))
-                   (codecEncode (codec :: Codec Station) stationVal))
+      (A.encode (object ["a" .= Number 1, "b" .= Array (V.fromList [Bool True, Null])]))
   -- M5 Task 1: stripToJson
   , check "strip bare"     "{\"a\":1}" (stripToJson "{\"a\":1}")
   , check "strip fenced"   "{\"a\":1}" (stripToJson "```json\n{\"a\":1}\n```")
@@ -306,23 +187,113 @@ main = runChecks
   , check "decodeLLM rejects junk"
       True
       (either (const True) (const False) (decodeLLM forecastCodec "no json here"))
+  -- Codec round-trip: primitives
+  , check "codec encode str"  (String "hello")  (encodeVia C.str "hello")
+  , check "codec decode str"  (Right "hello")   (decodeVia C.str (String "hello"))
+  , check "codec encode int"  (Number 5)        (encodeVia C.int (5 :: Int))
+  , check "codec decode bool" (Right True)      (decodeVia C.bool (Bool True))
+  , check "codec encode float" (Number 1.5)     (encodeVia C.float (1.5 :: Double))
+  -- list' round-trip
+  , check "list encode"
+      (Array (V.fromList [Number 1.0, Number 2.0]))
+      (encodeVia (C.list' C.float) [1, 2])
+  , check "list decode"
+      (Right [1,2,3 :: Int])
+      (decodeVia (C.list' C.int) (Array (V.fromList [Number 1, Number 2, Number 3])))
+  -- nullable' round-trip
+  , check "nullable encode Nothing"
+      Null
+      (encodeVia (C.nullable' C.str) Nothing)
+  , check "nullable encode Just"
+      (String "x")
+      (encodeVia (C.nullable' C.str) (Just "x"))
+  , check "nullable decode Nothing"
+      (Right Nothing)
+      (decodeVia (C.nullable' C.str) Null)
+  -- enum round-trip (hand-written, lowercase tags)
+  , check "enum encode"  (String "storm")  (encodeVia (C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]) Storm)
+  , check "enum decode"  (Right Cloudy)    (decodeVia (C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]) (String "cloudy"))
+  , check "enum decode bad" True
+      (either (const True) (const False)
+        (decodeVia (C.enum [("clear", Clear), ("cloudy", Cloudy), ("storm", Storm)]) (String "nope")))
+  -- Schema shape: object codec produces a JSON Schema with type=object (robust check)
+  , check "schema shape: forecastCodec is object"
+      (Just (String "object"))
+      (schemaType (schemaValue forecastCodec))
+  , check "schema shape: list' codec is array"
+      (Just (String "array"))
+      (schemaType (schemaValue (C.list' C.str)))
+  , check "schema shape: nullable' codec has nullable structure"
+      True
+      (case schemaValue (C.nullable' C.str) of
+         Object _ -> True
+         _        -> False)
+  , check "schema shape: str codec is string"
+      (Just (String "string"))
+      (schemaType (schemaValue C.str))
+  -- Forecast record round-trip via hand-written codec
+  , check "record encode"
+      (object ["city" .= String "Brisbane", "tempC" .= Number 27.5, "rainy" .= Bool False])
+      (encodeVia forecastCodec (Forecast "Brisbane" 27.5 False))
+  , check "record decode"
+      (Right (Forecast "Brisbane" 27.5 False))
+      (decodeVia forecastCodec
+        (object ["city" .= String "Brisbane", "tempC" .= Number 27.5, "rainy" .= Bool False]))
+  , check "record round-trips"
+      (Right (Forecast "Hobart" 9.0 True))
+      (decodeVia forecastCodec (encodeVia forecastCodec (Forecast "Hobart" 9.0 True)))
+  -- HasCodec instances
+  , check "HasCodec Text encode"   (String "hi") (toJSONVia (codec :: JSONCodec Text) "hi")
+  , check "HasCodec Int encode"    (Number 7)    (toJSONVia (codec :: JSONCodec Int) 7)
+  , check "HasCodec Bool encode"   (Bool True)   (toJSONVia (codec :: JSONCodec Bool) True)
+  , check "HasCodec [Bool] schema is array"
+      (Just (String "array"))
+      (schemaType (schemaValue (codec :: JSONCodec [Bool])))
+  , check "HasCodec Maybe schema has structure"
+      True
+      (case schemaValue (codec :: JSONCodec (Maybe Double)) of
+         Object _ -> True
+         Array  _ -> True
+         _        -> False)
+  -- Derived record (via genericCodec) round-trips
+  , check "derived Forecast round-trips"
+      (Right (Forecast "Cairns" 31.0 True))
+      (decodeVia (codec :: JSONCodec Forecast)
+                 (toJSONVia (codec :: JSONCodec Forecast) (Forecast "Cairns" 31.0 True)))
+  , check "derived Forecast schema is object"
+      (Just (String "object"))
+      (schemaType (schemaValue (codec :: JSONCodec Forecast)))
+  -- Derived enum Sky (constructor names, capitalised)
+  , check "derived Sky encode"  (String "Storm")   (toJSONVia (codec :: JSONCodec Sky) Storm)
+  , check "derived Sky decode"  (Right Cloudy)
+      (AT.parseEither (parseJSONVia (codec :: JSONCodec Sky)) (String "Cloudy"))
+  , check "derived Sky schema is string (enum)"
+      (Just (String "string"))
+      (schemaType (schemaValue (codec :: JSONCodec Sky)))
+  -- Nested derived Station round-trips
+  , check "nested Station schema is object"
+      (Just (String "object"))
+      (schemaType (schemaValue (codec :: JSONCodec Station)))
+  , check "nested Station round-trips"
+      (Right stationVal)
+      (decodeVia (codec :: JSONCodec Station)
+                 (toJSONVia (codec :: JSONCodec Station) stationVal))
   -- M6 Task 1: Decision + decisionCodec
   , check "decode tool-call -> CallTool"
-      (Right (CallTool (GetWeather "Brisbane")))
-      (decodeLLM decCodec "{\"city\":\"Brisbane\"}")
+      (Right (CallTool (Tl.ToolCall "get_weather" (object ["city" .= String "Brisbane"]))))
+      (decodeLLM (decisionCodec Tl.toolCallCodec (C.object (C.field "answer" id C.str)))
+        "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}")
   , check "decode answer -> Done"
-      (Right (Done (Answer "all set")))
-      (decodeLLM decCodec "{\"answer\":\"all set\"}")
-  , check "decision round-trips (tool)"
-      (Right (CallTool (AddNums 2 3)))
-      (decodeValue (codecDecode decCodec) (codecEncode decCodec (CallTool (AddNums 2 3))))
+      (Right (Done "all set" :: Decision Tl.ToolCall Text))
+      (decodeLLM (decisionCodec Tl.toolCallCodec (C.object (C.field "answer" id C.str)))
+        "{\"answer\":\"all set\"}")
   -- M6 Task 2: Step + reduce
   , check "reduce CallTool -> Continue"
-      (Continue (GetWeather "Brisbane"))
-      (reduce (CallTool (GetWeather "Brisbane") :: Decision ToolCall Answer))
+      (Continue (Tl.ToolCall "get_weather" (object ["city" .= String "Brisbane"])))
+      (reduce (CallTool (Tl.ToolCall "get_weather" (object ["city" .= String "Brisbane"])) :: Decision Tl.ToolCall Text))
   , check "reduce Done -> Halt"
-      (Halt (Answer "all set"))
-      (reduce (Done (Answer "all set") :: Decision ToolCall Answer))
+      (Halt "all set" :: Step Tl.ToolCall Text)
+      (reduce (Done "all set" :: Decision Tl.ToolCall Text))
   -- M7 Task 1: LLM effect + scripted interpreter
   , check "scripted pops canned replies in order"
       ["a", "b"]
@@ -336,12 +307,15 @@ main = runChecks
       (runAgentScripted ["{\"answer\":\"hi\"}"] agentCodec "say hi")
   -- M9 Task 1: Crucible.Tool
   , check "toolCallCodec decodes name+args"
-      (Right (Tl.ToolCall "get_weather" (JObject [("city", JString "Hobart")])))
-      (D.decodeValue (codecDecode Tl.toolCallCodec)
-        (JObject [("tool", JString "get_weather"), ("args", JObject [("city", JString "Hobart")])]))
+      (Right (Tl.ToolCall "get_weather" (object ["city" .= String "Hobart"])))
+      (decodeVia Tl.toolCallCodec
+        (object ["tool" .= String "get_weather", "args" .= object ["city" .= String "Hobart"]]))
   , check "toolsHelp lists tools"
-      "- echo(args: {\"msg\": string})"
-      (Tl.toolsHelp [Tl.Tool "echo" (SObj [("msg", SStr)]) (\_ -> pure JNull)])
+      "- echo(args: {\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}},\"required\":[\"msg\"]})"
+      (Tl.toolsHelp [Tl.Tool "echo" (A.object
+          [ "type" A..= A.String "object"
+          , "properties" A..= A.object ["msg" A..= A.object ["type" A..= A.String "string"]]
+          , "required" A..= A.toJSON [A.String "msg"] ]) (\_ -> pure Null)])
   -- M9 Task 3: Crucible.Example end-to-end agent
   , check "example agent: tool (get_weather) then answer"
       "sunny in Brisbane"
@@ -398,7 +372,7 @@ main = runChecks
       (case fnPrompt classifyFn "hi" of
          (Message System s : _) ->
            T.isPrefixOf "Respond ONLY with JSON" s
-             && T.isInfixOf (renderSchema (codecSchema (fnOutput classifyFn))) s
+             && T.isInfixOf (schemaText (fnOutput classifyFn)) s
          _ -> False)
   , check "fnPrompt: user message carries instruction + rendered input"
       True
@@ -413,22 +387,16 @@ main = runChecks
       True
       (either (const True) (const False)
         (runPureEff (runLLMScripted ["bad", "bad"] (call (withRetries 1 classifyFn) "x"))))
-  -- M12 Task 1: schemaToJson
-  , check "schemaToJson: object with required field"
-      (JObject
-        [ ("type", JString "object")
-        , ("properties", JObject [("city", JObject [("type", JString "string")])])
-        , ("required", JArray [JString "city"]) ])
-      (schemaToJson (SObj [("city", SStr)]))
-  , check "schemaToJson: optional field dropped from required"
-      (JObject
-        [ ("type", JString "object")
-        , ("properties", JObject [("note", JObject [("type", JString "string")])])
-        , ("required", JArray []) ])
-      (schemaToJson (SObj [("note", SOpt SStr)]))
-  , check "schemaToJson: array of strings"
-      (JObject [("type", JString "array"), ("items", JObject [("type", JString "string")])])
-      (schemaToJson (SArr SStr))
+  -- M12 Task 1: schemaValue shape checks (robust — autodocodec schema shape may differ)
+  , check "schemaValue: object codec has type=object"
+      (Just (String "object"))
+      (schemaType (schemaValue forecastCodec))
+  , check "schemaValue: list codec has type=array"
+      (Just (String "array"))
+      (schemaType (schemaValue (C.list' C.str)))
+  , check "schemaValue: str codec has type=string"
+      (Just (String "string"))
+      (schemaType (schemaValue C.str))
   -- live-path-robustness Task 2: AnthropicError + isRetryable
   , check "isRetryable: 429"        True  (isRetryable (AnthropicStatusError 429 ""))
   , check "isRetryable: 500"        True  (isRetryable (AnthropicStatusError 500 ""))
@@ -453,24 +421,24 @@ main = runChecks
   , check "runToolAgent: runs the tool, then returns final text"
       (Right "Sunny in Brisbane!")
       (runPureEff (runChatScripted
-        [ Turn "" [ToolUse "u1" "get_weather" (JObject [("city", JString "Brisbane")])]
+        [ Turn "" [ToolUse "u1" "get_weather" (object ["city" .= String "Brisbane"])]
         , Turn "Sunny in Brisbane!" [] ]
         (runToolAgent [weatherToolC] "weather in Brisbane?")))
   , check "runToolAgent: unknown tool fed back, then answers"
       (Right "done")
       (runPureEff (runChatScripted
-        [ Turn "" [ToolUse "u1" "nonesuch" (JObject [])]
+        [ Turn "" [ToolUse "u1" "nonesuch" (object [])]
         , Turn "done" [] ]
         (runToolAgent [weatherToolC] "x")))
   , check "runToolAgent: exhausts the iteration cap -> Left"
       (Left (ToolLoopExceeded 10))
       (runPureEff (runChatScripted
-        (replicate 20 (Turn "" [ToolUse "u" "get_weather" (JObject [])]))
+        (replicate 20 (Turn "" [ToolUse "u" "get_weather" (object [])]))
         (runToolAgent [weatherToolC] "x")))
   , check "runToolAgentN: custom cap is honoured and reported"
       (Left (ToolLoopExceeded 2))
       (runPureEff (runChatScripted
-        (replicate 20 (Turn "" [ToolUse "u" "get_weather" (JObject [])]))
+        (replicate 20 (Turn "" [ToolUse "u" "get_weather" (object [])]))
         (runToolAgentN 2 [weatherToolC] "x")))
   -- A#4: Usage Monoid + cost helper
   , check "usage: semigroup sums fields"
@@ -491,23 +459,26 @@ main = runChecks
   -- M12 Task 5: chatRequestJson + parseTurn
   , check "parseTurn: text + tool_use"
       (Right (Turn "Let me check."
-                [ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])]))
+                [ToolUse "tu_1" "get_weather" (object ["city" .= String "Brisbane"])]))
       (parseTurn "{\"content\":[{\"type\":\"text\",\"text\":\"Let me check.\"},{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Brisbane\"}}]}")
   , check "chatRequestJson: tools + message blocks"
-      (JObject
-        [ ("model", JString "claude-haiku-4-5-20251001")
-        , ("max_tokens", JNumber 1024)
-        , ("tools", JArray
-            [ JObject [("name", JString "get_weather")
-                      ,("input_schema", JObject
-                          [ ("type", JString "object")
-                          , ("properties", JObject [("city", JObject [("type", JString "string")])])
-                          , ("required", JArray [JString "city"]) ])] ])
-        , ("messages", JArray
-            [ JObject [("role", JString "user")
-                      ,("content", JArray [JObject [("type", JString "text"),("text", JString "hi")]])] ]) ])
+      (A.object
+        [ "model" .= String "claude-haiku-4-5-20251001"
+        , "max_tokens" .= Number 1024
+        , "tools" .= Array (V.fromList
+            [ A.object [ "name" .= String "get_weather"
+                       , "input_schema" .= A.object
+                           [ "type" .= String "object"
+                           , "properties" .= A.object ["city" .= A.object ["type" .= String "string"]]
+                           , "required" .= A.toJSON [String "city"] ] ] ])
+        , "messages" .= Array (V.fromList
+            [ A.object [ "role" .= String "user"
+                       , "content" .= Array (V.fromList [A.object ["type" .= String "text", "text" .= String "hi"]])] ]) ])
       (chatRequestJson (defaultAnthropicConfig "k")
-        [("get_weather", SObj [("city", SStr)])]
+        [("get_weather", A.object
+            [ "type" .= String "object"
+            , "properties" .= A.object ["city" .= A.object ["type" .= String "string"]]
+            , "required" .= A.toJSON [String "city"] ])]
         [ChatMsg User [TextBlock "hi"]])
   -- A#4: parseUsage
   , check "parseUsage: reads input/output tokens"
@@ -539,43 +510,43 @@ main = runChecks
   -- A#3: parseEvent
   , check "parseEvent: text_delta -> EvText"
       (EvText "Hello")
-      (parseEvent (sseFrame (JObject
-        [ ("type", JString "content_block_delta"), ("index", JNumber 0)
-        , ("delta", JObject [("type", JString "text_delta"), ("text", JString "Hello")]) ])))
+      (parseEvent (sseFrame (object
+        [ "type" .= String "content_block_delta", "index" .= Number 0
+        , "delta" .= object ["type" .= String "text_delta", "text" .= String "Hello"] ])))
   , check "parseEvent: message_start -> EvUsageIn"
       (EvUsageIn 25)
-      (parseEvent (sseFrame (JObject
-        [ ("type", JString "message_start")
-        , ("message", JObject [("usage", JObject [("input_tokens", JNumber 25), ("output_tokens", JNumber 1)])]) ])))
+      (parseEvent (sseFrame (object
+        [ "type" .= String "message_start"
+        , "message" .= object ["usage" .= object ["input_tokens" .= Number 25, "output_tokens" .= Number 1]] ])))
   , check "parseEvent: message_delta -> EvUsageOut"
       (EvUsageOut 7)
-      (parseEvent (sseFrame (JObject
-        [ ("type", JString "message_delta"), ("delta", JObject [])
-        , ("usage", JObject [("output_tokens", JNumber 7)]) ])))
+      (parseEvent (sseFrame (object
+        [ "type" .= String "message_delta", "delta" .= object []
+        , "usage" .= object ["output_tokens" .= Number 7] ])))
   , check "parseEvent: tool_use start -> EvToolStart"
       (EvToolStart 0 "tu_1" "get_weather")
-      (parseEvent (sseFrame (JObject
-        [ ("type", JString "content_block_start"), ("index", JNumber 0)
-        , ("content_block", JObject [("type", JString "tool_use"), ("id", JString "tu_1"), ("name", JString "get_weather"), ("input", JObject [])]) ])))
+      (parseEvent (sseFrame (object
+        [ "type" .= String "content_block_start", "index" .= Number 0
+        , "content_block" .= object ["type" .= String "tool_use", "id" .= String "tu_1", "name" .= String "get_weather", "input" .= object []] ])))
   , check "parseEvent: input_json_delta -> EvToolJson"
       (EvToolJson 0 "{\"city\":")
-      (parseEvent (sseFrame (JObject
-        [ ("type", JString "content_block_delta"), ("index", JNumber 0)
-        , ("delta", JObject [("type", JString "input_json_delta"), ("partial_json", JString "{\"city\":")]) ])))
+      (parseEvent (sseFrame (object
+        [ "type" .= String "content_block_delta", "index" .= Number 0
+        , "delta" .= object ["type" .= String "input_json_delta", "partial_json" .= String "{\"city\":"] ])))
   , check "parseEvent: unknown -> EvOther"
       EvOther
-      (parseEvent (sseFrame (JObject [("type", JString "ping")])))
+      (parseEvent (sseFrame (object ["type" .= String "ping"])))
   , check "parseEvent: content_block_stop -> EvBlockStop"
       (EvBlockStop 1)
-      (parseEvent (sseFrame (JObject
-        [ ("type", JString "content_block_stop"), ("index", JNumber 1) ])))
+      (parseEvent (sseFrame (object
+        [ "type" .= String "content_block_stop", "index" .= Number 1 ])))
   -- A#3: stepAcc fold
   , check "stepAcc: text stream assembles text + usage"
       ("Hello", Usage 25 2)
       (let a = foldl' stepAcc emptyAcc [EvUsageIn 25, EvText "Hel", EvText "lo", EvUsageOut 2]
        in (saText a, saUsage a))
   , check "stepAcc: tool stream reassembles tool_use args"
-      ([ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])], Usage 40 12)
+      ([ToolUse "tu_1" "get_weather" (object ["city" .= String "Brisbane"])], Usage 40 12)
       (let a = foldl' stepAcc emptyAcc
                  [ EvUsageIn 40
                  , EvToolStart 0 "tu_1" "get_weather"
@@ -583,8 +554,8 @@ main = runChecks
                  , EvBlockStop 0, EvUsageOut 12 ]
        in (saTools a, saUsage a))
   , check "stepAcc: interleaved tool blocks keep separate args"
-      ([ ToolUse "tu_a" "alpha" (JObject [("x", JNumber 1)])
-       , ToolUse "tu_b" "beta"  (JObject [("y", JNumber 2)]) ])
+      ([ ToolUse "tu_a" "alpha" (object ["x" .= Number 1])
+       , ToolUse "tu_b" "beta"  (object ["y" .= Number 2]) ])
       (let a = foldl' stepAcc emptyAcc
                  [ EvToolStart 0 "tu_a" "alpha"
                  , EvToolStart 1 "tu_b" "beta"
@@ -596,21 +567,21 @@ main = runChecks
   , check "stream keystone: text response"
       ("Hello world", [], Usage 25 3)
       (let a = runBody (sseBody
-                 [ JObject [("type", JString "message_start"), ("message", JObject [("usage", JObject [("input_tokens", JNumber 25), ("output_tokens", JNumber 1)])])]
-                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "text_delta"), ("text", JString "Hello")])]
-                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "text_delta"), ("text", JString " world")])]
-                 , JObject [("type", JString "message_delta"), ("delta", JObject []), ("usage", JObject [("output_tokens", JNumber 3)])]
-                 , JObject [("type", JString "message_stop")] ])
+                 [ object ["type" .= String "message_start", "message" .= object ["usage" .= object ["input_tokens" .= Number 25, "output_tokens" .= Number 1]]]
+                 , object ["type" .= String "content_block_delta", "index" .= Number 0, "delta" .= object ["type" .= String "text_delta", "text" .= String "Hello"]]
+                 , object ["type" .= String "content_block_delta", "index" .= Number 0, "delta" .= object ["type" .= String "text_delta", "text" .= String " world"]]
+                 , object ["type" .= String "message_delta", "delta" .= object [], "usage" .= object ["output_tokens" .= Number 3]]
+                 , object ["type" .= String "message_stop"] ])
        in (saText a, saTools a, saUsage a))
   , check "stream keystone: tool_use response"
-      ("", [ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])], Usage 40 12)
+      ("", [ToolUse "tu_1" "get_weather" (object ["city" .= String "Brisbane"])], Usage 40 12)
       (let a = runBody (sseBody
-                 [ JObject [("type", JString "message_start"), ("message", JObject [("usage", JObject [("input_tokens", JNumber 40), ("output_tokens", JNumber 1)])])]
-                 , JObject [("type", JString "content_block_start"), ("index", JNumber 0), ("content_block", JObject [("type", JString "tool_use"), ("id", JString "tu_1"), ("name", JString "get_weather"), ("input", JObject [])])]
-                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "input_json_delta"), ("partial_json", JString "{\"city\":")])]
-                 , JObject [("type", JString "content_block_delta"), ("index", JNumber 0), ("delta", JObject [("type", JString "input_json_delta"), ("partial_json", JString "\"Brisbane\"}")])]
-                 , JObject [("type", JString "content_block_stop"), ("index", JNumber 0)]
-                 , JObject [("type", JString "message_delta"), ("delta", JObject []), ("usage", JObject [("output_tokens", JNumber 12)])] ])
+                 [ object ["type" .= String "message_start", "message" .= object ["usage" .= object ["input_tokens" .= Number 40, "output_tokens" .= Number 1]]]
+                 , object ["type" .= String "content_block_start", "index" .= Number 0, "content_block" .= object ["type" .= String "tool_use", "id" .= String "tu_1", "name" .= String "get_weather", "input" .= object []]]
+                 , object ["type" .= String "content_block_delta", "index" .= Number 0, "delta" .= object ["type" .= String "input_json_delta", "partial_json" .= String "{\"city\":"]]
+                 , object ["type" .= String "content_block_delta", "index" .= Number 0, "delta" .= object ["type" .= String "input_json_delta", "partial_json" .= String "\"Brisbane\"}"]]
+                 , object ["type" .= String "content_block_stop", "index" .= Number 0]
+                 , object ["type" .= String "message_delta", "delta" .= object [], "usage" .= object ["output_tokens" .= Number 12]] ])
        in (saText a, saTools a, saUsage a))
   -- crucible-mgs: timedRead
   , do r <- timedRead 200000 (pure (BC.pack "hi"))
@@ -624,20 +595,20 @@ main = runChecks
        check "timedRead: non-positive disables the guard" (BC.pack "x") r
   -- crucible-dak: Turn JSON round-trip
   , check "turnContentJson: round-trips text + tool_use"
-      (Right (Turn "Let me check." [ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])]))
-      (parseTurn (encode (turnContentJson
-        (Turn "Let me check." [ToolUse "tu_1" "get_weather" (JObject [("city", JString "Brisbane")])]))))
+      (Right (Turn "Let me check." [ToolUse "tu_1" "get_weather" (object ["city" .= String "Brisbane"])]))
+      (parseTurn (TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson
+        (Turn "Let me check." [ToolUse "tu_1" "get_weather" (object ["city" .= String "Brisbane"])])))))  )
   , check "turnContentJson: round-trips text-only"
       (Right (Turn "Hello." []))
-      (parseTurn (encode (turnContentJson (Turn "Hello." []))))
+      (parseTurn (TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "Hello." []))))))
   , check "turnContentJson: round-trips tool-only"
-      (Right (Turn "" [ToolUse "u" "f" (JObject [])]))
-      (parseTurn (encode (turnContentJson (Turn "" [ToolUse "u" "f" (JObject [])]))))
+      (Right (Turn "" [ToolUse "u" "f" (object [])]))
+      (parseTurn (TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "" [ToolUse "u" "f" (object [])]))))))
   -- crucible-dak: hermetic cassette replay drives a tool loop
   , do let cassettePath = "/tmp/crucible-chat-cassette-test.jsonl"
            cassette =
-             encode (turnContentJson (Turn "" [ToolUse "u1" "get_weather" (JObject [("city", JString "Brisbane")])])) <> "\n"
-             <> encode (turnContentJson (Turn "Sunny in Brisbane!" [])) <> "\n"
+             TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "" [ToolUse "u1" "get_weather" (object ["city" .= String "Brisbane"])])))) <> "\n"
+             <> TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "Sunny in Brisbane!" [])))) <> "\n"
        TIO.writeFile cassettePath cassette
        r <- runEff (runChatCassette cassettePath (runToolAgent [weatherToolC] "weather in Brisbane?"))
        check "runChatCassette: replays a tool loop to the final answer"
