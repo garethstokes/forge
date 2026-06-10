@@ -54,8 +54,9 @@ depends = ["aeson", "autodocodec", "scientific", "unordered-containers", "validi
 
 [[locked]]
 name = "base-orphans"
-vendored = "0.9.4"
-sha256 = "sha256:d144b6dc9be81f222f77b463a13a07779482a9a25fd823c836587344bb6a2eb8"
+repo = "https://github.com/haskell-compat/base-orphans"
+rev = "14f89082857f9b96180203116e21c1f0632c8eb4"
+sha256 = "sha256:ff9b73f7dc531e836e8fba4182eb84f0108f09f6fd435c8b63d02ab7997169bf"
 depends = []
 
 [[locked]]
@@ -313,7 +314,7 @@ depends = ["OneTuple", "indexed-traversable", "tagged", "unordered-containers", 
 [[locked]]
 name = "integer-conversion"
 vendored = "0.1.1"
-sha256 = "sha256:7d21999a091607b9ef55839b151bf856f14cd86c837263953822e071bd9a02a5"
+sha256 = "sha256:93bf8cb8d3f8550c4e677b343269d96f8cf185fe86932411516acd58cc90e97e"
 depends = ["primitive"]
 
 [[locked]]

@@ -4,7 +4,7 @@
 
 [workspace]
 members = ["."]
-ghc = "9.10.1"
+ghc = "9.12.2"
 
 [package]
 name = "crucible"
@@ -60,7 +60,7 @@ repo = "https://github.com/Soostone/retry.git"
 # aeson + autodocodec for the domain codec layer (autodocodec = codec + JSON
 # Schema, as used by sibling project manifest for shared-types jsonb persistence).
 # Resolved from git by `zinc add`; the closure (aeson 2.3.0.0, autodocodec
-# 0.5.0.0, ~27 deps) is shared with manifest in the zinc store on GHC 9.10.1.
+# 0.5.0.0, ~27 deps) is shared with manifest in the zinc store.
 
 [dependencies.autodocodec]
 repo = "https://github.com/NorfairKing/autodocodec"

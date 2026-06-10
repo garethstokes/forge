@@ -1,7 +1,7 @@
 {
   description = "crucible — Haskell library workspace";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
 
   outputs = { self, nixpkgs }:
     let
@@ -12,11 +12,10 @@
       devShells = forAll (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          # GHC 9.10.1 — matches the ghc = "9.10.1" pin in zinc.toml (aligned
-          # with sibling project manifest for shared-types interop).
+          # GHC 9.12.2 — matches the ghc = "9.12.2" pin in zinc.toml.
           # zinc manages all Haskell deps itself; Nix only provides the compiler
           # and the source-preprocessors zinc shells out to (alex, happy, hsc2hs).
-          ghc = pkgs.haskell.compiler.ghc9101;
+          ghc = pkgs.haskell.compiler.ghc9122;
         in
         {
           default = pkgs.mkShell {
