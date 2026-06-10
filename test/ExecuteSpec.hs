@@ -17,12 +17,14 @@ import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 
 import Crucible.LLM (Message (..), Role (..))
+import Crucible.LLM.Anthropic (AnthropicConfig (..), defaultAnthropicConfig)
 import Crucible.Usage (Usage (..))
 import Manifest hiding (Target)
 import Manifest.Postgres (Pool)
 import Manifest.Testing (withEphemeralDb)
 
 import Evals.Execute
+import Evals.Execute.Anthropic (cfgFrom)
 import Evals.Ids
 import Evals.Migrate (migrateAll)
 import Evals.Schema
@@ -33,6 +35,7 @@ expect msg ok = unless ok (ioError (userError ("FAILED: " <> msg)))
 main :: IO ()
 main = do
   assemblySpec
+  cfgFromSpec
   withEphemeralDb $ \pool -> do
     _ <- withSession pool migrateAll
     now <- getCurrentTime
@@ -62,6 +65,24 @@ assemblySpec = do
   let badRole = object ["messages" .= [object ["role" .= ("robot" :: Text), "content" .= ("x" :: Text)]]]
   expect "unknown role is an error" (isLeft (decodeInput badRole))
   expect "number input is an error" (isLeft (decodeInput (toJSON (42 :: Int))))
+
+-- cfgFrom maps tv.model and the known params keys; everything else defaults.
+cfgFromSpec :: IO ()
+cfgFromSpec = do
+  now <- getCurrentTime
+  let tv ps = TargetVersion { id = TargetVersionId 0, target = TargetId 0, version = 1
+                            , model = "claude-x", prompt = "SYS", params = Aeson ps
+                            , createdAt = now } :: TargetVersion
+      dflt = defaultAnthropicConfig "k"
+      full = cfgFrom "k" (tv (object ["max_tokens" .= (9 :: Int), "timeout" .= (5 :: Int), "retries" .= (1 :: Int)]))
+      none = cfgFrom "k" (tv (object []))
+  expect "cfgFrom: model + key" (full.model == "claude-x" && full.apiKey == "k")
+  expect "cfgFrom: params mapped"
+    (full.maxTokens == 9 && full.timeoutSecs == 5 && full.maxRetries == 1)
+  expect "cfgFrom: unknown knobs untouched"
+    (full.baseDelayMicros == dflt.baseDelayMicros && full.streamIdleSecs == dflt.streamIdleSecs)
+  expect "cfgFrom: empty params -> defaults (except model)"
+    (none.maxTokens == dflt.maxTokens && none.timeoutSecs == dflt.timeoutSecs && none.maxRetries == dflt.maxRetries)
 
 -- Seeding -----------------------------------------------------------------
 
