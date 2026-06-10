@@ -348,6 +348,32 @@ main = runChecks
              Left (Tl.BadArgs n e sch) ->
                Just (n == "weather" && sch == t.schema && e.raw == "{}")
              _ -> Nothing )
+  , check "runTools: unknown tool -> Left UnknownTool with available names"
+      (Left (Tl.UnknownTool "nope" ["get_weather", "add"]))
+      (runPureEff (Tl.runTools agentTools (Tl.callTool "nope" (object []))))
+  , check "renderToolError: BadArgs includes schema and echoed args"
+      True
+      ( let t = Tl.tool @"weather" (\(Loc c) -> pure ("sunny in " <> c :: Text)) :: Tl.Tool '[]
+        in case runPureEff (Tl.invoke t (object ["city" .= String "x"])) of
+             Left err ->
+               let r = Tl.renderToolError err
+               in T.isInfixOf "expected schema:" r
+                    && T.isInfixOf "you sent:" r
+                    && T.isInfixOf "locCity" r
+                    && T.isInfixOf "\"city\":\"x\"" r
+             Right _ -> False )
+  , check "renderToolError: UnknownTool lists available names"
+      True
+      (T.isInfixOf "available tools: get_weather, add"
+        (Tl.renderToolError (Tl.UnknownTool "nope" ["get_weather", "add"])))
+  , check "runToolAgent: bad args fed back, model self-corrects (scripted)"
+      (Right "fixed")
+      (runPureEff (runChatScripted
+        [ Turn "" [ToolUse "u1" "typed_weather" (object ["wrong" .= String "x"])]
+        , Turn "fixed" [] ]
+        (runToolAgent
+          [Tl.tool @"typed_weather" (\(Loc c) -> pure ("sunny in " <> c :: Text))]
+          "weather?")))
   , check "float codec: clean shortest-decimal encoding (not realToFrac bloat)"
       "0.1"
       (A.encode (toJSONVia C.float (0.1 :: Double)))
