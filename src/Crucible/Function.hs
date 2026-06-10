@@ -85,13 +85,10 @@ call fn input = loop (fnRetries fn) (fnPrompt fn input)
         Left err
           | n <= 0    -> pure (Left err)
           | otherwise ->
-              loop (n - 1)
+              let e = T.pack err
+              in loop (n - 1)
                 ( msgs
                     ++ [ Message Assistant raw
-                       , Message User
-                           ( "Your reply did not parse: "
-                               <> T.pack err
-                               <> ". Respond with valid JSON only."
-                           )
+                       , Message User [text|Your reply did not parse: ${e}. Respond with valid JSON only.|]
                        ]
                 )
