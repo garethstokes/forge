@@ -9,10 +9,14 @@ effectful capabilities, Anthropic interpreters, skills/tools).
 ## Layout
 
 - `src/Evals/` — the eval data model (sub-project A): ids, schema types,
-  schema, migrations.
-- `test/` — `SchemaSpec`: migrate + round-trip + cascade + restrict +
-  aggregate + compare-runs against an ephemeral Postgres
-  (`Manifest.Testing.withEphemeralDb`).
+  schema, migrations — plus the run executor (sub-project C):
+  `Evals.Execute` (prompt assembly, injected `LlmRunner`, `executeRun`) and
+  `Evals.Execute.Anthropic` (the live crucible-backed runner).
+- `app/` — the `manifest-evals` CLI: `migrate`, and `run <runId>` (env:
+  `MANIFEST_DATABASE_URL`, `ANTHROPIC_API_KEY`, `EVALS_CONCURRENCY`).
+- `test/` — `SchemaSpec` (schema scenarios) and `ExecuteSpec` (assembly,
+  executeRun happy path / per-example error / resume / multi-turn recording)
+  against an ephemeral Postgres (`Manifest.Testing.withEphemeralDb`).
 
 ## Build
 
