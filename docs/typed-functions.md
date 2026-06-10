@@ -176,6 +176,37 @@ case typed of
   Left e   -> putStrLn ("decode error: " <> e.message)
 ```
 
+## Test cases on the skill
+
+A skill can carry its own test cases, declared next to the prompt they
+exercise (the pattern BAML users will recognise). `withTests` attaches a list
+of `Case` values; `testSkill` runs every case through `call` and aggregates a
+`Report` with a pass rate and mean score:
+
+```haskell
+import Crucible.Eval (Case (..), Expectation (..), renderReport)
+import Crucible.Skill (skill, withTests, testSkill)
+
+classify :: Skill Text Polarity
+classify =
+  withTests
+    [ Case "I love it"        "clear positive" (Exactly Positive)
+    , Case "Arrived broken."  "clear negative" (Exactly Negative)
+    , Case "It is a product." "neutral wording" (Rubric "must not overclaim a sentiment")
+    ]
+    (skill "classify-polarity" str polarityCodec
+      (\s -> [text|Classify the sentiment of: ${s}|]))
+
+report <- runEff (Anthropic.run cfg (testSkill (T.pack . show) classify))
+putStrLn (T.unpack (renderReport report))
+```
+
+An `Exactly` or `Predicate` case scores 1 or 0; a `Rubric` case asks the LLM
+judge, rendering the output with the function you pass. A reply that fails to
+decode scores 0. `testSkill` needs only `LLM :> es`, so the same cases run
+against `runLLMScripted` in CI and against a live interpreter when you want a
+real regression signal.
+
 ## One codec, many uses
 
 A type defined once, as `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec`, can be used as a skill output and as a tool argument codec

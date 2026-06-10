@@ -17,8 +17,10 @@ module Crucible.Skill
   ( Skill (..)
   , skill
   , withRetries
+  , withTests
   , prompt
   , call
+  , testSkill
   ) where
 
 import Data.Text (Text)
@@ -31,6 +33,7 @@ import Effectful
 import Autodocodec (toJSONVia)
 
 import Crucible.Codec (JSONCodec, schemaText)
+import Crucible.Eval (Case (..), Expectation (..), Report, runEval)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
 import Crucible.Decode (decodeLLM, DecodeError (..))
 
@@ -41,16 +44,23 @@ data Skill i o = Skill
   , input       :: JSONCodec i -- ^ used to render the input value into the prompt
   , output      :: JSONCodec o -- ^ schema injection + tolerant decode
   , retries     :: Int         -- ^ decode-failure retries
+  , tests       :: [Case i o]  -- ^ attached test cases; run with 'testSkill'
   }
 
--- | Construct a 'Skill'; @retries@ defaults to 2.
+-- | Construct a 'Skill'; @retries@ defaults to 2, @tests@ to none.
 skill :: Text -> JSONCodec i -> JSONCodec o -> (i -> Text) -> Skill i o
 skill n inC outC instr =
-  Skill { name = n, instruction = instr, input = inC, output = outC, retries = 2 }
+  Skill { name = n, instruction = instr, input = inC, output = outC
+        , retries = 2, tests = [] }
 
 -- | Override the decode-failure retry budget.
 withRetries :: Int -> Skill i o -> Skill i o
 withRetries n fn = fn { retries = n }
+
+-- | Attach test cases to a skill, declared next to the prompt they exercise.
+-- Run them with 'testSkill'.
+withTests :: [Case i o] -> Skill i o -> Skill i o
+withTests cs fn = fn { tests = cs }
 
 -- | Encode a value to JSON text via its codec.
 jsonText :: A.Value -> Text
@@ -95,3 +105,19 @@ call fn@Skill{output = outC, retries = rets} inp = loop rets (prompt fn inp)
                        , Message User [text|Your reply did not parse: ${e}. Respond with valid JSON only.|]
                        ]
                 )
+
+-- | Run a skill's attached 'tests' through the eval pipeline and aggregate
+-- a 'Report'. Each case 'call's the skill with its input and scores the result
+-- against its 'Expectation'; a decode failure scores 0. The render function is
+-- used when a 'Rubric' case hands the output to the LLM judge. Like 'call',
+-- needs only @LLM :> es@, so the same cases run scripted, replayed, or live.
+testSkill :: (Eq o, LLM :> es) => (o -> Text) -> Skill i o -> Eff es (Report i (Either DecodeError o))
+testSkill render sk =
+  runEval render' (call sk) (map liftCase sk.tests)
+  where
+    render' = either (\e -> "decode error: " <> e.message) render
+    liftCase (Case i n ex) = Case i n (liftExp ex)
+    liftExp :: Eq o => Expectation o -> Expectation (Either DecodeError o)
+    liftExp (Exactly e)   = Predicate (either (const False) (== e))
+    liftExp (Predicate p) = Predicate (either (const False) p)
+    liftExp (Rubric r)    = Rubric r

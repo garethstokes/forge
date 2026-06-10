@@ -16,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Skill (Skill (..), skill, withRetries, prompt, call)
+import Crucible.Skill (Skill (..), skill, withRetries, withTests, prompt, call, testSkill)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -416,6 +416,27 @@ main = runChecks
       True
       (either (const True) (const False)
         (runPureEff (runLLMScripted ["bad", "bad"] (call (withRetries 1 classifyFn) "x"))))
+  -- crucible-290: BAML-style test cases attached to a skill
+  , check "testSkill: attached case passes on exact match"
+      (1.0, 1.0)
+      (let sk = withTests [Case "I love it" "pos" (Exactly "positive")] classifyFn
+           rep = runPureEff (runLLMScripted ["\"positive\""] (testSkill id sk))
+       in (rep.passRate, rep.meanScore))
+  , check "testSkill: attached case fails on mismatch"
+      0.0
+      ((runPureEff (runLLMScripted ["\"negative\""]
+        (testSkill id (withTests [Case "I love it" "pos" (Exactly "positive")] classifyFn)))).passRate)
+  , check "testSkill: decode failure scores zero"
+      0.0
+      ((runPureEff (runLLMScripted ["junk"]
+        (testSkill id (withTests [Case "x" "robust" (Predicate (const True))]
+                        (withRetries 0 classifyFn))))).passRate)
+  , check "testSkill: rubric case consults the judge"
+      1.0
+      ((runPureEff (runLLMScripted
+        [ "\"hello there\""                                  -- the skill's reply
+        , "{\"pass\":true,\"why\":\"greets the user\"}" ]    -- the judge's verdict
+        (testSkill id (withTests [Case "hi" "greets" (Rubric "must be a greeting")] classifyFn)))).passRate)
   -- M12 Task 1: schemaValue shape checks (robust — autodocodec schema shape may differ)
   , check "schemaValue: object codec has type=object"
       (Just (String "object"))
