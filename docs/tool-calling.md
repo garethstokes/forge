@@ -21,7 +21,11 @@ you, decodes the model's arguments, and surfaces decode failures as an error
 `Value` (the model's self-correction cue):
 
 ```haskell
-import Crucible.Tool (tool)
+tool :: HasCodec a => Text -> (a -> Eff es Value) -> Tool es
+```
+
+```haskell
+import Crucible.Tool (Tool, tool)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import GHC.Generics (Generic)
 
@@ -95,15 +99,16 @@ runToolAgent
 The loop, in plain terms:
 
 1. Send the question and the tool list to the model.
-2. If the model returns one or more `tool_use` blocks, dispatch each to its
-   matching `toolRun` handler and collect the results.
+2. If the model returns one or more `tool_use` blocks, dispatch each to the
+   matching tool's `run` handler and collect the results.
 3. Feed the results back as `tool_result` content blocks and repeat from step 1.
 4. When the model returns a plain text reply with no `tool_use` blocks, return
    `Right text`.
 
-Unknown-tool requests and handler exceptions are fed back as error
-`tool_result` values so the model can self-correct; a transient hallucinated
-tool name rarely survives the next round.
+Unknown-tool requests (and, for `tool`-built tools, undecodable arguments) are
+fed back as error `tool_result` values so the model can self-correct; a
+transient hallucinated tool name rarely survives the next round. Exceptions
+thrown by a handler itself are not caught: they propagate out of the loop.
 
 ## Capping the loop
 
@@ -113,8 +118,8 @@ tool name rarely survives the next round.
 defaultMaxIterations :: Int
 defaultMaxIterations = 10
 
-runToolAgent  ::        (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
-runToolAgentN :: Int -> (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
+runToolAgent  :: (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
+runToolAgentN :: (Chat :> es) => Int -> [Tool es] -> Text -> Eff es (Either ChatError Text)
 ```
 
 `runToolAgent = runToolAgentN defaultMaxIterations`. If the cap is reached

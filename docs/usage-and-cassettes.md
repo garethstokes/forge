@@ -26,8 +26,8 @@ across every call inside the `Eff` computation, including every round of a
 tool-agent loop, and return it alongside the result:
 
 ```haskell
-Anthropic.usage     :: AnthropicConfig -> Eff (LLM:es)  a -> Eff es (a, Usage)
-Anthropic.usageChat :: AnthropicConfig -> Eff (Chat:es) a -> Eff es (a, Usage)
+Anthropic.usage     :: (IOE :> es) => AnthropicConfig -> Eff (LLM:es)  a -> Eff es (a, Usage)
+Anthropic.usageChat :: (IOE :> es) => AnthropicConfig -> Eff (Chat:es) a -> Eff es (a, Usage)
 ```
 
 A convenience accessor covers the common case:
@@ -90,8 +90,8 @@ time. There are two cassette pairs, one for each effect:
 
 The `record*` interpreters behave identically to their live counterparts (they
 issue real network calls) but tee each response to the cassette file in call
-order. The `replay*` interpreters read responses back in the same order,
-returning them without any IO.
+order. The `replay*` interpreters read the file once and pop responses back in
+the same order, with no network access.
 
 ## The record/replay slider
 

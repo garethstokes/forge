@@ -66,10 +66,10 @@ produce:
 
 ```haskell
 data AnthropicError
-  = AnthropicHttpError      -- connection-level failure (network, TLS)
-  | AnthropicStatusError Int Text  -- non-2xx response: status code + body
-  | AnthropicNoContent      -- 2xx response with no usable content block
-  | AnthropicStreamTimeout Int     -- idle timeout during streaming (seconds)
+  = AnthropicHttpError HttpException  -- connection-level failure (network, TLS)
+  | AnthropicStatusError Int Text     -- non-2xx response: status code + body
+  | AnthropicNoContent Text           -- 2xx response with no usable content block
+  | AnthropicStreamTimeout Int        -- idle timeout during streaming (microseconds)
 ```
 
 `isRetryable :: AnthropicError -> Bool` classifies errors for the retry loop:
@@ -87,15 +87,20 @@ data AnthropicError
 
 When a retryable error occurs the interpreter waits before trying again. The
 wait is jittered exponential backoff: the base delay is `baseDelayMicros`,
-doubled on each attempt, with a random jitter applied so concurrent clients do
-not thunderherd on a 429. Retries stop after `maxRetries` attempts; on
-exhaustion the error is re-thrown.
+growing exponentially per attempt with full jitter applied, so concurrent
+clients do not retry in a thundering herd on a 429. Each individual delay is
+capped at 30 s. Retries stop after `maxRetries` attempts; on exhaustion the
+error is re-thrown.
 
 The request timeout (`timeoutSecs`) and the streaming idle timeout
 (`streamIdleSecs`) are both enforced independently: a request that hangs at
 the HTTP level is killed after `timeoutSecs`; a streaming response that stalls
 mid-generation without producing a chunk for `streamIdleSecs` seconds raises
-`AnthropicStreamTimeout`.
+`AnthropicStreamTimeout` (carrying the idle window in microseconds). Setting
+`streamIdleSecs` to zero or a negative value disables the idle guard. The
+streaming interpreters apply the retry policy only to opening the connection;
+nothing has been emitted at that point, so retrying is safe. A mid-stream
+failure is not retried.
 
 ## Further reading
 

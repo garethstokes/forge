@@ -85,8 +85,8 @@ An `enum` example: a classifier whose output is one of three variants, without a
 `data` type.
 
 ```haskell
-import Crucible.Codec (str, enum)
-import Crucible.Skill (skill, call)
+import Crucible.Codec (JSONCodec, str, enum)
+import Crucible.Skill (Skill, skill, call)
 
 data Polarity = Positive | Negative | Neutral deriving (Eq, Show)
 
@@ -134,7 +134,10 @@ Respond ONLY with JSON matching this schema:
 The model sees the contract before it generates a single token. For `enum` codecs
 the schema enumerates the permitted string values; for records it lists required
 fields and their types. To inspect what will be sent (for prompt tuning, say),
-call `schemaText fn.output` directly.
+call `schemaText fn.output` directly. To see the full seed conversation, use
+`prompt :: Skill i o -> i -> [Message]`: it returns the exact messages `call`
+sends for a given input (the System message carrying the schema contract, then
+the User message with the instruction and the rendered input).
 
 ## Tolerant decode
 

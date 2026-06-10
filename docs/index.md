@@ -46,8 +46,8 @@ main = do
 ## What's in the box
 
 - **Effects**: `LLM` (`complete`), `Chat` (`converse`/`runToolAgent`), `Tools`,
-  and `Emit` (streaming deltas), each with scripted, live, and cassette
-  interpreters.
+  and `Emit` (streaming deltas). `LLM` and `Chat` each come with scripted, live,
+  and cassette interpreters.
 - **Typed skills**: declare a `Skill` with input/output codecs; the output
   schema is injected into the prompt and the reply tolerantly decoded.
 - **Native tool-calling**: advertise tools and let the model drive a

@@ -14,7 +14,7 @@ from `app/Main.hs`, the end-to-end smoke executable.
 
 `defaultAnthropicConfig :: Text -> AnthropicConfig` constructs a fully populated
 config from an API key. The defaults: the model is
-`claude-haiku-4-5-20251001`, the token cap is 1 024, the request timeout is 60 s,
+`claude-haiku-4-5-20251001`, the token cap is 1024, the request timeout is 60 s,
 and the retry budget is 3 attempts with a 500 ms backoff base. For a first call you
 need only read the key from the environment and pass it in:
 
@@ -44,6 +44,7 @@ unwrap to `IO` with `runEff`:
 ```haskell
 import Effectful (runEff)
 import Crucible.LLM (Message (..), Role (..), complete)
+import Crucible.LLM.Anthropic (defaultAnthropicConfig)
 import qualified Crucible.LLM.Anthropic as Anthropic
 
 prompt :: [Message]
@@ -77,6 +78,7 @@ single-constructor record:
 
 ```haskell
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE QuasiQuotes #-}
 
 import GHC.Generics (Generic)
@@ -86,6 +88,7 @@ import NeatInterpolation (text)
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Skill (Skill, skill, call)
+import Crucible.LLM.Anthropic (defaultAnthropicConfig)
 import qualified Crucible.LLM.Anthropic as Anthropic
 
 data Sentiment = Sentiment { sentLabel :: T.Text }

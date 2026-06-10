@@ -28,11 +28,11 @@ every interpreter speaks the same contract.
 canned replies in order. No IO, no network, deterministic:
 
 ```haskell
-import Effectful (runEff)
+import Effectful (runPureEff)
 import Crucible.LLM (Message (..), Role (..), complete, runLLMScripted)
 
 result :: Text
-result = runEff (runLLMScripted ["pong"] (complete msgs))
+result = runPureEff (runLLMScripted ["pong"] (complete msgs))
 -- result = "pong"  (no network)
 ```
 
@@ -44,6 +44,9 @@ import qualified Crucible.LLM.Anthropic as Anthropic
 
 result <- runEff (Anthropic.run cfg (complete msgs))
 ```
+
+`Anthropic.usage` is the same live path but also returns the summed token
+`Usage` alongside the result. See [Usage & cassettes](usage-and-cassettes.md).
 
 **Cassette (replay):** `Anthropic.replay :: (IOE :> es) => FilePath -> Eff (LLM:es) a -> Eff es a` replays a previously recorded cassette. Pairs with
 `Anthropic.record` to lock in real responses for deterministic CI. See
@@ -66,8 +69,8 @@ Most callers do not call `converse` directly. `runToolAgent` drives the
 request→run→result loop for you, capped at `defaultMaxIterations` (10):
 
 ```haskell
-runToolAgent  ::              (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
-runToolAgentN :: Int ->       (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
+runToolAgent  :: (Chat :> es) => [Tool es] -> Text -> Eff es (Either ChatError Text)
+runToolAgentN :: (Chat :> es) => Int -> [Tool es] -> Text -> Eff es (Either ChatError Text)
 ```
 
 On loop exhaustion both return `Left (ToolLoopExceeded cap)`. See
@@ -100,21 +103,26 @@ emit :: (Emit :> es) => Text -> Eff es ()
 | `runEmitList`  | Collect deltas in arrival order alongside the result (for tests). |
 
 `Emit` is orthogonal to `LLM` and `Chat`: the streaming interpreters
-(`Anthropic.stream`, `Anthropic.streamChat`) carry both an `Emit` constraint
-and produce the same assembled `Text`/`(Either ChatError Text)` result the
-non-streaming paths do. See [Streaming](streaming.md).
+(`Anthropic.stream`, `Anthropic.streamChat`, from
+`Crucible.LLM.Anthropic.Stream`) carry both an `Emit` constraint and produce
+the same assembled `Text`/`(Either ChatError Text)` result the non-streaming
+paths do, plus the summed `Usage`. See [Streaming](streaming.md).
 
 ## Effect summary
 
 | Effect | Smart constructor | Interpreters |
 |--------|-------------------|--------------|
-| `LLM`  | `complete`        | `runLLMScripted` · `Anthropic.run` · `Anthropic.record` · `Anthropic.replay` |
-| `Chat` | `converse`        | `runChatScripted` · `Anthropic.runChat` · `Anthropic.usageChat` · `Anthropic.recordChat` · `Anthropic.replayChat` |
+| `LLM`  | `complete`        | `runLLMScripted` · `Anthropic.run` · `Anthropic.usage` · `Anthropic.record` · `Anthropic.replay` · `Anthropic.stream` |
+| `Chat` | `converse`        | `runChatScripted` · `Anthropic.runChat` · `Anthropic.usageChat` · `Anthropic.recordChat` · `Anthropic.replayChat` · `Anthropic.streamChat` |
 | `Emit` | `emit`            | `runEmitIO` · `ignoreEmit` · `runEmitList` |
 | `Tools`| `callTool`        | `runTools` (dispatch to a `[Tool es]` list) |
 
-The `Tools` effect is an internal detail of the `Chat` layer; most callers do not
-see it. See [Tool calling](tool-calling.md) for `Tool` construction and the loop.
+The `stream`/`streamChat` interpreters additionally require `Emit :> es`; they
+live in `Crucible.LLM.Anthropic.Stream` and are conventionally imported under
+the same `Anthropic` alias. The `Tools` effect serves the text-path agent loop
+in `Crucible.Agent` (`runAgent`); the `Chat` tool loop dispatches tools
+directly, so most callers never see it. See [Tool calling](tool-calling.md) for
+`Tool` construction and the loop.
 
 ## Swapping interpreters
 
@@ -124,7 +132,7 @@ production call. The logic in the middle (prompt construction, `call`,
 
 ```haskell
 -- hermetic: no IO, no network
-let pure_result = runEff
+let pure_result = runPureEff
       ( runLLMScripted ["pong"]
           (complete [Message System "Be terse.", Message User "Ping?"]) )
 
@@ -134,7 +142,6 @@ live_result <- runEff
       (complete [Message System "Be terse.", Message User "Ping?"]) )
 ```
 
-Both lines call the same `complete`; only the interpreter at the `runEff` boundary
-differs. The same pattern applies to `runToolAgent` with `runChatScripted` vs
+Both lines call the same `complete`; only the interpreters at the edge differ. The same pattern applies to `runToolAgent` with `runChatScripted` vs
 `Anthropic.runChat`, and to any `Skill` with `call`. See [The live
 interpreter](live-interpreter.md) for the Anthropic-specific details.
