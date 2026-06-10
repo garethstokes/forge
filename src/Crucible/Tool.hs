@@ -13,10 +13,11 @@ module Crucible.Tool
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Crucible.Schema (Schema(..), renderSchema)
-import Crucible.Json.Value (Value(..))
-import qualified Crucible.Json.Decode as D
-import Crucible.Codec (Codec(..), object, field, str)
+import qualified Data.ByteString.Lazy as LB
+import qualified Data.Text.Encoding as TE
+import qualified Data.Aeson as A
+import Data.Aeson (Value)
+import Crucible.Codec (JSONCodec, object, field, str, anyValue)
 import Effectful
 import Effectful.Dispatch.Dynamic (send, interpret)
 
@@ -26,11 +27,7 @@ type ToolName = Text
 data ToolCall = ToolCall { tcName :: ToolName, tcArgs :: Value }
   deriving (Eq, Show)
 
--- | Identity codec over an arbitrary JSON value (args are tool-specific).
-anyValue :: Codec Value
-anyValue = Codec SAny D.value id
-
-toolCallCodec :: Codec ToolCall
+toolCallCodec :: JSONCodec ToolCall
 toolCallCodec = object (ToolCall <$> field "tool" tcName str <*> field "args" tcArgs anyValue)
 
 -- | A named tool: an args schema (shown in the prompt) and a runner in the
@@ -38,7 +35,7 @@ toolCallCodec = object (ToolCall <$> field "tool" tcName str <*> field "args" tc
 -- an IO tool would carry @IOE :> es@.
 data Tool es = Tool
   { toolName   :: ToolName
-  , toolSchema :: Schema
+  , toolSchema :: Value
   , toolRun    :: Value -> Eff es Value }
 
 -- | The tool-dispatch capability as a dynamic effect.
@@ -59,4 +56,8 @@ runTools tools = interpret $ \_ -> \case
 -- | A prose listing of the toolbox for the system prompt.
 toolsHelp :: [Tool es] -> Text
 toolsHelp ts = T.intercalate "\n"
-  [ "- " <> toolName t <> "(args: " <> renderSchema (toolSchema t) <> ")" | t <- ts ]
+  [ "- " <> toolName t <> "(args: " <> renderSchemaValue (toolSchema t) <> ")" | t <- ts ]
+
+-- | Render a JSON schema Value as compact JSON text.
+renderSchemaValue :: Value -> Text
+renderSchemaValue = TE.decodeUtf8 . LB.toStrict . A.encode

@@ -12,9 +12,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
-import Crucible.Codec (Codec, object, field, str, bool)
+import Crucible.Codec (JSONCodec, object, field, str, bool)
 import Crucible.SAP (decodeLLM)
-import qualified Crucible.Json.Decode as D
 
 -- | What a case's output is checked against.
 data Expectation a
@@ -34,7 +33,7 @@ data Report i a = Report { results :: [Result i a], passRate :: Double, meanScor
 -- | The judge's structured verdict.
 data Verdict = Verdict { vPass :: Bool, vWhy :: Text } deriving (Eq, Show)
 
-verdictCodec :: Codec Verdict
+verdictCodec :: JSONCodec Verdict
 verdictCodec = object (Verdict <$> field "vPass" vPass bool <*> field "vWhy" vWhy str)
 
 -- | LLM-as-judge: a Codec-backed prompt grading an output against a rubric.
@@ -45,7 +44,7 @@ judge render rubric actual = do
     , Message User ("Rubric: " <> rubric <> "\nOutput to grade: " <> render actual) ]
   pure $ case decodeLLM verdictCodec raw of
     Right v -> Score (if vPass v then 1.0 else 0.0) (vWhy v)
-    Left e  -> Score 0.0 ("judge parse error: " <> T.pack (D.message e))
+    Left e  -> Score 0.0 ("judge parse error: " <> T.pack e)
 
 -- | Score one output against its expectation. Pure for Exactly/Predicate; the
 -- model is consulted only for Rubric.

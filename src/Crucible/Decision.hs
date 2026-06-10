@@ -6,7 +6,7 @@ module Crucible.Decision
   , reduce
   ) where
 
-import Crucible.Codec (Codec(..), Variant(..), oneOfC)
+import Autodocodec (JSONCodec, disjointEitherCodec, dimapCodec)
 
 -- | Everything the model emits is one of these: a tool call or a final answer.
 data Decision tool answer = CallTool tool | Done answer
@@ -14,14 +14,11 @@ data Decision tool answer = CallTool tool | Done answer
 
 -- | Build a codec that decodes a reply into a Decision and encodes it back.
 -- Tries the tool codec first, then the answer codec.
-decisionCodec :: Codec tool -> Codec answer -> Codec (Decision tool answer)
-decisionCodec toolC ansC = oneOfC
-  [ Variant (codecSchema toolC)
-            (CallTool <$> codecDecode toolC)
-            (\d -> case d of CallTool t -> Just (codecEncode toolC t); _ -> Nothing)
-  , Variant (codecSchema ansC)
-            (Done <$> codecDecode ansC)
-            (\d -> case d of Done a -> Just (codecEncode ansC a); _ -> Nothing) ]
+decisionCodec :: JSONCodec tool -> JSONCodec answer -> JSONCodec (Decision tool answer)
+decisionCodec toolC ansC =
+  dimapCodec (either CallTool Done)
+             (\d -> case d of CallTool t -> Left t; Done a -> Right a)
+             (disjointEitherCodec toolC ansC)
 
 -- | The pure outcome of interpreting a Decision: run a tool, or stop.
 data Step tool answer = Continue tool | Halt answer

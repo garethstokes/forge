@@ -5,37 +5,56 @@ module Crucible.Example (demoAgent, demoTools) where
 
 import Data.Text (Text)
 import Effectful (Eff, runPureEff)
-import Crucible.Json.Value (Value(..))
-import qualified Crucible.Json.Decode as D
-import Crucible.Schema (Schema(..))
-import Crucible.Codec (Codec, object, field, str)
+import qualified Data.Aeson as A
+import Data.Aeson (Value)
+import Data.Aeson.Types (parseMaybe)
+import Crucible.Codec (JSONCodec, object, field, str)
 import Crucible.Decision (Decision, decisionCodec)
 import Crucible.LLM (runLLMScripted, Message(..), Role(System, User))
 import Crucible.Tool
 import Crucible.Agent (AgentState(..), runAgent)
 
+-- | JSON-Schema Value for weather tool: {city: string}
+weatherSchema :: Value
+weatherSchema = A.object
+  [ "type" A..= A.String "object"
+  , "properties" A..= A.object
+      [ "city" A..= A.object [ "type" A..= A.String "string" ] ]
+  , "required" A..= A.toJSON [A.String "city"]
+  ]
+
+-- | JSON-Schema Value for add tool: {a: number, b: number}
+addSchema :: Value
+addSchema = A.object
+  [ "type" A..= A.String "object"
+  , "properties" A..= A.object
+      [ "a" A..= A.object [ "type" A..= A.String "number" ]
+      , "b" A..= A.object [ "type" A..= A.String "number" ]
+      ]
+  , "required" A..= A.toJSON [A.String "a", A.String "b"]
+  ]
+
 -- pure tools (polymorphic in es; run via `pure`)
 weatherTool :: Tool es
-weatherTool = Tool "get_weather" (SObj [("city", SStr)]) $ \args ->
-  pure $ case D.decodeValue (D.field "city" D.string) args of
-           Right c -> JString ("sunny in " <> c)
-           Left _  -> JString "unknown city"
+weatherTool = Tool "get_weather" weatherSchema $ \args ->
+  pure $ case parseMaybe (A.withObject "" (\o -> o A..: "city")) args of
+           Just c  -> A.String ("sunny in " <> c)
+           Nothing -> A.String "unknown city"
 
 addTool :: Tool es
-addTool = Tool "add" (SObj [("a", SNum), ("b", SNum)]) $ \args ->
-  pure $ case (,) <$> D.decodeValue (D.field "a" D.int) args
-                  <*> D.decodeValue (D.field "b" D.int) args of
-           Right (a, b) -> JNumber (fromIntegral (a + b))
-           Left _       -> JString "bad args"
+addTool = Tool "add" addSchema $ \args ->
+  pure $ case parseMaybe (\v -> A.withObject "" (\o -> (,) <$> o A..: "a" <*> o A..: "b") v) args of
+           Just (a, b) -> A.Number (fromIntegral (a + b :: Int))
+           Nothing     -> A.String "bad args"
 
 demoTools :: [Tool es]
 demoTools = [weatherTool, addTool]
 
 -- final-answer codec: {"answer": <text>} -> Text
-answerCodec :: Codec Text
+answerCodec :: JSONCodec Text
 answerCodec = object (field "answer" id str)
 
-demoCodec :: Codec (Decision ToolCall Text)
+demoCodec :: JSONCodec (Decision ToolCall Text)
 demoCodec = decisionCodec toolCallCodec answerCodec
 
 startDemo :: AgentState
