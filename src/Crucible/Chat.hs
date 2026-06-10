@@ -34,9 +34,10 @@ import Effectful
 import Effectful.Dispatch.Dynamic (reinterpret, send)
 import Effectful.State.Static.Local (evalState, get, put)
 
-import Crucible.Json.Value (Value (..))
+import qualified Data.Aeson as A
+import Data.Aeson (Value)
+
 import Crucible.LLM (Role (Assistant, User))
-import Crucible.Schema (Schema)
 import Crucible.Tool (Tool (..), ToolName)
 
 type ToolUseId = Text
@@ -69,10 +70,10 @@ data Turn = Turn
 -- | One tool-aware conversation step. The interpreter is given the tool specs
 -- (name + input schema) to advertise, and the conversation so far.
 data Chat :: Effect where
-  Converse :: [(ToolName, Schema)] -> [ChatMsg] -> Chat m Turn
+  Converse :: [(ToolName, Value)] -> [ChatMsg] -> Chat m Turn
 type instance DispatchOf Chat = Dynamic
 
-converse :: (Chat :> es) => [(ToolName, Schema)] -> [ChatMsg] -> Eff es Turn
+converse :: (Chat :> es) => [(ToolName, Value)] -> [ChatMsg] -> Eff es Turn
 converse specs msgs = send (Converse specs msgs)
 
 -- | A tool-loop failure: the iteration budget was exhausted.
@@ -120,7 +121,7 @@ runToolAgentN cap tools question = loop cap [ChatMsg User [TextBlock question]]
 
     runOne u = case filter ((== tuName u) . toolName) tools of
       (t : _) -> ToolResultBlock (tuId u) <$> toolRun t (tuArgs u)
-      []      -> pure (ToolResultBlock (tuId u) (JString ("unknown tool: " <> tuName u)))
+      []      -> pure (ToolResultBlock (tuId u) (A.String ("unknown tool: " <> tuName u)))
 
 -- | Drive a native tool-calling loop to a final text answer, capped at
 -- 'defaultMaxIterations'. See 'runToolAgentN' for a custom cap. Total: works

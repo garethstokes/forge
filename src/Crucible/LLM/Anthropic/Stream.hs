@@ -44,11 +44,15 @@ import Network.HTTP.Client
   , responseClose, responseOpen, responseStatus )
 import Network.HTTP.Types.Status (statusCode)
 
+import qualified Data.Aeson as A
+import Data.Aeson (Value (..), (.:))
+import qualified Data.Aeson.Types as AT
+import qualified Data.Aeson.Key as K
+import qualified Data.Aeson.KeyMap as KM
+import qualified Data.ByteString.Lazy as LB
+
 import Crucible.Chat (Chat (..), ToolUse (..), ToolUseId, Turn (..))
 import Crucible.Emit (Emit, emit)
-import Crucible.Json.Decode (Decoder, at, decodeValue, field, int, string)
-import Crucible.Json.Parse (parse)
-import Crucible.Json.Value (Value (JBool, JObject))
 import Crucible.LLM (LLM (..))
 import Crucible.LLM.Anthropic
   ( AnthropicConfig (..), AnthropicError (..), chatRequestJson
@@ -87,37 +91,41 @@ data StreamEvent
 -- usable @data:@ JSON, or an unrecognised shape, is 'EvOther'.
 parseEvent :: ByteString -> StreamEvent
 parseEvent frame = case dataPayload frame of
-  Nothing  -> EvOther
-  Just txt -> case parse txt of
+  Nothing -> EvOther
+  Just bs -> case A.eitherDecode (LB.fromStrict bs) of
     Left _  -> EvOther
     Right v -> classify v
 
--- | Extract the (stripped, UTF-8-decoded) text after the first @data:@ line.
-dataPayload :: ByteString -> Maybe Text
+-- | Extract the raw bytes after the first @data:@ line (leading whitespace stripped).
+dataPayload :: ByteString -> Maybe ByteString
 dataPayload frame = case filter ("data:" `BS.isPrefixOf`) (BC.lines frame) of
-  (ln : _) -> Just (T.strip (TE.decodeUtf8Lenient (BS.drop 5 ln)))
+  (ln : _) -> Just (BC.dropWhile (== ' ') (BS.drop 5 ln))
   []       -> Nothing
 
 classify :: Value -> StreamEvent
-classify v = case dv (field "type" string) of
-  Just "content_block_delta" -> case dv (at ["delta", "type"] string) of
-    Just "text_delta"       -> maybe EvOther EvText            (dv (at ["delta", "text"] string))
-    Just "input_json_delta" -> maybe EvOther (EvToolJson idx)  (dv (at ["delta", "partial_json"] string))
+classify v = case pmT (.: "type") of
+  Just "content_block_delta" -> case pmT (\o -> o .: "delta" >>= (.: "type")) of
+    Just "text_delta"       -> maybe EvOther EvText           (pmT (\o -> o .: "delta" >>= (.: "text")))
+    Just "input_json_delta" -> maybe EvOther (EvToolJson idx) (pmT (\o -> o .: "delta" >>= (.: "partial_json")))
     _                       -> EvOther
-  Just "content_block_start" -> case dv (at ["content_block", "type"] string) of
-    Just "tool_use" -> case ( dv (at ["content_block", "id"] string)
-                            , dv (at ["content_block", "name"] string) ) of
-      (Just i, Just n) -> EvToolStart idx i n
-      _                -> EvOther
+  Just "content_block_start" -> case pmT (\o -> o .: "content_block" >>= (.: "type")) of
+    Just "tool_use" ->
+      let mi = pmT (\o -> o .: "content_block" >>= (.: "id"))
+          mn = pmT (\o -> o .: "content_block" >>= (.: "name"))
+      in case (mi, mn) of
+           (Just i, Just n) -> EvToolStart idx i n
+           _                -> EvOther
     _ -> EvOther
-  Just "content_block_stop" -> maybe EvOther EvBlockStop (dv (field "index" int))
-  Just "message_start"      -> maybe EvOther EvUsageIn   (dv (at ["message", "usage", "input_tokens"] int))
-  Just "message_delta"      -> maybe EvOther EvUsageOut  (dv (at ["usage", "output_tokens"] int))
+  Just "content_block_stop" -> maybe EvOther EvBlockStop (pmI (.: "index"))
+  Just "message_start"      -> maybe EvOther EvUsageIn   (pmI (\o -> o .: "message" >>= (.: "usage") >>= (.: "input_tokens")))
+  Just "message_delta"      -> maybe EvOther EvUsageOut  (pmI (\o -> o .: "usage" >>= (.: "output_tokens")))
   _                         -> EvOther
   where
-    idx = fromMaybe 0 (dv (field "index" int))
-    dv :: Decoder a -> Maybe a
-    dv d = either (const Nothing) Just (decodeValue d v)
+    idx = fromMaybe 0 (pmI (.: "index"))
+    pmT :: (A.Object -> AT.Parser Text) -> Maybe Text
+    pmT p = AT.parseMaybe (A.withObject "_" p) v
+    pmI :: (A.Object -> AT.Parser Int) -> Maybe Int
+    pmI p = AT.parseMaybe (A.withObject "_" p) v
 
 -- | An in-progress tool_use block: id, name, and accumulated argument JSON.
 data PartialTool = PartialTool ToolUseId ToolName Text
@@ -154,12 +162,13 @@ stepAcc acc = \case
     bump i frag (j, pt@(PartialTool tid n js))
       | i == j    = (j, PartialTool tid n (js <> frag))
       | otherwise = (j, pt)
-    parseArgs js = either (const (JObject [])) id (parse js)
+    parseArgs js = either (const (A.object [])) id
+                     (A.eitherDecode (LB.fromStrict (TE.encodeUtf8 js)))
 
 -- | Add @"stream": true@ to a request body object.
 addStream :: Value -> Value
-addStream (JObject kvs) = JObject (kvs ++ [("stream", JBool True)])
-addStream v             = v
+addStream (Object o) = Object (KM.insert (K.fromString "stream") (Bool True) o)
+addStream v          = v
 
 -- | Open a @stream:true@ POST, retrying transient PRE-stream failures
 -- (network/timeout, 429, 5xx) with the same policy as the non-streaming path.

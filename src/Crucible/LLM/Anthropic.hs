@@ -74,12 +74,13 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 
+import qualified Data.Aeson as A
+import Data.Aeson (Value (..), (.=), (.:))
+import qualified Data.Aeson.Types as AT
+import qualified Data.Vector as V
+
 import Crucible.Chat (Block (..), Chat (..), ChatMsg (..), ToolUse (..), Turn (..))
-import Crucible.Json.Encode (encode)
-import Crucible.Json.Value (Value (..))
-import qualified Crucible.Json.Decode as D
 import Crucible.LLM (LLM (..), Message (..), Role (..))
-import Crucible.Schema (Schema, schemaToJson)
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
 
@@ -161,7 +162,7 @@ recordLLMAnthropic path cfg action = do
   interpret
     (\_ (Complete msgs) -> liftIO $ do
         reply <- anthropicComplete cfg mgr msgs
-        TIO.appendFile path (encode (JString reply) <> "\n")
+        TIO.appendFile path (TE.decodeUtf8 (LBS.toStrict (A.encode (A.String reply))) <> "\n")
         pure reply)
     action
 
@@ -172,7 +173,9 @@ runLLMCassette :: (IOE :> es) => FilePath -> Eff (LLM : es) a -> Eff es a
 runLLMCassette path action = do
   contents <- liftIO (TIO.readFile path)
   let replies =
-        [ either (const ln) id (D.decodeString D.string ln)
+        [ either (const ln) id $ do
+            v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 ln))
+            AT.parseEither A.parseJSON v
         | ln <- T.lines contents
         , not (T.null ln)
         ]
@@ -187,7 +190,7 @@ runLLMCassette path action = do
 -- | One chat round-trip, with usage: POST the conversation + tool specs, parse
 -- the assistant 'Turn' (throwing 'AnthropicNoContent' if malformed), and read
 -- the usage from the same body.
-converseOnce :: AnthropicConfig -> Manager -> [(ToolName, Schema)] -> [ChatMsg] -> IO (Turn, Usage)
+converseOnce :: AnthropicConfig -> Manager -> [(ToolName, Value)] -> [ChatMsg] -> IO (Turn, Usage)
 converseOnce cfg mgr specs msgs = do
   body <- postMessages cfg mgr (chatRequestJson cfg specs msgs)
   turn <- either (\_ -> throwIO (AnthropicNoContent body)) pure (parseTurn body)
@@ -213,7 +216,7 @@ recordChatAnthropic path cfg action = do
   interpret
     (\_ (Converse specs msgs) -> liftIO $ do
         (turn, _u) <- converseOnce cfg mgr specs msgs
-        TIO.appendFile path (encode (turnContentJson turn) <> "\n")
+        TIO.appendFile path (TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson turn))) <> "\n")
         pure turn)
     action
 
@@ -275,7 +278,7 @@ messagesRequest cfg bodyJson = do
         , ("anthropic-version", "2023-06-01")
         , ("content-type", "application/json")
         ]
-    , requestBody = RequestBodyLBS (LBS.fromStrict (TE.encodeUtf8 (encode bodyJson)))
+    , requestBody = RequestBodyLBS (A.encode bodyJson)
     }
 
 -- | Wrap an IO action in the shared retry policy: jittered exponential backoff
@@ -323,19 +326,19 @@ anthropicComplete cfg mgr msgs = fst <$> anthropicCompleteUsage cfg mgr msgs
 -- top-level @system@ field; the remaining turns become the @messages@ array.
 requestJson :: AnthropicConfig -> [Message] -> Value
 requestJson cfg msgs =
-  JObject $
-    [ ("model", JString (acModel cfg))
-    , ("max_tokens", JNumber (fromIntegral (acMaxTokens cfg)))
+  A.object $
+    [ "model" .= acModel cfg
+    , "max_tokens" .= acMaxTokens cfg
     ]
       ++ systemField
-      ++ [ ("messages", JArray [turn m | m <- conversation]) ]
+      ++ [ "messages" .= A.Array (V.fromList [turn m | m <- conversation]) ]
   where
     (systems, conversation) = partition ((== System) . role) msgs
     systemField = case systems of
       [] -> []
-      _  -> [("system", JString (T.intercalate "\n\n" (map content systems)))]
+      _  -> ["system" .= T.intercalate "\n\n" (map content systems)]
     turn (Message r c) =
-      JObject [("role", JString (anthropicRole r)), ("content", JString c)]
+      A.object ["role" .= anthropicRole r, "content" .= c]
 
 -- | Map a 'Role' to an Anthropic message role. System is handled separately; a
 -- Tool result is sent as a user turn (the API has no distinct tool role here).
@@ -345,75 +348,91 @@ anthropicRole = \case
   _         -> "user"
 
 -- | Pull @content[0].text@ out of a Messages API response.
-extractText :: Text -> Either D.Error Text
-extractText = D.decodeString (D.field "content" (D.index 0 (D.field "text" D.string)))
+extractText :: Text -> Either String Text
+extractText t = do
+  v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 t))
+  AT.parseEither
+    (A.withObject "resp" $ \o -> do
+        arr <- o .: "content"
+        case arr of
+          (x : _) -> A.withObject "block" (.: "text") x
+          []      -> fail "empty content array")
+    v
 
 -- | Build the @/v1/messages@ request body for a chat turn: the model + token
 -- cap, the advertised @tools@ (each @{name, input_schema}@), and the
 -- conversation @messages@ as content-block arrays.
-chatRequestJson :: AnthropicConfig -> [(ToolName, Schema)] -> [ChatMsg] -> Value
+chatRequestJson :: AnthropicConfig -> [(ToolName, Value)] -> [ChatMsg] -> Value
 chatRequestJson cfg specs msgs =
-  JObject
-    [ ("model", JString (acModel cfg))
-    , ("max_tokens", JNumber (fromIntegral (acMaxTokens cfg)))
-    , ("tools", JArray [ toolSpec n s | (n, s) <- specs ])
-    , ("messages", JArray (map chatMsgJson msgs))
+  A.object
+    [ "model" .= acModel cfg
+    , "max_tokens" .= acMaxTokens cfg
+    , "tools" .= A.Array (V.fromList [ toolSpec n s | (n, s) <- specs ])
+    , "messages" .= A.Array (V.fromList (map chatMsgJson msgs))
     ]
   where
-    toolSpec n s = JObject [("name", JString n), ("input_schema", schemaToJson s)]
+    toolSpec n s = A.object ["name" .= A.String n, "input_schema" .= s]
 
 chatMsgJson :: ChatMsg -> Value
 chatMsgJson (ChatMsg r blocks) =
-  JObject [("role", JString (anthropicRole r)), ("content", JArray (map blockJson blocks))]
+  A.object ["role" .= anthropicRole r, "content" .= A.Array (V.fromList (map blockJson blocks))]
 
 -- | Encode a 'Turn' to the Anthropic content shape (reusing 'blockJson'), for
 -- recording to a chat cassette. Round-trips: @parseTurn (encode (turnContentJson t)) == Right t@.
 turnContentJson :: Turn -> Value
 turnContentJson (Turn t uses) =
-  JObject [("content", JArray (map blockJson blocks))]
+  A.object ["content" .= A.Array (V.fromList (map blockJson blocks))]
   where
     blocks = [TextBlock t | not (T.null t)] ++ map ToolUseBlock uses
 
 blockJson :: Block -> Value
 blockJson (TextBlock t) =
-  JObject [("type", JString "text"), ("text", JString t)]
+  A.object ["type" .= A.String "text", "text" .= t]
 blockJson (ToolUseBlock (ToolUse i n a)) =
-  JObject [("type", JString "tool_use"), ("id", JString i), ("name", JString n), ("input", a)]
+  A.object ["type" .= A.String "tool_use", "id" .= i, "name" .= n, "input" .= a]
 blockJson (ToolResultBlock i v) =
-  JObject
-    [ ("type", JString "tool_result")
-    , ("tool_use_id", JString i)
-    , ("content", resultText v)
+  A.object
+    [ "type" .= A.String "tool_result"
+    , "tool_use_id" .= i
+    , "content" .= resultText v
     ]
   where
-    resultText (JString s) = JString s
-    resultText other       = JString (encode other)
+    resultText (String s) = A.String s
+    resultText other      = A.String (TE.decodeUtf8 (LBS.toStrict (A.encode other)))
 
 -- | Parse a @/v1/messages@ response body into a 'Turn': concatenated @text@
 -- blocks, plus every @tool_use@ block.
-parseTurn :: Text -> Either D.Error Turn
-parseTurn = D.decodeString (D.field "content" (toTurn <$> D.list rblock))
-  where
-    toTurn bs = Turn (T.concat [t | RText t <- bs]) [u | RUse u <- bs]
+parseTurn :: Text -> Either String Turn
+parseTurn t = do
+  v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 t))
+  AT.parseEither
+    (A.withObject "resp" $ \o -> do
+        blocks <- o .: "content"
+        rbs    <- mapM parseRBlock blocks
+        pure (Turn (T.concat [tx | RText tx <- rbs]) [u | RUse u <- rbs]))
+    v
 
 data RBlock = RText Text | RUse ToolUse | RSkip
 
-rblock :: D.Decoder RBlock
-rblock = D.field "type" D.string >>= \ty -> case ty of
-  "text"     -> RText <$> D.field "text" D.string
-  "tool_use" ->
-    (\i n inp -> RUse (ToolUse i n inp))
-      <$> D.field "id" D.string
-      <*> D.field "name" D.string
-      <*> D.field "input" D.value
-  _ -> D.succeed RSkip
+parseRBlock :: Value -> AT.Parser RBlock
+parseRBlock = A.withObject "block" $ \o -> do
+  ty <- o .: "type" :: AT.Parser Text
+  case ty of
+    "text"     -> RText <$> o .: "text"
+    "tool_use" -> do
+      i   <- o .: "id"
+      n   <- o .: "name"
+      inp <- o .: "input"
+      pure (RUse (ToolUse i n inp))
+    _ -> pure RSkip
 
 -- | Read the @usage@ object from a @\/v1\/messages@ response body. A body without
 -- a well-formed @usage@ yields 'mempty' — usage is telemetry, not correctness.
 parseUsage :: Text -> Usage
-parseUsage =
-  either (const mempty) id
-    . D.decodeString
-        (D.field "usage"
-          (Usage <$> D.field "input_tokens"  D.int
-                 <*> D.field "output_tokens" D.int))
+parseUsage t = either (const mempty) id $ do
+  v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 t))
+  AT.parseEither
+    (A.withObject "resp" $ \o -> do
+        u <- o .: "usage"
+        Usage <$> u .: "input_tokens" <*> u .: "output_tokens")
+    v
