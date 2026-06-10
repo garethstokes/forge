@@ -1,0 +1,14 @@
+.zinc/
+.direnv/
+result
+result-*
+*.hi
+*.o
+
+# Claude Code worktrees (session-local, never published)
+.claude/worktrees/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
