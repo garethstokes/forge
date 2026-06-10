@@ -20,7 +20,10 @@ and a calibration path that compares judge scores to hand labels. A follow-up
 sweep of Dec 2025 – Jun 2026 papers (§5) adds: vote-margin as a label-free
 judge-uncertainty signal, a lint pass over rubric criteria (coverage,
 conflation, direction, redundancy), LLM-drafted checklists as a reviewed
-starting point, and validate-and-repair on judge JSON.
+starting point, validate-and-repair on judge JSON, and adaptive stopping —
+end the vote loop once the majority is decided, and spend human calibration
+labels on contested cases; bandit-style allocation across cases is the wrong
+level for a regression suite.
 
 ## Techniques
 
@@ -264,6 +267,38 @@ ensemble modes, few-shot calibration, Cohen's kappa built in
 ([Autorubric](https://arxiv.org/abs/2603.00077)). Validates the direction;
 worth skimming for API design before building `Checklist` and `calibrate`.
 
+**Adaptive stopping and bandit-style budget allocation.** Sequential-testing
+ideas — keep sampling only until confidence in the answer crosses a threshold,
+rather than running a fixed n — apply to evals at three distinct levels, and
+it matters which one you mean:
+
+- *Inside the vote loop.* Adaptive-Consistency stops majority-vote sampling
+  once a posterior over the running tally says the leader is settled, cutting
+  samples up to 7.9x with <0.1% accuracy drop
+  ([Adaptive-Consistency](https://arxiv.org/abs/2305.11860), EMNLP 2023;
+  refined by confidence-guided variants like
+  [CGES](https://arxiv.org/abs/2511.02603)). For binary verdicts this gets
+  trivial: in an n=3 majority vote, two agreeing votes decide the outcome and
+  the third call is wasted. This is the directly stealable piece.
+- *Across variants (best-arm identification).* Bandit methods (Thompson
+  sampling, UCB-E) allocate eval budget toward promising prompt/model variants
+  and stop when the best is identified with target confidence. Recent work
+  adds statistical care: doubly robust estimators with valid finite-sample
+  confidence intervals under adaptive sampling
+  ([low-rank best-model identification](https://arxiv.org/abs/2605.10405)),
+  and combining cheap LLM-judge scores with selectively-spent human audits via
+  anytime-valid confidence sequences, concentrating audits on close calls
+  ([BAI with LLM judges](https://arxiv.org/abs/2601.21471)). The standard trap:
+  peeking at fixed-n confidence intervals and stopping early invalidates them;
+  sequential stopping needs anytime-valid intervals by construction.
+- *Not the regression suite.* A CI-style eval wants a verdict on every case —
+  coverage, not selection. Bandits optimise where to spend a budget when you
+  only need the winner; they have nothing to offer when every case must be
+  judged. The audit-allocation idea does transfer to calibration, though:
+  spend scarce human labels preferentially on contested cases (judge vote
+  splits) rather than uniformly, which is the Neyman-allocation insight from
+  the BAI-with-judges paper applied to the §2 calibration workflow.
+
 ## Recommendations for crucible
 
 Concrete, roughly in order of value per line of code.
@@ -332,6 +367,15 @@ that the judge is uncertain on that case (SAGE, §5). Flag contested cases in
 API-accessible stand-in for judge-confidence routing and costs nothing extra
 once `judgeN` exists.
 
+Stop voting early when the outcome is decided (adaptive stopping, §5): for
+binary verdicts a majority of n is settled as soon as one side reaches
+⌈n/2⌉+ votes — at n=3, two agreeing votes make the third call pure waste, so
+sequential voting costs ~2.x calls per case instead of 3 with an identical
+verdict. Note the interaction with the margin signal above: an early-stopped
+2-0 is *less* informative about uncertainty than a full 2-1/3-0 distinction,
+so either record "stopped early" as its own margin value or skip early
+stopping when calibrating.
+
 ### 4. Harden the judge prompt
 
 Current system prompt is one line. Borrow the standard mitigations:
@@ -361,7 +405,9 @@ bypasses the skill under test and evaluates only the judge) and report raw
 agreement, Cohen's kappa, and precision/recall on the fail class. Document
 the workflow in the manual: label ~30 outputs pass/fail with critiques,
 run `calibrate`, edit the rubric until kappa > 0.6, only then trust
-`testSkill` numbers. This is the LangSmith Align Evals loop in library form
+`testSkill` numbers. When choosing which outputs to label, spend human effort
+preferentially on cases where the judge's votes split (§5, audit allocation)
+rather than sampling uniformly — disagreement is where labels buy the most. This is the LangSmith Align Evals loop in library form
 and is the piece none of the small frameworks ship as code.
 
 ### 6. Manual guidance on splitting rubrics
@@ -390,7 +436,13 @@ the codec, and matters more once `Checklist` returns a JSON array per case.
 
 Not recommended for crucible: Likert/numeric judge scales (calibrate worse,
 nothing in the Report type needs them) and pairwise comparison (different
-product: variant ranking, not regression testing).
+product: variant ranking, not regression testing). Likewise bandit-style
+budget allocation across cases (Thompson sampling etc., §5): a regression
+suite needs every case judged, so there is no selection problem to optimise —
+adaptive stopping belongs inside the vote loop (`judgeN`), and best-arm
+identification only becomes relevant if a variant-ranking mode ever lands, at
+which point use anytime-valid confidence sequences, not repeated peeks at
+fixed-n intervals.
 
 ## Sources
 
@@ -430,3 +482,7 @@ Added 2026-06-11, follow-up sweep of Dec 2025 – Jun 2026 papers (§5):
 - https://arxiv.org/abs/2603.07019 (AutoChecklist)
 - https://arxiv.org/abs/2604.27727 (Reliability-aware LLM-as-a-judge for coding)
 - https://arxiv.org/abs/2605.30568 (Dynamic Evaluation Rubrics)
+- https://arxiv.org/abs/2305.11860 (Adaptive-Consistency: early-stopped majority voting, EMNLP 2023)
+- https://arxiv.org/abs/2511.02603 (CGES: confidence-guided early stopping for self-consistency)
+- https://arxiv.org/abs/2601.21471 (Best-arm identification with LLM judges and limited human audits)
+- https://arxiv.org/abs/2605.10405 (Valid best-model identification via low-rank factorization)
