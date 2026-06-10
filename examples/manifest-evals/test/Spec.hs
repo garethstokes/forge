@@ -1,4 +1,4 @@
 module Main where
-
+import qualified SchemaSpec
 main :: IO ()
-main = putStrLn "manifest-evals tests (none yet)"
+main = SchemaSpec.main
