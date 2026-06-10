@@ -29,22 +29,19 @@ module Fixtures
   , Comment
   ) where
 
-import Control.Exception (SomeException, finally, try)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as BC
 import Data.Functor.Identity (Identity)
 import Data.Proxy (Proxy(..))
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import System.Directory (removeDirectoryRecursive)
-import System.Process (callProcess, readProcess)
 import Manifest.Core.Table (Field, Pk, Nullable)
 import Manifest.Core.Meta (genericTableMeta)
 import Manifest.Core.Cascade (OnDelete(..))
 import Manifest.Core.Relation (Card(..), HasRelation(..), belongsTo, belongsToMaybe, cascade, hasMany, hasOpt)
 import Manifest.Derive ()
 import Manifest.Entity (Entity (..), Table (..))
-import Manifest.Postgres (Pool, closePool, execText, newPool, withConnection)
+import Manifest.Postgres (Pool, execText, withConnection)
+import Manifest.Testing (withEphemeralDb)
 
 -- | The example higher-kinded table. One declaration; @UserT Identity@ is the
 -- clean runtime value, @UserT Exposed@ carries markers for the deriver.
@@ -195,33 +192,16 @@ commentsDDL =
   \, comment_post BIGINT NOT NULL \
   \, comment_body TEXT NOT NULL )"
 
--- | Spin up an ephemeral, isolated Postgres for the action: initdb + pg_ctl on a
--- private unix socket, run the given DDL list, hand over a 2-connection pool,
--- tear down. The shared cluster setup for both 'withTestDb' and 'withEmptyDb'.
-withCluster :: [ByteString] -> (Pool -> IO a) -> IO a
-withCluster ddls body = do
-  base <- fmap (takeWhile (/= '\n')) (readProcess "mktemp" ["-d", "/tmp/manifest-pg.XXXXXX"] "")
-  let dataDir  = base ++ "/data"
-      sock     = base                     -- unix socket dir
-      port     = "55432"                  -- only names the socket file; TCP disabled below
-      conninfo = BC.pack ("host=" ++ sock ++ " port=" ++ port ++ " dbname=postgres user=postgres")
-      pgOpts   = "-k " ++ sock ++ " -p " ++ port ++ " -c listen_addresses=''"  -- no TCP
-      stop     = callProcess "pg_ctl" ["stop", "-D", dataDir, "-m", "immediate", "-w"]
-      ignoring act = (try act :: IO (Either SomeException ())) >> pure ()
-      cleanup  = ignoring stop `finally` ignoring (removeDirectoryRecursive base)
-  flip finally cleanup $ do
-    _ <- readProcess "initdb" ["-D", dataDir, "-U", "postgres", "-A", "trust", "--no-sync"] ""
-    callProcess "pg_ctl" ["start", "-D", dataDir, "-w", "-l", base ++ "/postgres.log", "-o", pgOpts]
-    pool <- newPool conninfo 2
-    (do withConnection pool (\c -> mapM_ (\s -> execText c s []) ddls)
-        body pool) `finally` closePool pool
-
 -- | Spin up an ephemeral, isolated Postgres for the action with the example
--- schema pre-created, hand over a 2-connection pool, tear down.
+-- schema pre-created, hand over a 2-connection pool, tear down. Built on the
+-- library's 'withEphemeralDb' plus the fixture DDLs.
 withTestDb :: (Pool -> IO a) -> IO a
-withTestDb = withCluster [usersDDL, postsDDL, profileDDL, tagsDDL, employeesDDL, commentsDDL]
+withTestDb body = withEphemeralDb $ \pool -> do
+  let ddls = [usersDDL, postsDDL, profileDDL, tagsDDL, employeesDDL, commentsDDL]
+  withConnection pool (\c -> mapM_ (\s -> execText c s []) ddls)
+  body pool
 
 -- | Same ephemeral cluster as 'withTestDb' but creates NO tables — for migration
--- tests that introspect/diff against an empty schema.
+-- tests that introspect/diff against an empty schema. Re-exports the library helper.
 withEmptyDb :: (Pool -> IO a) -> IO a
-withEmptyDb = withCluster []
+withEmptyDb = withEphemeralDb

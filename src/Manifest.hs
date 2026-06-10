@@ -163,6 +163,8 @@ module Manifest
     -- * Errors
   , DbError(..)
   , DbException(..)
+    -- * Testing helpers
+  , withEphemeralDb
   ) where
 
 import Manifest.Core.Query
@@ -292,4 +294,7 @@ import Manifest.Session
 import Manifest.Session.Command
   ( update
   , deleteWhere
+  )
+import Manifest.Testing
+  ( withEphemeralDb
   )
