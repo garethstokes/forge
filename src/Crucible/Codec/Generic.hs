@@ -15,6 +15,7 @@ module Crucible.Codec.Generic
   ) where
 
 import Control.Applicative ((<|>))
+import Data.Scientific (fromFloatDigits)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics
@@ -26,7 +27,7 @@ import qualified Autodocodec as AC
 -- | autodocodec has no @HasCodec Double@ (only @Scientific@/@Int@/@Integer@);
 -- supply one so 'Double' record fields derive. Orphan by necessity.
 instance {-# OVERLAPPING #-} HasCodec Double where
-  codec = dimapCodec realToFrac realToFrac scientificCodec
+  codec = dimapCodec realToFrac fromFloatDigits scientificCodec
 
 -- | Build a 'JSONCodec' for any single-record or nullary-sum 'Generic' type.
 genericCodec :: forall a. (Generic a, GCodec (Rep a)) => JSONCodec a

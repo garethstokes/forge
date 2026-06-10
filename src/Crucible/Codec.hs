@@ -14,6 +14,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
+import Data.Scientific (fromFloatDigits)
 import Autodocodec
   ( JSONCodec, ObjectCodec, codec, textCodec, boolCodec, valueCodec
   , scientificCodec, dimapCodec
@@ -28,7 +29,7 @@ bool = boolCodec
 int :: JSONCodec Int
 int = codec
 float :: JSONCodec Double
-float = dimapCodec realToFrac realToFrac scientificCodec
+float = dimapCodec realToFrac fromFloatDigits scientificCodec
 anyValue :: JSONCodec Value
 anyValue = valueCodec
 

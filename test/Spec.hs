@@ -316,6 +316,9 @@ main = runChecks
           [ "type" A..= A.String "object"
           , "properties" A..= A.object ["msg" A..= A.object ["type" A..= A.String "string"]]
           , "required" A..= A.toJSON [A.String "msg"] ]) (\_ -> pure Null)])
+  , check "float codec: clean shortest-decimal encoding (not realToFrac bloat)"
+      "0.1"
+      (A.encode (toJSONVia C.float (0.1 :: Double)))
   -- M9 Task 3: Crucible.Example end-to-end agent
   , check "example agent: tool (get_weather) then answer"
       "sunny in Brisbane"
