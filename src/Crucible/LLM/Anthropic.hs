@@ -11,9 +11,14 @@
 
 -- | The live Anthropic interpreter for the 'LLM' effect (M8).
 --
--- @runLLMAnthropic@ discharges @LLM@ by calling the real Anthropic Messages
--- API over HTTPS (@POST \/v1\/messages@) via @http-client-tls@. It is the
--- @IOE@-grounded counterpart to the pure @runLLMScripted@: the control loop's
+-- Interpreters are named as short verbs meant to be used qualified:
+-- @Anthropic.run@, @Anthropic.usage@, @Anthropic.record@, @Anthropic.replay@,
+-- and their @Chat@ twins (@Anthropic.runChat@, @Anthropic.usageChat@,
+-- @Anthropic.recordChat@, @Anthropic.replayChat@).
+--
+-- 'run' discharges @LLM@ by calling the real Anthropic Messages API over HTTPS
+-- (@POST \/v1\/messages@) via @http-client-tls@. It is the @IOE@-grounded
+-- counterpart to the pure @runLLMScripted@: the control loop's
 -- @(LLM :> es, Tools :> es)@ type is unchanged; only the interpreter at the
 -- edge differs.
 --
@@ -25,20 +30,20 @@ module Crucible.LLM.Anthropic
   , defaultAnthropicConfig
   , newAnthropicManager
   , requestJson
-  , runLLMAnthropic
-  , recordLLMAnthropic
-  , runLLMCassette
+  , run
+  , record
+  , replay
   , AnthropicError (..)
   , isRetryable
   , chatRequestJson
   , turnContentJson
   , parseTurn
   , parseUsage
-  , runChatAnthropic
-  , recordChatAnthropic
-  , runChatCassette
-  , runLLMAnthropicUsage
-  , runChatAnthropicUsage
+  , runChat
+  , recordChat
+  , replayChat
+  , usage
+  , usageChat
   , messagesRequest
   , withAnthropicRetry
   ) where
@@ -150,17 +155,18 @@ newAnthropicManager cfg =
 -- | Interpret @LLM@ against the live Anthropic Messages API. One shared TLS
 -- manager is created up front; each 'Complete' is one @POST \/v1\/messages@ with
 -- timeout + retry. Failures throw 'AnthropicError'.
-runLLMAnthropic :: (IOE :> es) => AnthropicConfig -> Eff (LLM : es) a -> Eff es a
-runLLMAnthropic cfg action = do
+-- Use as @Anthropic.run@.
+run :: (IOE :> es) => AnthropicConfig -> Eff (LLM : es) a -> Eff es a
+run cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   interpret (\_ (Complete msgs) -> liftIO (anthropicComplete cfg mgr msgs)) action
 
--- | Like 'runLLMAnthropic', but also TEE each reply to a cassette file (one
+-- | Like 'run', but also TEE each reply to a cassette file (one
 -- JSON-encoded reply per line, appended in call order). A recorded cassette
--- replays deterministically via 'runLLMCassette' — the slider between a live
--- eval and a hermetic test.
-recordLLMAnthropic :: (IOE :> es) => FilePath -> AnthropicConfig -> Eff (LLM : es) a -> Eff es a
-recordLLMAnthropic path cfg action = do
+-- replays deterministically via 'replay' — the slider between a live
+-- eval and a hermetic test. Use as @Anthropic.record@.
+record :: (IOE :> es) => FilePath -> AnthropicConfig -> Eff (LLM : es) a -> Eff es a
+record path cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   interpret
     (\_ (Complete msgs) -> liftIO $ do
@@ -169,11 +175,11 @@ recordLLMAnthropic path cfg action = do
         pure reply)
     action
 
--- | Replay a cassette recorded by 'recordLLMAnthropic': each 'Complete' pops the
+-- | Replay a cassette recorded by 'record': each 'Complete' pops the
 -- next recorded reply in order (a file-backed 'runLLMScripted'). Deterministic;
--- no network. Exhausting the cassette yields @""@.
-runLLMCassette :: (IOE :> es) => FilePath -> Eff (LLM : es) a -> Eff es a
-runLLMCassette path action = do
+-- no network. Exhausting the cassette yields @""@. Use as @Anthropic.replay@.
+replay :: (IOE :> es) => FilePath -> Eff (LLM : es) a -> Eff es a
+replay path action = do
   contents <- liftIO (TIO.readFile path)
   let replies =
         [ either (const ln) id $ do
@@ -202,19 +208,19 @@ converseOnce cfg mgr specs msgs = do
 -- | Interpret 'Chat' against the live Anthropic Messages API with native
 -- tool-calling. One shared TLS manager is created up front; each 'Converse'
 -- POSTs the conversation + tool specs and parses the assistant's 'Turn'.
--- Failures throw 'AnthropicError'.
-runChatAnthropic :: (IOE :> es) => AnthropicConfig -> Eff (Chat : es) a -> Eff es a
-runChatAnthropic cfg action = do
+-- Failures throw 'AnthropicError'. Use as @Anthropic.runChat@.
+runChat :: (IOE :> es) => AnthropicConfig -> Eff (Chat : es) a -> Eff es a
+runChat cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   interpret
     (\_ (Converse specs msgs) -> liftIO (fst <$> converseOnce cfg mgr specs msgs))
     action
 
--- | Like 'runChatAnthropic', but also TEE each assistant 'Turn' to a cassette
+-- | Like 'runChat', but also TEE each assistant 'Turn' to a cassette
 -- file (one content-JSON line, appended in call order). Replays via
--- 'runChatCassette'.
-recordChatAnthropic :: (IOE :> es) => FilePath -> AnthropicConfig -> Eff (Chat : es) a -> Eff es a
-recordChatAnthropic path cfg action = do
+-- 'replayChat'. Use as @Anthropic.recordChat@.
+recordChat :: (IOE :> es) => FilePath -> AnthropicConfig -> Eff (Chat : es) a -> Eff es a
+recordChat path cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   interpret
     (\_ (Converse specs msgs) -> liftIO $ do
@@ -223,12 +229,12 @@ recordChatAnthropic path cfg action = do
         pure turn)
     action
 
--- | Replay a cassette recorded by 'recordChatAnthropic': each 'Converse' pops
+-- | Replay a cassette recorded by 'recordChat': each 'Converse' pops
 -- the next recorded 'Turn' in order (a file-backed 'runChatScripted').
 -- Deterministic; no network. Exhausting the cassette, or an unparseable line,
--- yields @Turn "" []@.
-runChatCassette :: (IOE :> es) => FilePath -> Eff (Chat : es) a -> Eff es a
-runChatCassette path action = do
+-- yields @Turn "" []@. Use as @Anthropic.replayChat@.
+replayChat :: (IOE :> es) => FilePath -> Eff (Chat : es) a -> Eff es a
+replayChat path action = do
   contents <- liftIO (TIO.readFile path)
   let turns =
         [ either (const (Turn "" [])) id (parseTurn ln)
@@ -243,11 +249,11 @@ runChatCassette path action = do
         []         -> pure (Turn "" []))
     action
 
--- | Like 'runLLMAnthropic', but sum the token usage across every 'Complete' and
+-- | Like 'run', but sum the token usage across every 'Complete' and
 -- return the total alongside the result. Additive opt-in; the underlying API
--- calls are identical to 'runLLMAnthropic'.
-runLLMAnthropicUsage :: (IOE :> es) => AnthropicConfig -> Eff (LLM : es) a -> Eff es (a, Usage)
-runLLMAnthropicUsage cfg action = do
+-- calls are identical to 'run'. Use as @Anthropic.usage@.
+usage :: (IOE :> es) => AnthropicConfig -> Eff (LLM : es) a -> Eff es (a, Usage)
+usage cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   reinterpret (runState mempty)
     (\_ (Complete msgs) -> do
@@ -256,11 +262,11 @@ runLLMAnthropicUsage cfg action = do
         pure text)
     action
 
--- | Like 'runChatAnthropic', but sum the token usage across every 'Converse'
+-- | Like 'runChat', but sum the token usage across every 'Converse'
 -- (e.g. each step of a 'runToolAgent' loop) and return the total alongside the
--- result. Additive opt-in.
-runChatAnthropicUsage :: (IOE :> es) => AnthropicConfig -> Eff (Chat : es) a -> Eff es (a, Usage)
-runChatAnthropicUsage cfg action = do
+-- result. Additive opt-in. Use as @Anthropic.usageChat@.
+usageChat :: (IOE :> es) => AnthropicConfig -> Eff (Chat : es) a -> Eff es (a, Usage)
+usageChat cfg action = do
   mgr <- liftIO (newAnthropicManager cfg)
   reinterpret (runState mempty)
     (\_ (Converse specs msgs) -> do

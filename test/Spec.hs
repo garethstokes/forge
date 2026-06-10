@@ -33,7 +33,8 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
-import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson, runChatCassette)
+import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
+import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), ChatMsg(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
@@ -614,8 +615,8 @@ main = runChecks
              TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "" [ToolUse "u1" "get_weather" (object ["city" .= String "Brisbane"])])))) <> "\n"
              <> TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "Sunny in Brisbane!" [])))) <> "\n"
        TIO.writeFile cassettePath cassette
-       r <- runEff (runChatCassette cassettePath (runToolAgent [weatherToolC] "weather in Brisbane?"))
-       check "runChatCassette: replays a tool loop to the final answer"
+       r <- runEff (Anthropic.replayChat cassettePath (runToolAgent [weatherToolC] "weather in Brisbane?"))
+       check "Anthropic.replayChat: replays a tool loop to the final answer"
          (Right "Sunny in Brisbane!")
          r
   ]
