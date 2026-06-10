@@ -16,7 +16,7 @@ import Data.Aeson (Value)
 import Effectful
 import NeatInterpolation (text)
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
-import Crucible.Tool (Tools, callTool, ToolCall(..))
+import Crucible.Tool (Tools, callTool, ToolCall(..), renderToolError)
 import Crucible.Codec (JSONCodec, schemaText)
 import Crucible.Decode (decodeLLM, DecodeError (..))
 import Crucible.Decision (Decision, Step(..), reduce)
@@ -52,7 +52,7 @@ runAgent codec = loop
           Halt ans                -> pure ans
           Continue (ToolCall n a) -> do
             res <- callTool n a
-            loop (append st1 (Message Tool (either ("error: " <>) encodeValue res)))
+            loop (append st1 (Message Tool (either (("error: " <>) . renderToolError) encodeValue res)))
 
 encodeValue :: Value -> Text
 encodeValue = TE.decodeUtf8 . LB.toStrict . A.encode

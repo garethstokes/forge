@@ -94,7 +94,7 @@ weatherToolSchema = A.object
   ]
 
 weatherToolC :: Tl.Tool es
-weatherToolC = Tl.Tool "get_weather" weatherToolSchema (\_ -> pure (A.String "Sunny in Brisbane!"))
+weatherToolC = Tl.rawTool "get_weather" weatherToolSchema (\_ -> pure (A.String "Sunny in Brisbane!"))
 
 -- M11 Task 1: Crucible.Skill fixtures
 classifyFn :: Skill T.Text T.Text
@@ -107,11 +107,11 @@ agentCodec = decisionCodec Tl.toolCallCodec (C.object (C.field "answer" id C.str
 
 agentTools :: [Tl.Tool es]
 agentTools =
-  [ Tl.Tool "get_weather" weatherToolSchema $ \args ->
+  [ Tl.rawTool "get_weather" weatherToolSchema $ \args ->
       pure $ case AT.parseMaybe (A.withObject "" (\o -> o A..: "city")) args of
                Just c  -> A.String ("sunny in " <> c)
                Nothing -> A.String "unknown city"
-  , Tl.Tool "add" (A.object
+  , Tl.rawTool "add" (A.object
         [ "type" A..= A.String "object"
         , "properties" A..= A.object
             [ "a" A..= A.object [ "type" A..= A.String "number" ]
@@ -332,22 +332,22 @@ main = runChecks
         (object ["tool" .= String "get_weather", "args" .= object ["city" .= String "Hobart"]]))
   , check "toolsHelp lists tools"
       "- echo(args: {\"properties\":{\"msg\":{\"type\":\"string\"}},\"required\":[\"msg\"],\"type\":\"object\"})"
-      (Tl.toolsHelp [Tl.Tool "echo" (A.object
+      (Tl.toolsHelp [Tl.rawTool "echo" (A.object
           [ "type" A..= A.String "object"
           , "properties" A..= A.object ["msg" A..= A.object ["type" A..= A.String "string"]]
           , "required" A..= A.toJSON [A.String "msg"] ]) (\_ -> pure Null)])
   , check "tool: type-driven constructor derives object schema + decodes args"
-      (Just (String "object"), A.String "sunny in Hobart")
-      ( let t = Tl.tool "weather" (\(Loc c) -> pure (A.String ("sunny in " <> c))) :: Tl.Tool '[]
+      (Just (String "object"), Right (A.String "sunny in Hobart"))
+      ( let t = Tl.tool @"weather" (\(Loc c) -> pure ("sunny in " <> c :: Text)) :: Tl.Tool '[]
         in ( schemaType t.schema
-           , runPureEff (t.run (object ["locCity" .= String "Hobart"])) ) )
-  , check "tool: decode failure yields error string"
-      True
-      ( let t = Tl.tool "weather" (\(Loc c) -> pure (A.String ("sunny in " <> c))) :: Tl.Tool '[]
-            result = runPureEff (t.run (object []))
-        in case result of
-             A.String s -> T.isPrefixOf "bad tool args:" s
-             _          -> False )
+           , runPureEff (Tl.invoke t (object ["locCity" .= String "Hobart"])) ) )
+  , check "tool: bad args yield Left BadArgs (schema attached, raw echoed)"
+      (Just True)
+      ( let t = Tl.tool @"weather" (\(Loc c) -> pure ("sunny in " <> c :: Text)) :: Tl.Tool '[]
+        in case runPureEff (Tl.invoke t (object [])) of
+             Left (Tl.BadArgs n e sch) ->
+               Just (n == "weather" && sch == t.schema && e.raw == "{}")
+             _ -> Nothing )
   , check "float codec: clean shortest-decimal encoding (not realToFrac bloat)"
       "0.1"
       (A.encode (toJSONVia C.float (0.1 :: Double)))

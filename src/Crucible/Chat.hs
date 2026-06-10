@@ -48,7 +48,7 @@ import qualified Data.Aeson.Types as AT
 import qualified Data.Vector as V
 
 import Crucible.LLM (Role (Assistant, User))
-import Crucible.Tool (Tool (..), ToolName)
+import Crucible.Tool (Tool (..), ToolName, ToolError (..), invoke, renderToolError)
 
 type ToolUseId = Text
 
@@ -130,8 +130,9 @@ runToolAgentN cap tools question = loop cap [Message User [TextBlock question]]
               loop (n - 1) (msgs ++ [assistant, userResults])
 
     runOne u = case filter ((== u.name) . (.name)) tools of
-      (t : _) -> ToolResultBlock u.id <$> t.run u.args
-      []      -> pure (ToolResultBlock u.id (A.String ("unknown tool: " <> u.name)))
+      (t : _) -> ToolResultBlock u.id . either (A.String . renderToolError) id <$> invoke t u.args
+      []      -> pure (ToolResultBlock u.id
+                   (A.String (renderToolError (UnknownTool u.name (map (.name) tools)))))
 
 -- | Drive a native tool-calling loop to a final text answer, capped at
 -- 'defaultMaxIterations'. See 'runToolAgentN' for a custom cap. Total: works

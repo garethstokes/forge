@@ -79,7 +79,7 @@ main = do
             , "properties" A..= A.object [ "city" A..= A.object ["type" A..= A.String "string"] ]
             , "required" A..= A.toJSON [A.String "city"]
             ]
-          weatherTool = Tl.Tool "get_weather" weatherSchema
+          weatherTool = Tl.rawTool "get_weather" weatherSchema
             (\_ -> pure (A.String "It is 26C and sunny."))
       (toolAns, usage) <- runEff (Anthropic.usageChat cfg (runToolAgent [weatherTool] "Use the tool to get the weather in Brisbane, then tell me."))
       case toolAns of
@@ -104,12 +104,10 @@ main = do
       TIO.putStrLn ("stream usage: " <> T.pack (show (usTotalTokens sUsage)) <> " tokens"
                     <> " (len " <> T.pack (show (T.length streamed)) <> ")")
       -- Streaming tool-agent (deltas printed live).
-      let weatherTool2 = Tl.Tool "get_weather" weatherSchema
-            (\_ -> pure (A.String "It is 26C and sunny."))
       TIO.putStr "stream tool: "
       (toolStream, tUsage) <-
         runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-                  (Anthropic.streamChat cfg (runToolAgent [weatherTool2] "Use the tool to get the weather in Brisbane, then tell me.")))
+                  (Anthropic.streamChat cfg (runToolAgent [weatherTool] "Use the tool to get the weather in Brisbane, then tell me.")))
       TIO.putStrLn ""
       case toolStream of
         Right a  -> TIO.putStrLn ("stream tool result: " <> a)
@@ -117,12 +115,10 @@ main = do
       TIO.putStrLn ("stream tool usage: " <> T.pack (show (usTotalTokens tUsage)) <> " tokens")
       -- Chat cassette: record a live tool-agent run, then replay it (no network).
       let chatCassette = "/tmp/crucible-chat-cassette.jsonl"
-          weatherTool3 = Tl.Tool "get_weather" weatherSchema
-            (\_ -> pure (A.String "It is 26C and sunny."))
           toolQuestion = "Use the tool to get the weather in Brisbane, then tell me."
       TIO.writeFile chatCassette ""  -- fresh cassette
-      recordedAns <- runEff (Anthropic.recordChat chatCassette cfg (runToolAgent [weatherTool3] toolQuestion))
-      replayedAns <- runEff (Anthropic.replayChat chatCassette (runToolAgent [weatherTool3] toolQuestion))
+      recordedAns <- runEff (Anthropic.recordChat chatCassette cfg (runToolAgent [weatherTool] toolQuestion))
+      replayedAns <- runEff (Anthropic.replayChat chatCassette (runToolAgent [weatherTool] toolQuestion))
       case (recordedAns, replayedAns) of
         (Right a, Right b)
           | a == b    -> TIO.putStrLn ("chat cassette: OK replay matches: " <> a)
@@ -138,9 +134,7 @@ main = do
           case otyped of
             Right o  -> TIO.putStrLn ("openai typed fn: " <> sentLabel o)
             Left e   -> TIO.putStrLn ("openai typed fn decode error: " <> e.message)
-          let oWeatherTool = Tl.Tool "get_weather" weatherSchema
-                (\_ -> pure (A.String "It is 26C and sunny."))
-          (oAns, oUsage) <- runEff (OpenAI.usageChat ocfg (runToolAgent [oWeatherTool] toolQuestion))
+          (oAns, oUsage) <- runEff (OpenAI.usageChat ocfg (runToolAgent [weatherTool] toolQuestion))
           case oAns of
             Right a  -> TIO.putStrLn ("openai tool agent: " <> a)
             Left err -> TIO.putStrLn ("openai tool agent error: " <> T.pack (show err))
@@ -155,7 +149,7 @@ main = do
           TIO.putStr "openai stream tool: "
           (oToolStream, otUsage) <-
             runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-                      (OpenAI.streamChat ocfg (runToolAgent [oWeatherTool] toolQuestion)))
+                      (OpenAI.streamChat ocfg (runToolAgent [weatherTool] toolQuestion)))
           TIO.putStrLn ""
           case oToolStream of
             Right a  -> TIO.putStrLn ("openai stream tool result: " <> a)
@@ -163,8 +157,8 @@ main = do
           TIO.putStrLn ("openai stream tool usage: " <> T.pack (show (usTotalTokens otUsage)) <> " tokens")
           let oChatCassette = "/tmp/crucible-openai-chat-cassette.jsonl"
           TIO.writeFile oChatCassette ""
-          oRecorded <- runEff (OpenAI.recordChat oChatCassette ocfg (runToolAgent [oWeatherTool] toolQuestion))
-          oReplayed <- runEff (OpenAI.replayChat oChatCassette (runToolAgent [oWeatherTool] toolQuestion))
+          oRecorded <- runEff (OpenAI.recordChat oChatCassette ocfg (runToolAgent [weatherTool] toolQuestion))
+          oReplayed <- runEff (OpenAI.replayChat oChatCassette (runToolAgent [weatherTool] toolQuestion))
           case (oRecorded, oReplayed) of
             (Right a, Right b)
               | a == b    -> TIO.putStrLn ("openai chat cassette: OK replay matches: " <> a)

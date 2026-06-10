@@ -37,13 +37,13 @@ addSchema = A.object
 
 -- pure tools (polymorphic in es; run via `pure`)
 weatherTool :: Tool es
-weatherTool = Tool "get_weather" weatherSchema $ \args ->
+weatherTool = rawTool "get_weather" weatherSchema $ \args ->
   pure $ case parseMaybe (A.withObject "" (\o -> o A..: "city")) args of
            Just c  -> A.String ("sunny in " <> c)
            Nothing -> A.String "unknown city"
 
 addTool :: Tool es
-addTool = Tool "add" addSchema $ \args ->
+addTool = rawTool "add" addSchema $ \args ->
   pure $ case parseMaybe (\v -> A.withObject "" (\o -> (,) <$> o A..: "a" <*> o A..: "b") v) args of
            Just (a, b) -> A.Number (fromIntegral (a + b :: Int))
            Nothing     -> A.String "bad args"
