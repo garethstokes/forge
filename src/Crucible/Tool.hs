@@ -7,12 +7,15 @@
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Crucible.Tool
   ( ToolName, ToolCall(..), toolCallCodec, anyValue
   , Tool(..), Tools(..), callTool, runTools, toolsHelp
+  , tool
   ) where
 
 import Data.Text (Text)
@@ -21,7 +24,10 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson as A
 import Data.Aeson (Value)
-import Crucible.Codec (JSONCodec, object, field, str, anyValue)
+import qualified Data.Aeson.Types as AT
+import Autodocodec (parseJSONVia)
+import Crucible.Codec (JSONCodec, object, field, str, anyValue, schemaValue)
+import Crucible.Codec.Generic (HasCodec (codec))
 import Effectful
 import Effectful.Dispatch.Dynamic (send, interpret)
 
@@ -65,3 +71,12 @@ toolsHelp ts = T.intercalate "\n"
 -- | Render a JSON schema Value as compact JSON text.
 renderSchemaValue :: Value -> Text
 renderSchemaValue = TE.decodeUtf8 . LB.toStrict . A.encode
+
+-- | Build a tool whose JSON-Schema is derived from its argument type and whose
+-- arguments are decoded for you. A decode failure is surfaced as an error
+-- 'Value' (the existing tool error convention).
+tool :: forall a es. HasCodec a => Text -> (a -> Eff es Value) -> Tool es
+tool nm run' = Tool nm (schemaValue (codec @a)) $ \args ->
+  case AT.parseEither (parseJSONVia (codec @a)) args of
+    Right a  -> run' a
+    Left err -> pure (A.String ("bad tool args: " <> T.pack err))
