@@ -6,6 +6,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Manifest.Query
   ( QueryM
@@ -17,6 +19,7 @@ module Manifest.Query
   , leftJoin, OptHandle, Projectable
   , rightJoin, fullJoin, opt
   , (^.)
+  , (?.), Label(..), FieldType
   , val
   , (.==), (./=), (.>), (.<), (.&&)
   , Jsonb, JsonbExpr, (.@>), (.->), (.->>), (.#>), (.#>>)
@@ -39,10 +42,15 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (State, get, modify', put, runState)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Data.Kind (Type)
+import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
+import GHC.Generics (Generic, Rep, D1, C1, S1, (:*:), Rec0, Meta (MetaSel))
+import GHC.OverloadedLabels (IsLabel (..))
+import GHC.TypeLits (KnownSymbol, Symbol, symbolVal, TypeError, ErrorMessage (..))
 import Manifest.Core.Codec (DbType, RowDecoder (..), SqlParam, decodeCol, decodeRow, encode)
-import Manifest.Core.Meta (ColumnMeta (..), TableMeta (..))
+import Manifest.Core.Meta (ColumnMeta (..), TableMeta (..), camelToSnake)
 import Manifest.Core.Query (Column (..))
 import Manifest.Core.Sql (bcIntercalate)
 import Manifest.Entity (Entity (..), pkIndex)
@@ -95,6 +103,41 @@ instance Projectable Handle where
 
 instance Projectable OptHandle where
   OptHandle al ^. Column c = Expr (al <> "." <> c) []
+
+-- | A 'Symbol'-carrying label so the typed projection '(?.)' sees the field name at
+-- the type level. @#col@ resolves to @Column a t@ where '(^.)' is expected and to
+-- @Label "col"@ where '(?.)' is expected — different target types, so no overlap.
+data Label (name :: Symbol) = Label
+
+instance (n ~ name) => IsLabel n (Label name) where
+  fromLabel = Label
+
+-- | Recover a field's type from the entity's 'Generic' record by matching the
+-- selector name. A name that names no field reduces to a 'TypeError'.
+type family FieldType (name :: Symbol) (e :: Type) :: Type where
+  FieldType name e = FromJust name (FindField name (Rep e))
+
+type family FindField (name :: Symbol) (rep :: Type -> Type) :: Maybe Type where
+  FindField name (D1 m f)  = FindField name f
+  FindField name (C1 m f)  = FindField name f
+  FindField name (a :*: b) = OrElseM (FindField name a) (FindField name b)
+  FindField name (S1 ('MetaSel ('Just name)  su ss ds) (Rec0 t)) = 'Just t
+  FindField name (S1 ('MetaSel ('Just other) su ss ds) (Rec0 t)) = 'Nothing
+
+type family OrElseM (m :: Maybe Type) (n :: Maybe Type) :: Maybe Type where
+  OrElseM ('Just t) _ = 'Just t
+  OrElseM 'Nothing  n = n
+
+type family FromJust (name :: Symbol) (m :: Maybe Type) :: Type where
+  FromJust name ('Just t) = t
+  FromJust name 'Nothing  = TypeError ('Text "entity has no field named " ':<>: 'ShowType name)
+
+-- | Typed projection: like '(^.)' but recovers the column's real Haskell type from the
+-- entity's record, so jsonb operators need no type annotation and a wrong field name is a
+-- compile error.
+(?.) :: forall name e. (KnownSymbol name, Generic e) => Handle e -> Label name -> Expr (FieldType name e)
+Handle al ?. _ = Expr (al <> "." <> camelToSnake (symbolVal (Proxy @name))) []
+infixl 8 ?.
 
 val :: DbType t => t -> Expr t
 val x = Expr "?" [encode x]
