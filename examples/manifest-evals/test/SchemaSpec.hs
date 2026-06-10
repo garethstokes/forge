@@ -55,7 +55,21 @@ main = withEphemeralDb $ \pool -> do
   expect "restrict: delete of referenced version was rejected" (rRejected restrict')
   expect "restrict: referenced dataset version still exists"   (rVersionKept restrict')
 
-  putStrLn "manifest-evals SchemaSpec: migrate + round-trip + cascade + restrict OK"
+  -- Scenario C: aggregate (mean + count of scores per grader version, for a run).
+  agg <- expectAggregate pool now
+  expect "aggregate: exactly one grader-version group" (aGroups agg == 1)
+  expect "aggregate: count of scores in the group is 2" (aCount agg == 2)
+  expect "aggregate: mean of {0.0, 1.0} is 0.5"
+    (maybe False (\m -> abs (m - 0.5) < 1e-9) (aMean agg))
+  expect "aggregate: grouped grader version matches the seeded one"
+    (aGroupGv agg == Just (aSeededGv agg))
+
+  -- Scenario D: compare two runs over the same dataset version, by example key.
+  cmp <- expectCompareRuns pool now
+  expect "compare: run A scored c1=1.0, c2=0.0" (cRunA cmp == [("c1", 1.0), ("c2", 0.0)])
+  expect "compare: run B scored c1=0.0, c2=1.0" (cRunB cmp == [("c1", 0.0), ("c2", 1.0)])
+
+  putStrLn "manifest-evals SchemaSpec: migrate + round-trip + cascade + restrict + aggregate + compare-runs OK"
 
 -- Scenario A ------------------------------------------------------------------
 
@@ -131,3 +145,118 @@ expectRestrict pool now = do
     { rRejected    = either (const True) (const False) res
     , rVersionKept = maybe False (const True) kept
     }
+
+-- Scenario C ------------------------------------------------------------------
+
+data AggregateResult = AggregateResult
+  { aGroups   :: Int                  -- number of grouped rows
+  , aCount    :: Int                  -- COUNT(*) within the (single) group
+  , aMean     :: Maybe Double         -- AVG(value) within the group
+  , aGroupGv  :: Maybe GraderVersionId-- grader version key of the group
+  , aSeededGv :: GraderVersionId      -- the grader version we seeded scores from
+  }
+
+-- Seed a run with two scored outputs (values 0.0 and 1.0) from one grader
+-- version, then aggregate mean+count per grader version for that run. The
+-- typed projection '(?.)' recovers each column's Haskell type, so the join,
+-- filter, and grouped tuple need no annotations. Tuple selections are pairs, so
+-- the (gv, mean, count) triple is left-nested as (gv, (mean, count)).
+expectAggregate :: Pool -> UTCTime -> IO AggregateResult
+expectAggregate pool now = withSession pool $ do
+  d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "agg", slug = "agg", createdAt = now } :: Dataset)
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1"
+                     , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+  e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c2"
+                     , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+  t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
+  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+                           , params = Aeson (object []), createdAt = now } :: TargetVersion)
+  g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
+  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
+                 , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+  o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "a"
+                    , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+  o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "b"
+                    , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+  _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = 0.0, passed = Just False
+                   , detail = Nothing, createdAt = now } :: Score)
+  _  <- add (Score { id = ScoreId 0, output = o2.id, graderVersion = gv.id, value = 1.0, passed = Just True
+                   , detail = Nothing, createdAt = now } :: Score)
+  rows <- runQuery $ do
+    o <- from @Output
+    s <- innerJoin @Score (\s -> s ?. #output .== o ?. #id)
+    where_ (o ?. #run .== val r.id)
+    groupBy (s ?. #graderVersion)
+    pure (s ?. #graderVersion, (avg_ (s ?. #value), countRows))
+  -- rows :: [(GraderVersionId, (Maybe Double, Int))]
+  let pick = case rows of
+        [(k, (m, c))] -> Just (k, m, c)
+        _             -> Nothing
+  pure AggregateResult
+    { aGroups   = length rows
+    , aCount    = maybe 0 (\(_, _, c) -> c) pick
+    , aMean     = pick >>= \(_, m, _) -> m
+    , aGroupGv  = fmap (\(k, _, _) -> k) pick
+    , aSeededGv = gv.id
+    }
+
+-- Scenario D ------------------------------------------------------------------
+
+data CompareResult = CompareResult
+  { cRunA :: [(Text, Double)]   -- (example key, score value) for run A
+  , cRunB :: [(Text, Double)]   -- (example key, score value) for run B
+  }
+
+-- Two runs over the SAME dataset version, scoring the same two examples with
+-- opposite values. We query each run's scores joined back to the example, return
+-- (key, value), and line the two runs up by the stable example key. This proves
+-- the schema supports comparing runs by example key.
+expectCompareRuns :: Pool -> UTCTime -> IO CompareResult
+expectCompareRuns pool now = withSession pool $ do
+  d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "cmp", slug = "cmp", createdAt = now } :: Dataset)
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1"
+                     , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+  e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c2"
+                     , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+  t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
+  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+                           , params = Aeson (object []), createdAt = now } :: TargetVersion)
+  g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
+  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  -- Run A: c1 -> 1.0, c2 -> 0.0
+  rA <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
+                 , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+  aO1 <- add (Output { id = OutputId 0, run = rA.id, example = e1.id, response = Nothing, text = Nothing
+                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+  aO2 <- add (Output { id = OutputId 0, run = rA.id, example = e2.id, response = Nothing, text = Nothing
+                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+  _ <- add (Score { id = ScoreId 0, output = aO1.id, graderVersion = gv.id, value = 1.0, passed = Just True
+                  , detail = Nothing, createdAt = now } :: Score)
+  _ <- add (Score { id = ScoreId 0, output = aO2.id, graderVersion = gv.id, value = 0.0, passed = Just False
+                  , detail = Nothing, createdAt = now } :: Score)
+  -- Run B: c1 -> 0.0, c2 -> 1.0
+  rB <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
+                 , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+  bO1 <- add (Output { id = OutputId 0, run = rB.id, example = e1.id, response = Nothing, text = Nothing
+                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+  bO2 <- add (Output { id = OutputId 0, run = rB.id, example = e2.id, response = Nothing, text = Nothing
+                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+  _ <- add (Score { id = ScoreId 0, output = bO1.id, graderVersion = gv.id, value = 0.0, passed = Just False
+                  , detail = Nothing, createdAt = now } :: Score)
+  _ <- add (Score { id = ScoreId 0, output = bO2.id, graderVersion = gv.id, value = 1.0, passed = Just True
+                  , detail = Nothing, createdAt = now } :: Score)
+  let scoresFor rid = do
+        rows <- runQuery $ do
+          o <- from @Output
+          s <- innerJoin @Score (\s -> s ?. #output .== o ?. #id)
+          e <- innerJoin @Example (\e -> e ?. #id .== o ?. #example)
+          where_ (o ?. #run .== val rid)
+          orderBy [asc (e ?. #key)]
+          pure (e ?. #key, s ?. #value)
+        pure (rows :: [(Text, Double)])
+  rowsA <- scoresFor rA.id
+  rowsB <- scoresFor rB.id
+  pure CompareResult { cRunA = rowsA, cRunB = rowsB }
