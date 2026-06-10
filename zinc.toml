@@ -12,17 +12,17 @@ version = "0.1.0"
 
 [build.lib]
 source-dirs = ["src"]
-depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls", "http-types", "retry", "exceptions", "aeson", "autodocodec", "autodocodec-schema"]
+depends = ["base", "text", "bytestring", "mtl", "effectful", "effectful-core", "http-client", "http-client-tls", "http-types", "retry", "exceptions", "aeson", "autodocodec", "autodocodec-schema", "vector", "scientific"]
 
 [build.exe.crucible-anthropic]
 source-dirs = ["app"]
 main = "Main.hs"
-depends = ["base", "text", "crucible", "effectful", "effectful-core"]
+depends = ["base", "text", "crucible", "effectful", "effectful-core", "aeson", "autodocodec"]
 
 [build.test.spec]
 source-dirs = ["test"]
 main = "Spec.hs"
-depends = ["base", "text", "bytestring", "mtl", "crucible", "effectful", "effectful-core", "autodocodec-schema"]
+depends = ["base", "text", "bytestring", "mtl", "crucible", "effectful", "effectful-core", "aeson", "autodocodec", "autodocodec-schema", "vector", "scientific"]
 
 [dependencies]
 

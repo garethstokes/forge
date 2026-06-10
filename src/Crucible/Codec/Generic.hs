@@ -14,14 +14,19 @@ module Crucible.Codec.Generic
   , genericCodec
   ) where
 
-import Data.List.NonEmpty (NonEmpty ((:|)))
+import Control.Applicative ((<|>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics
 import Autodocodec
   ( JSONCodec, ObjectCodec, HasCodec (codec), requiredFieldWith'
-  , stringConstCodec, dimapCodec, (.=) )
+  , textCodec, scientificCodec, bimapCodec, dimapCodec, lmapCodec )
 import qualified Autodocodec as AC
+
+-- | autodocodec has no @HasCodec Double@ (only @Scientific@/@Int@/@Integer@);
+-- supply one so 'Double' record fields derive. Orphan by necessity.
+instance {-# OVERLAPPING #-} HasCodec Double where
+  codec = dimapCodec realToFrac realToFrac scientificCodec
 
 -- | Build a 'JSONCodec' for any single-record or nullary-sum 'Generic' type.
 genericCodec :: forall a. (Generic a, GCodec (Rep a)) => JSONCodec a
@@ -38,33 +43,42 @@ instance GCodec f => GCodec (M1 D c f) where
 instance (Constructor c, GProd f) => GCodec (M1 C c f) where
   gcodec = dimapCodec M1 unM1 (AC.object (conNameT @c) (gprod @f))
 
--- sum of nullary constructors = enum -> stringConstCodec
-instance {-# OVERLAPPING #-} (GNullary (a :+: b)) => GCodec (a :+: b) where
-  gcodec = stringConstCodec (gvariants @(a :+: b))
+-- sum of nullary constructors = enum. Encoded by constructor name (no 'Eq' on
+-- the Rep needed — name-based, via 'bimapCodec' over 'textCodec').
+instance {-# OVERLAPPING #-} (GSum (a :+: b)) => GCodec (a :+: b) where
+  gcodec = bimapCodec dec gsEncode textCodec
+    where
+      dec t = maybe (Left ("unknown variant: " <> T.unpack t)) Right (gsDecode t)
 
 class GProd (f :: * -> *) where
   gprod :: ObjectCodec (f x) (f x)
 
 instance (GProd a, GProd b) => GProd (a :*: b) where
-  gprod =
-    (:*:)
-      <$> (gprod @a .= (\(a :*: _) -> a))
-      <*> (gprod @b .= (\(_ :*: b) -> b))
+  gprod = (:*:) <$> lmapCodec prjL gprod <*> lmapCodec prjR gprod
+    where
+      prjL (l :*: _) = l
+      prjR (_ :*: r) = r
 
 instance (Selector s, HasCodec t) => GProd (M1 S s (K1 r t)) where
-  gprod = dimapCodec (M1 . K1) (\(M1 (K1 v)) -> v)
-            (requiredFieldWith' (selNameT @s) codec)
+  gprod =
+    dimapCodec (M1 . K1) (\(M1 (K1 v)) -> v)
+      (requiredFieldWith' (selNameT @s) codec)
 
-class GNullary (f :: * -> *) where
-  gvariants :: NonEmpty (f x, Text)
-instance (GNullary a, GNullary b) => GNullary (a :+: b) where
-  gvariants =
-    fmap (\(x,t) -> (L1 x, t)) (gvariants @a)
-      <> fmap (\(x,t) -> (R1 x, t)) (gvariants @b)
-instance Constructor c => GNullary (M1 C c U1) where
-  gvariants = (M1 U1, conNameT @c) :| []
+class GSum (f :: * -> *) where
+  gsDecode :: Text -> Maybe (f x)
+  gsEncode :: f x -> Text
 
-selNameT :: forall s f x. Selector s => Text
-selNameT = T.pack (selName (undefined :: M1 S s f x))
-conNameT :: forall c f x. Constructor c => Text
-conNameT = T.pack (conName (undefined :: M1 C c f x))
+instance (GSum a, GSum b) => GSum (a :+: b) where
+  gsDecode n = (L1 <$> gsDecode n) <|> (R1 <$> gsDecode n)
+  gsEncode (L1 x) = gsEncode x
+  gsEncode (R1 x) = gsEncode x
+
+instance Constructor c => GSum (M1 C c U1) where
+  gsDecode n = if n == conNameT @c then Just (M1 U1) else Nothing
+  gsEncode _ = conNameT @c
+
+selNameT :: forall (s :: Meta). Selector s => Text
+selNameT = T.pack (selName (undefined :: M1 S s f a))
+
+conNameT :: forall (c :: Meta). Constructor c => Text
+conNameT = T.pack (conName (undefined :: M1 C c f a))

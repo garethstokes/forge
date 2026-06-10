@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 module Crucible.Codec
   ( JSONCodec, ObjectCodec
@@ -15,6 +16,7 @@ import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import Autodocodec
   ( JSONCodec, ObjectCodec, codec, textCodec, boolCodec, valueCodec
+  , scientificCodec, dimapCodec
   , listCodec, maybeCodec, stringConstCodec, requiredFieldWith', (.=) )
 import qualified Autodocodec as AC
 import Autodocodec.Schema (jsonSchemaVia)
@@ -26,7 +28,7 @@ bool = boolCodec
 int :: JSONCodec Int
 int = codec
 float :: JSONCodec Double
-float = codec
+float = dimapCodec realToFrac realToFrac scientificCodec
 anyValue :: JSONCodec Value
 anyValue = valueCodec
 

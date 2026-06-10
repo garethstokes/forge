@@ -311,7 +311,7 @@ main = runChecks
       (decodeVia Tl.toolCallCodec
         (object ["tool" .= String "get_weather", "args" .= object ["city" .= String "Hobart"]]))
   , check "toolsHelp lists tools"
-      "- echo(args: {\"type\":\"object\",\"properties\":{\"msg\":{\"type\":\"string\"}},\"required\":[\"msg\"]})"
+      "- echo(args: {\"properties\":{\"msg\":{\"type\":\"string\"}},\"required\":[\"msg\"],\"type\":\"object\"})"
       (Tl.toolsHelp [Tl.Tool "echo" (A.object
           [ "type" A..= A.String "object"
           , "properties" A..= A.object ["msg" A..= A.object ["type" A..= A.String "string"]]
