@@ -16,7 +16,11 @@ a small human-labelled seed set (~30 examples), then iterating the judge prompt
 until judge-human agreement (precision/recall, Cohen's kappa) is acceptable.
 crucible's `Verdict {pass, why}` shape is already the recommended primitive;
 the gaps are multi-criterion rubrics, CoT before the verdict, repeat-voting,
-and a calibration path that compares judge scores to hand labels.
+and a calibration path that compares judge scores to hand labels. A follow-up
+sweep of Dec 2025 – Jun 2026 papers (§5) adds: vote-margin as a label-free
+judge-uncertainty signal, a lint pass over rubric criteria (coverage,
+conflation, direction, redundancy), LLM-drafted checklists as a reviewed
+starting point, and validate-and-repair on judge JSON.
 
 ## Techniques
 
@@ -209,6 +213,57 @@ targeted graders over one omnibus grader
   prompt as few-shot examples
   ([Align Evals](https://blog.langchain.com/introducing-align-evals/)).
 
+### 5. Recent work (Dec 2025 – Jun 2026)
+
+Follow-up sweep of papers from the six months before this note. The field has
+moved from "how to write a rubric" to auto-generating rubrics, linting rubrics
+for failure modes, and measuring judge reliability without human labels.
+
+**Label-free judge reliability (SAGE).** The calibration recipe in §2 needs
+hand labels. SAGE shows you can measure judge quality with zero labels using
+two consistency lenses: local self-consistency (does the judge give the same
+verdict when asked again / with perturbed presentation?) and global
+transitivity (do its pairwise preferences form a coherent order?). Even
+frontier models flip on ~25% of hard cases. Two findings transfer directly:
+explicit rubrics measurably improve judge consistency (empirical support for
+checklist-style judging), and repeat-vote disagreement is itself a useful
+signal — a 2-1 split from an n=3 majority vote marks a case the judge is
+uncertain about ([SAGE](https://arxiv.org/abs/2512.16041)). A related line
+gets calibrated judge confidence from hidden-state linear probes
+([Calibrating LLM Judges](https://arxiv.org/abs/2512.22245)), but that needs
+model internals; vote margin is the API-accessible proxy.
+
+**Rubric linting (RRD).** §1 says how to write good criteria; RRD names the
+ways a written rubric goes wrong: coverage gaps, conflated dimensions (one
+criterion secretly testing two things), misaligned preference direction, and
+redundant/correlated criteria. Their decompose-then-filter refinement cycle is
+worth +17.7 points of judge accuracy on JudgeBench. The correlation failure
+mode matters for weighted checklists specifically: two near-duplicate criteria
+silently double their weight ([RRD](https://arxiv.org/abs/2602.05125)).
+
+**Auto-derived checklists, with a caveat.** TICK's generate-the-checklist idea
+is now mature: AutoChecklist catalogues five generation strategies behind a
+generator → refiner → scorer pipeline
+([AutoChecklist](https://arxiv.org/abs/2603.07019)), and training-free
+per-instance rubric generation is competitive with human-written rubrics
+across benchmarks ([Dynamic Evaluation
+Rubrics](https://arxiv.org/abs/2605.30568)). The caveat: LLM-generated rubrics
+are consistent within a model but degrade on factual/knowledge-intensive
+domains, so treat generated criteria as a draft for human review, not an
+unattended pipeline ([GER-Eval](https://arxiv.org/abs/2602.08672)).
+
+**Judge output as a contract.** Treat malformed judge JSON as a first-class
+failure: validate against the schema and re-prompt once with the parse error
+before giving up, rather than scoring 0 or crashing
+([Reliability-aware LLM-as-a-judge for
+coding](https://arxiv.org/abs/2604.27727)).
+
+**Autorubric as prior art.** Essentially this note's recommendation list
+shipped as a Python library: binary/ordinal criteria, single-judge and
+ensemble modes, few-shot calibration, Cohen's kappa built in
+([Autorubric](https://arxiv.org/abs/2603.00077)). Validates the direction;
+worth skimming for API design before building `Checklist` and `calibrate`.
+
 ## Recommendations for crucible
 
 Concrete, roughly in order of value per line of code.
@@ -253,7 +308,9 @@ total weight, yielding a graded `Score` while every judgement stays binary.
 The per-criterion `why`s concatenate into the rationale, which makes
 `renderReport` output actually diagnostic. Note `runEval`'s passRate counts
 `>= 1.0`, so a checklist case only "passes" if every criterion passes, which
-is the right default; weights then only matter for `meanScore`.
+is the right default; weights then only matter for `meanScore`. When weighting,
+watch for near-duplicate criteria: two correlated checks silently double their
+weight (RRD's redundancy failure mode, §5).
 
 ### 3. n-vote self-consistency on the judge
 
@@ -268,6 +325,12 @@ temperature is not controllable per-call, the votes still help against
 sampling noise on providers that never return fully deterministic output.
 Document the cost multiplier. A jury of different models is better still but
 needs multi-interpreter plumbing; not worth it yet.
+
+Surface the vote margin, don't discard it: a 2-1 split is a label-free signal
+that the judge is uncertain on that case (SAGE, §5). Flag contested cases in
+`renderReport` as "judge uncertain, review by hand" — this is the cheap,
+API-accessible stand-in for judge-confidence routing and costs nothing extra
+once `judgeN` exists.
 
 ### 4. Harden the judge prompt
 
@@ -309,6 +372,22 @@ format), or when the rubric grows past ~5 criteria. Safety-style gates are
 better expressed as their own `Checklist [Criterion]` case with weight
 irrelevant, since passRate already requires all criteria.
 
+Add a "lint your rubric" pass to the same manual section, from RRD's failure
+taxonomy (§5): check each criterion for (a) coverage — does the set actually
+span the failure modes from error analysis; (b) conflation — one criterion
+secretly testing two things (split it); (c) direction — criterion phrased so
+that "yes" is unambiguously the good outcome; (d) redundancy — near-duplicate
+criteria that double-count under weighting (merge them).
+
+### 7. Validate-and-repair the judge response
+
+Treat malformed judge JSON as a recoverable failure, not a crash or a silent
+zero: when the codec fails to parse the judge's output, re-prompt once with
+the original response and the parse error, then give up and report the case
+as judge-error (distinct from fail). One retry captures most of the benefit
+(§5, reliability-aware judging). This belongs in the judge plumbing next to
+the codec, and matters more once `Checklist` returns a JSON array per case.
+
 Not recommended for crucible: Likert/numeric judge scales (calibrate worse,
 nothing in the Report type needs them) and pairwise comparison (different
 product: variant ranking, not regression testing).
@@ -340,3 +419,14 @@ product: variant ranking, not regression testing).
 - https://futureagi.com/blog/llm-as-a-judge/
 - https://vadim.blog/llm-as-judge
 - https://www.comet.com/site/blog/llm-juries-for-evaluation/
+
+Added 2026-06-11, follow-up sweep of Dec 2025 – Jun 2026 papers (§5):
+
+- https://arxiv.org/abs/2512.16041 (SAGE: Are We on the Right Way to Assessing LLM-as-a-Judge?)
+- https://arxiv.org/abs/2512.22245 (Calibrating LLM Judges: Linear Probes)
+- https://arxiv.org/abs/2602.05125 (RRD: Rethinking Rubric Generation)
+- https://arxiv.org/abs/2602.08672 (GER-Eval: Learning to Judge, EACL 2026 Findings)
+- https://arxiv.org/abs/2603.00077 (Autorubric: Unifying Rubric-based LLM Evaluation)
+- https://arxiv.org/abs/2603.07019 (AutoChecklist)
+- https://arxiv.org/abs/2604.27727 (Reliability-aware LLM-as-a-judge for coding)
+- https://arxiv.org/abs/2605.30568 (Dynamic Evaluation Rubrics)
