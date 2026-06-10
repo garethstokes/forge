@@ -16,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Function (LlmFn (..), llmFn, withRetries, fnPrompt, call)
+import Crucible.Skill (Skill (..), skill, withRetries, prompt, call)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -86,9 +86,9 @@ weatherToolSchema = A.object
 weatherToolC :: Tl.Tool es
 weatherToolC = Tl.Tool "get_weather" weatherToolSchema (\_ -> pure (A.String "Sunny in Brisbane!"))
 
--- M11 Task 1: Crucible.Function fixtures
-classifyFn :: LlmFn T.Text T.Text
-classifyFn = llmFn "classify" C.str C.str (\s -> "Classify the sentiment of: " <> s)
+-- M11 Task 1: Crucible.Skill fixtures
+classifyFn :: Skill T.Text T.Text
+classifyFn = skill "classify" C.str C.str (\s -> "Classify the sentiment of: " <> s)
 
 -- M7 Task 2: agent test helpers — the effectful agent runs over the LLM + Tools
 -- effects, dispatching tools by name from a toolbox via the Tools effect.
@@ -362,32 +362,32 @@ main = runChecks
       "sunny in Brisbane"
       (demoAgent [ "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}"
                  , "{\"answer\":\"sunny in Brisbane\"}" ])
-  -- M11 Task 1: Crucible.Function — LlmFn + single-shot call + fnPrompt
-  , check "llmFn: happy path decodes the reply"
+  -- M11 Task 1: Crucible.Skill — Skill + single-shot call + prompt
+  , check "skill: happy path decodes the reply"
       (Right "positive")
       (runPureEff (runLLMScripted ["\"positive\""] (call classifyFn "I love it")))
-  , check "llmFn: single bad reply -> Left"
+  , check "skill: single bad reply -> Left"
       True
       (either (const True) (const False)
         (runPureEff (runLLMScripted ["not json"] (call (withRetries 0 classifyFn) "x"))))
-  , check "llmFn: fnName is stored" "classify" classifyFn.name
-  , check "fnPrompt: system message carries the output schema"
+  , check "skill: name is stored" "classify" classifyFn.name
+  , check "prompt: system message carries the output schema"
       True
-      (case fnPrompt classifyFn "hi" of
+      (case prompt classifyFn "hi" of
          (Message System s : _) ->
            T.isPrefixOf "Respond ONLY with JSON" s
              && T.isInfixOf (schemaText classifyFn.output) s
          _ -> False)
-  , check "fnPrompt: user message carries instruction + rendered input"
+  , check "prompt: user message carries instruction + rendered input"
       True
-      (case fnPrompt classifyFn "hi" of
+      (case prompt classifyFn "hi" of
          (_ : Message User u : _) ->
            T.isInfixOf "Classify the sentiment of: hi" u && T.isInfixOf "\"hi\"" u
          _ -> False)
-  , check "llmFn: retries on a bad reply then succeeds"
+  , check "skill: retries on a bad reply then succeeds"
       (Right "positive")
       (runPureEff (runLLMScripted ["not json", "\"positive\""] (call classifyFn "I love it")))
-  , check "llmFn: exhausts retries -> Left"
+  , check "skill: exhausts retries -> Left"
       True
       (either (const True) (const False)
         (runPureEff (runLLMScripted ["bad", "bad"] (call (withRetries 1 classifyFn) "x"))))

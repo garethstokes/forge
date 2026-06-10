@@ -33,7 +33,7 @@ import Crucible.LLM.Anthropic
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
-import Crucible.Function (LlmFn, llmFn, call)
+import Crucible.Skill (Skill, skill, call)
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
@@ -68,8 +68,8 @@ main = do
       if live == replayed
         then TIO.putStrLn "OK: cassette replay matches live"
         else TIO.putStrLn "MISMATCH" >> exitFailure
-      let classify :: LlmFn T.Text Sentiment
-          classify = llmFn "classify" str codec
+      let classify :: Skill T.Text Sentiment
+          classify = skill "classify" str codec
             (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
       typed <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
       case typed of
