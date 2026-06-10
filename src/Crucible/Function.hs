@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Typed LLM functions: declare an 'LlmFn' once (input type, output type, and a
@@ -21,6 +22,7 @@ import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson as A
+import NeatInterpolation (text)
 
 import Effectful
 import Autodocodec (toJSONVia)
@@ -56,9 +58,19 @@ jsonText = TE.decodeUtf8 . LB.toStrict . A.encode
 -- rendered input. Exposed for introspection/debugging and tested directly.
 fnPrompt :: LlmFn i o -> i -> [Message]
 fnPrompt fn input =
-  [ Message System ("Respond ONLY with JSON matching this schema:\n" <> schemaText (fnOutput fn))
-  , Message User (fnInstruction fn input <> "\n\nInput:\n" <> jsonText (toJSONVia (fnInput fn) input))
+  [ Message System [text|
+      Respond ONLY with JSON matching this schema:
+      ${schema}|]
+  , Message User [text|
+      ${instruction}
+
+      Input:
+      ${rendered}|]
   ]
+  where
+    schema      = schemaText (fnOutput fn)
+    instruction = fnInstruction fn input
+    rendered    = jsonText (toJSONVia (fnInput fn) input)
 
 -- | Run a typed function: build the prompt, call the model, and decode the reply
 -- against the output codec. On a decode failure, re-ask with the parse error fed
