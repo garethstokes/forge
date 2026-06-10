@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
@@ -69,7 +70,7 @@ main = do
       typed <- runEff (Anthropic.run cfg (call classify "I absolutely love this!"))
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
-        Left (DecodeError msg _) -> TIO.putStrLn ("typed fn decode error: " <> msg)
+        Left e   -> TIO.putStrLn ("typed fn decode error: " <> e.message)
       let weatherSchema = A.object
             [ "type" A..= A.String "object"
             , "properties" A..= A.object [ "city" A..= A.object ["type" A..= A.String "string"] ]

@@ -192,8 +192,8 @@ main = runChecks
   , check "decodeLLM: malformed reply -> Left DecodeError carrying the raw text"
       (Left True)
       (case decodeLLM C.str "not json at all" of
-         Left (DecodeError _ r) -> Left (r == "not json at all")
-         Right _                -> Right ())
+         Left e  -> Left (e.raw == "not json at all")
+         Right _ -> Right ())
   -- Codec round-trip: primitives
   , check "codec encode str"  (String "hello")  (encodeVia C.str "hello")
   , check "codec decode str"  (Right "hello")   (decodeVia C.str (String "hello"))

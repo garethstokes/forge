@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
@@ -52,7 +53,7 @@ judge render rubric actual = do
 Output to grade: ${graded}|] ]
   pure $ case decodeLLM verdictCodec raw of
     Right Verdict{pass = vp, why = vw} -> Score (if vp then 1.0 else 0.0) vw
-    Left (DecodeError msg _)            -> Score 0.0 ("judge parse error: " <> msg)
+    Left e                             -> Score 0.0 ("judge parse error: " <> e.message)
   where graded = render actual
 
 -- | Score one output against its expectation. Pure for Exactly/Predicate; the

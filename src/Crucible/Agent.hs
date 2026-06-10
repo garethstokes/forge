@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
@@ -43,8 +44,8 @@ runAgent codec = loop
       raw <- complete (transcript st)
       let st1 = append st (Message Assistant raw)
       case decodeLLM codec raw of
-        Left (DecodeError msg _) ->
-          let e = msg
+        Left err ->
+          let e = err.message
           in loop (append st1
                (Message User [text|Your reply did not parse: ${e}. Respond with valid JSON only.|]))
         Right dec -> case reduce dec of

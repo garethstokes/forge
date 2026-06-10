@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
@@ -84,10 +85,10 @@ call fn@Skill{output = outC, retries = rets} inp = loop rets (prompt fn inp)
       raw <- complete msgs
       case decodeLLM outC raw of
         Right o -> pure (Right o)
-        Left err@(DecodeError msg _)
+        Left err
           | n <= 0    -> pure (Left err)
           | otherwise ->
-              let e = msg
+              let e = err.message
               in loop (n - 1)
                 ( msgs
                     ++ [ Message Assistant raw
