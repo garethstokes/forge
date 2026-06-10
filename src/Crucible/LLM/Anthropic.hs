@@ -22,9 +22,9 @@
 -- @(LLM :> es, Tools :> es)@ type is unchanged; only the interpreter at the
 -- edge differs.
 --
--- Request/response JSON is built and read with the in-repo hand-rolled codecs
--- (@Crucible.Json.*@) — no aeson. System messages are hoisted to the top-level
--- @system@ field; the rest map to the API's user\/assistant turns.
+-- Request/response JSON is built and read with aeson. System messages are
+-- hoisted to the top-level @system@ field; the rest map to the API's
+-- user\/assistant turns.
 module Crucible.LLM.Anthropic
   ( AnthropicConfig (..)
   , defaultAnthropicConfig
