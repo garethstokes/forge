@@ -1,0 +1,142 @@
+---
+title: Getting started
+nav_order: 2
+---
+
+# Getting started
+
+This page covers the four steps to get productive with crucible: configure the
+Anthropic provider, make a first live call, declare a typed function, and record a
+cassette you can replay in CI without any network access. Every snippet is drawn
+from `app/Main.hs`, the end-to-end smoke executable.
+
+## 1. Config
+
+`defaultAnthropicConfig :: Text -> AnthropicConfig` constructs a fully populated
+config from an API key, with sensible defaults already filled in: the model is
+`claude-haiku-4-5-20251001`, the token cap is 1 024, the request timeout is 60 s,
+and the retry budget is 3 attempts with a 500 ms backoff base. For a first call you
+need only read the key from the environment and pass it in:
+
+```haskell
+import System.Environment (lookupEnv)
+import qualified Data.Text as T
+import Crucible.LLM.Anthropic (defaultAnthropicConfig)
+
+main :: IO ()
+main = do
+  key <- maybe (error "ANTHROPIC_API_KEY not set") id <$> lookupEnv "ANTHROPIC_API_KEY"
+  let cfg = defaultAnthropicConfig (T.pack key)
+  -- cfg :: AnthropicConfig
+```
+
+To override a field, use record update:
+`cfg { acModel = "claude-opus-4-5-20251001", acMaxTokens = 4096 }`. See
+[The live interpreter](live-interpreter.md) for the full `AnthropicConfig` field
+reference, timeout semantics, and retry behaviour.
+
+## 2. A first live call
+
+The `LLM` effect exports one smart constructor: `complete :: (LLM :> es) => [Message] -> Eff es Text`. A `Message` pairs a `Role` (`System`, `User`, `Assistant`,
+or `Tool`) with the content text. Discharge the effect with `runLLMAnthropic` and
+unwrap to `IO` with `runEff`:
+
+```haskell
+import Effectful (runEff)
+import Crucible.LLM (Message (..), Role (..), complete)
+import Crucible.LLM.Anthropic (runLLMAnthropic)
+
+prompt :: [Message]
+prompt =
+  [ Message System "You are a terse assistant."
+  , Message User   "Reply with exactly the word: pong"
+  ]
+
+main :: IO ()
+main = do
+  let cfg = defaultAnthropicConfig "sk-ant-..."
+  reply <- runEff (runLLMAnthropic cfg (complete prompt))
+  putStrLn reply   -- "pong"
+```
+
+`runLLMAnthropic` creates one TLS `Manager` upfront and issues one `POST
+/v1/messages` per `complete`. The result is the first text content block in the
+response. Network or HTTP failures are thrown as `AnthropicError`; transient ones
+(429, 5xx, connection reset) are retried automatically up to `acMaxRetries` times.
+
+See [Effects](effects.md) for a full picture of the effect rows; see [The live
+interpreter](live-interpreter.md) for the wire details.
+
+## 3. A typed function
+
+Instead of parsing free text yourself, declare an `LlmFn`: it binds an input codec,
+an output codec, and a task instruction into a reusable value. `call` builds the
+prompt, injects the output schema, and tolerantly decodes the reply. Start with a
+`HasCodec` instance for your output type — one `genericCodec` line covers any
+single-constructor record:
+
+```haskell
+{-# LANGUAGE DeriveGeneric #-}
+
+import GHC.Generics (Generic)
+import qualified Data.Text as T
+import Effectful (runEff)
+import Crucible.Codec (str)
+import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
+import Crucible.Function (LlmFn, llmFn, call)
+import Crucible.LLM.Anthropic (runLLMAnthropic)
+
+data Sentiment = Sentiment { sentLabel :: T.Text }
+  deriving (Show, Generic)
+
+instance HasCodec Sentiment where codec = genericCodec
+
+classify :: LlmFn T.Text Sentiment
+classify = llmFn "classify" str codec
+  (\s -> "Classify the sentiment as positive, negative, or neutral for: " <> s)
+
+main :: IO ()
+main = do
+  let cfg = defaultAnthropicConfig "sk-ant-..."
+  result <- runEff (runLLMAnthropic cfg (call classify "I absolutely love this!"))
+  case result of
+    Right o  -> putStrLn (T.unpack (sentLabel o))   -- "positive"
+    Left err -> putStrLn ("decode error: " <> err)
+```
+
+`call` returns `Either String o`. On a decode failure it re-asks the model (feeding
+back the parse error) up to `fnRetries` times, which defaults to 2. The type
+constraint is only `LLM :> es`, so `call classify` runs unchanged under the
+scripted interpreter in tests. See [Typed functions](typed-functions.md) for codec
+combinators, schema injection, tolerant decode, and `withRetries`.
+
+## 4. A hermetic test
+
+`recordLLMAnthropic :: FilePath -> AnthropicConfig -> Eff (LLM:es) a -> Eff es a`
+behaves exactly like `runLLMAnthropic` but tees each reply to a cassette file (one
+JSON-encoded reply per line, appended in call order). `runLLMCassette :: FilePath ->
+Eff (LLM:es) a -> Eff es a` replays a recorded cassette: the same calls in the same
+order, no network. The smoke executable in `app/Main.hs` demonstrates both:
+
+```haskell
+import Crucible.LLM.Anthropic (recordLLMAnthropic, runLLMCassette)
+
+let cassette = "/tmp/crucible-cassette.jsonl"
+writeFile cassette ""  -- fresh file
+
+-- live run: hits the network and writes the cassette
+live <- runEff (recordLLMAnthropic cassette cfg (complete prompt))
+
+-- replay: reads the cassette, no network
+replayed <- runEff (runLLMCassette cassette (complete prompt))
+
+-- they match
+print (live == replayed)   -- True
+```
+
+Commit the cassette alongside your tests. The cassette is the slider: pull it toward
+`runLLMCassette` in CI, leave it at `recordLLMAnthropic` during development. A chat
+cassette (`recordChatAnthropic` / `runChatCassette`) covers the full
+`Chat`/`runToolAgent` path the same way. See
+[Usage & cassettes](usage-and-cassettes.md) for the full record/replay API and the
+`Chat` variants.
