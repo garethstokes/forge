@@ -122,6 +122,6 @@ main = do
       replayedAns <- runEff (Anthropic.replayChat chatCassette (runToolAgent [weatherTool3] toolQuestion))
       case (recordedAns, replayedAns) of
         (Right a, Right b)
-          | a == b    -> TIO.putStrLn ("chat cassette: OK replay matches — " <> a)
-          | otherwise -> TIO.putStrLn ("chat cassette: MISMATCH — live=" <> a <> " replay=" <> b)
+          | a == b    -> TIO.putStrLn ("chat cassette: OK replay matches: " <> a)
+          | otherwise -> TIO.putStrLn ("chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
         _ -> TIO.putStrLn "chat cassette: a run failed"
