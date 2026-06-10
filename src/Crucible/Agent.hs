@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 module Crucible.Agent
   ( AgentState(..), startAgent, runAgent
   ) where
@@ -13,6 +14,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson as A
 import Data.Aeson (Value)
 import Effectful
+import NeatInterpolation (text)
 import Crucible.LLM (LLM, complete, Message(..), Role(..))
 import Crucible.Tool (Tools, callTool, ToolCall(..))
 import Crucible.Codec (JSONCodec, schemaText)
@@ -26,8 +28,11 @@ newtype AgentState = AgentState { transcript :: [Message] }
 -- | Seed an agent: a system message stating the required output schema, then the user's question.
 startAgent :: JSONCodec (Decision tool answer) -> Text -> AgentState
 startAgent codec question = AgentState
-  [ Message System ("Respond ONLY with JSON matching this schema:\n" <> schemaText codec)
+  [ Message System [text|
+      Respond ONLY with JSON matching this schema:
+      ${schema}|]
   , Message User question ]
+  where schema = schemaText codec
 
 -- | The control loop. Its type IS the capability manifest: it may talk to the
 -- model (@LLM :> es@) and dispatch tools (@Tools :> es@), and nothing else.
@@ -39,9 +44,10 @@ runAgent codec = loop
       raw <- complete (transcript st)
       let st1 = append st (Message Assistant raw)
       case decodeLLM codec raw of
-        Left err -> loop (append st1
-          (Message User ("Your reply did not parse: " <> T.pack err
-                         <> ". Respond with valid JSON only.")))
+        Left err ->
+          let e = T.pack err
+          in loop (append st1
+               (Message User [text|Your reply did not parse: ${e}. Respond with valid JSON only.|]))
         Right dec -> case reduce dec of
           Halt ans                -> pure ans
           Continue (ToolCall n a) -> do
