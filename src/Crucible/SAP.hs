@@ -1,10 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Crucible.SAP (stripToJson, decodeLLM) where
 
+import Data.Aeson (Value)
+import qualified Data.Aeson as A
+import Data.Aeson.Types (parseEither)
+import qualified Data.ByteString.Lazy as LB
 import Data.Text (Text)
 import qualified Data.Text as T
-import Crucible.Codec (Codec(..))
-import qualified Crucible.Json.Decode as D
+import qualified Data.Text.Encoding as TE
+import Autodocodec (JSONCodec, parseJSONVia)
 
 -- | Best-effort extraction of a JSON value from LLM output that may be wrapped
 -- in markdown code fences and/or surrounding prose. Finds the first '{' or '['
@@ -47,7 +51,9 @@ scanBalanced = go 0 (0 :: Int) False False
         close j d r = let d' = d - 1
                       in if d' == 0 then Just (j + 1) else go (j + 1) d' False False r
 
--- | Schema-aligned decode: pull the JSON out of messy text, then decode it
--- through the codec's decoder.
-decodeLLM :: Codec a -> Text -> Either D.Error a
-decodeLLM c = D.decodeString (codecDecode c) . stripToJson
+-- | Strip JSON out of LLM prose, parse it, and decode through the codec.
+decodeLLM :: JSONCodec a -> Text -> Either String a
+decodeLLM c t =
+  case A.eitherDecode (LB.fromStrict (TE.encodeUtf8 (stripToJson t))) of
+    Left err -> Left err
+    Right v  -> parseEither (parseJSONVia c) (v :: Value)
