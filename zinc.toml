@@ -4,7 +4,7 @@
 
 [workspace]
 members = ["."]
-ghc = "9.6.5"
+ghc = "9.10.1"
 
 [package]
 name = "crucible"
