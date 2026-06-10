@@ -102,6 +102,29 @@ streaming interpreters apply the retry policy only to opening the connection;
 nothing has been emitted at that point, so retrying is safe. A mid-stream
 failure is not retried.
 
+## The OpenAI interpreter
+
+`Crucible.LLM.OpenAI` is the OpenAI twin, with the same qualified grammar:
+`OpenAI.run` and `OpenAI.usage` discharge `LLM`, `OpenAI.runChat` and
+`OpenAI.usageChat` discharge `Chat` with native tool-calling, all against
+`POST /v1/chat/completions`. Swapping providers is a one-line change at the
+`runEff` edge:
+
+```haskell
+import qualified Crucible.LLM.OpenAI as OpenAI
+
+let cfg = defaultOpenAIConfig (T.pack key)   -- model "gpt-4o-mini" by default
+r <- runEff (OpenAI.run cfg (call classify "I absolutely love this!"))
+```
+
+`OpenAIConfig` carries the same knobs as `AnthropicConfig` minus
+`streamIdleSecs` (no streaming interpreter yet): `apiKey`, `model`,
+`maxTokens` (sent as `max_completion_tokens`), `timeoutSecs`, `maxRetries`,
+`baseDelayMicros`. Errors mirror too: `OpenAIHttpError`, `OpenAIStatusError`,
+`OpenAINoContent`, with the same `isRetryable` classification and the same
+jittered backoff. Cassette record/replay and streaming are currently
+Anthropic-only.
+
 ## Further reading
 
 Config setup and the first live call are walked through in [Getting

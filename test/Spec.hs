@@ -35,6 +35,8 @@ import Crucible.Example (demoAgent)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
+import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
+import qualified Crucible.LLM.OpenAI as OpenAI
 import qualified Crucible.Chat as Chat
 import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), Block(..), ToolUse(..), ChatError(..))
@@ -631,6 +633,81 @@ main = runChecks
   , check "turnContentJson: round-trips tool-only"
       (Right (Turn "" [ToolUse "u" "f" (object [])]))
       (parseTurn (TE.decodeUtf8 (LBS.toStrict (A.encode (turnContentJson (Turn "" [ToolUse "u" "f" (object [])]))))))
+  -- crucible-luz: OpenAI interpreter (pure wire-format coverage)
+  , check "OpenAI requestJson: native system role + max_completion_tokens"
+      (object
+        [ "model" .= String "gpt-4o-mini"
+        , "max_completion_tokens" .= Number 1024
+        , "messages" .= A.toJSON
+            [ object ["role" .= String "system", "content" .= String "Be terse."]
+            , object ["role" .= String "user", "content" .= String "Ping?"]
+            ]
+        ])
+      (OpenAI.requestJson (defaultOpenAIConfig "k")
+        [Message System "Be terse.", Message User "Ping?"])
+  , check "OpenAI extractText: choices[0].message.content"
+      (Right "pong")
+      (OpenAI.extractText "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"pong\"}}]}")
+  , check "OpenAI parseUsage: prompt/completion tokens"
+      (Usage 12 5)
+      (OpenAI.parseUsage "{\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5}}")
+  , check "OpenAI parseUsage: missing usage -> mempty"
+      mempty
+      (OpenAI.parseUsage "{\"choices\":[]}")
+  , check "OpenAI chatRequestJson: function-wrapped tools + flattened messages"
+      (object
+        [ "model" .= String "gpt-4o-mini"
+        , "max_completion_tokens" .= Number 1024
+        , "tools" .= A.toJSON
+            [ object
+                [ "type" .= String "function"
+                , "function" .= object
+                    ["name" .= String "get_weather", "parameters" .= weatherToolSchema]
+                ]
+            ]
+        , "messages" .= A.toJSON
+            [ object ["role" .= String "user", "content" .= String "weather?"]
+            , object
+                [ "role" .= String "assistant"
+                , "content" .= Null
+                , "tool_calls" .= A.toJSON
+                    [ object
+                        [ "id" .= String "call_1"
+                        , "type" .= String "function"
+                        , "function" .= object
+                            [ "name" .= String "get_weather"
+                            , "arguments" .= String "{\"city\":\"Brisbane\"}"
+                            ]
+                        ]
+                    ]
+                ]
+            , object
+                [ "role" .= String "tool"
+                , "tool_call_id" .= String "call_1"
+                , "content" .= String "sunny"
+                ]
+            ]
+        ])
+      (OpenAI.chatRequestJson (defaultOpenAIConfig "k")
+        [("get_weather", weatherToolSchema)]
+        [ Chat.Message User [TextBlock "weather?"]
+        , Chat.Message Assistant
+            [ToolUseBlock (ToolUse "call_1" "get_weather" (object ["city" .= String "Brisbane"]))]
+        , Chat.Message User [ToolResultBlock "call_1" (String "sunny")]
+        ])
+  , check "OpenAI parseTurn: tool_calls with string-encoded arguments"
+      (Right (Turn "" [ToolUse "call_1" "get_weather" (object ["city" .= String "Brisbane"])]))
+      (OpenAI.parseTurn "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Brisbane\\\"}\"}}]}}]}")
+  , check "OpenAI parseTurn: text reply"
+      (Right (Turn "hello" []))
+      (OpenAI.parseTurn "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hello\"}}]}")
+  , check "OpenAI parseTurn: undecodable arguments pass through as raw string"
+      (Right (Turn "" [ToolUse "c" "f" (String "not json")]))
+      (OpenAI.parseTurn "{\"choices\":[{\"message\":{\"content\":null,\"tool_calls\":[{\"id\":\"c\",\"function\":{\"name\":\"f\",\"arguments\":\"not json\"}}]}}]}")
+  , check "OpenAI isRetryable: 429" True  (OpenAI.isRetryable (OpenAIStatusError 429 ""))
+  , check "OpenAI isRetryable: 500" True  (OpenAI.isRetryable (OpenAIStatusError 500 ""))
+  , check "OpenAI isRetryable: 400" False (OpenAI.isRetryable (OpenAIStatusError 400 ""))
+  , check "OpenAI isRetryable: no-content" False (OpenAI.isRetryable (OpenAINoContent ""))
   -- crucible-dak: hermetic cassette replay drives a tool loop
   , do let cassettePath = "/tmp/crucible-chat-cassette-test.jsonl"
            cassette =
