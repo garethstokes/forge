@@ -34,7 +34,7 @@ import qualified Crucible.LLM.OpenAI.Stream as OpenAI
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
-import Crucible.Skill (Skill, skill, call)
+import Crucible.Skill (Skill, skill, call, withExamples)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
 import Crucible.Eval (Case (..), Expectation (..), criterion, runEvalN, renderReport)
@@ -81,8 +81,10 @@ main = do
         then TIO.putStrLn "OK: cassette replay matches live"
         else TIO.putStrLn "MISMATCH" >> exitFailure
       let classify :: Skill T.Text Sentiment
-          classify = skill "classify" str codec
-            (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|])
+          classify = withExamples
+            [ ("The packaging was damaged but the product works.", Sentiment "neutral") ]
+            (skill "classify" str codec
+              (\s -> [text|Classify the sentiment as positive, negative, or neutral for: ${s}|]))
       typed <- runEff (Anthropic.run cfg (call classify "I absolutely love this!"))
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
