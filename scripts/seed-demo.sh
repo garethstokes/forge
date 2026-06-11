@@ -35,7 +35,9 @@ case "$DB" in
   *) echo "refusing: \$EVALS_DEMO_DB must contain 'demo' (got: $DB)"; exit 1;;
 esac
 
-dropdb --if-exists "$DB"
+# --force terminates lingering connections (e.g. a dashboard server still
+# holding its pool) instead of failing with "being accessed by other users".
+dropdb --if-exists --force "$DB"
 createdb "$DB"
 MANIFEST_DATABASE_URL="$URL" ./.zinc/build/manifest-evals migrate
 
