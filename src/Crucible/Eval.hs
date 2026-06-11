@@ -16,7 +16,7 @@ module Crucible.Eval
   ( Case(..), Expectation(..), Criterion(..), criterion
   , Score(..), score, Verdict(..)
   , Result(..), Report(..)
-  , runEval, runEvalN, scoreM, judge, judgeN, renderReport
+  , runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport
   ) where
 
 import Data.Text (Text)
