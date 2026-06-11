@@ -162,6 +162,10 @@ addition once Checklist exists.
 ## Team discussion points
 
 1. Adopt "no closed-loop judging" as a hard design rule?
+   **Decision (2026-06-11): adopted as a hard rule.** Every LLM call in a
+   judge protocol must receive the original output and rubric verbatim;
+   protocols that can't re-inject use independent one-shot judges plus a
+   mechanical vote. To be documented in the evals manual.
 2. Label judgeN's rationale as "majority-side rationale" in renderReport?
 3. Grounding criteria as a standard rubric ingredient now, SFS-style derived
    checklist as a roadmap item?
