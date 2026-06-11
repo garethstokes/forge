@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "evals-ui"]
+members = [".", "evals-api", "evals-ui"]
 ghc = "9.12.2"
 
 [package]
@@ -15,7 +15,7 @@ depends = ["base", "text", "time", "bytestring", "aeson", "manifest", "crucible"
 source-dirs = ["test"]
 main = "Spec.hs"
 ghc-options = ["-XOverloadedStrings", "-lpq"]
-depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals"]
+depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals", "evals-api"]
 
 [build.exe.manifest-evals]
 source-dirs = ["app"]
