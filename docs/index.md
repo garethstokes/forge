@@ -51,6 +51,8 @@ insert/update/delete flush, relationship loading (two strategies, `selectin` and
   `with` / `rel`), `selectin` vs `joined`, and one-level nesting.
 - [Cascades](cascades.md) and [Migrations](migrations.md): onDelete policies, and
   records as the schema source of truth.
+- [Change Feed](change-feed.md): opt-in `LISTEN/NOTIFY` wake-ups for live
+  consumers; `listenChanges` and the `notifyChanges` entity flag.
 - [Queries](queries.md): the query builder, ordering, pagination, inner joins, and
   aggregates.
 - [Row-level security](rls.md): declarative tenant policies, declarative migration,

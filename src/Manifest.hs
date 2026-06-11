@@ -95,6 +95,9 @@ module Manifest
   , OnDelete(..)
   , CascadeRule(..)
   , cascade
+    -- * Change feed
+  , Change(..)
+  , listenChanges
     -- * Relationships (D path)
   , Ent(..)
   , manage
@@ -213,6 +216,10 @@ import Manifest.Core.Relation
 import Manifest.Core.Cascade
   ( OnDelete(..)
   , CascadeRule(..)
+  )
+import Manifest.Notify
+  ( Change (..)
+  , listenChanges
   )
 import Manifest.Relation
   ( load
