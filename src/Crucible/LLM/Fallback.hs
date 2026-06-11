@@ -9,9 +9,9 @@
 -- | Multi-provider resilience at the runEff edge, used qualified:
 -- @Fallback.run@, @Fallback.roundRobinChat@, and friends. Fallback happens
 -- PER CALL: each 'Complete' or 'Converse' tries the members in order
--- (round-robin rotates the starting member per call), advancing on ANY
--- member failure after that member's own internal retries give up. A
--- misconfigured member falls through to a healthy one. When every member
+-- (round-robin rotates the starting member per call), advancing on any
+-- synchronous member failure after that member's own internal retries give up.
+-- A misconfigured member falls through to a healthy one. When every member
 -- fails, 'FallbackExhausted' carries each member's rendered error in the
 -- order tried. Streaming stays single-provider; cassettes record at the
 -- provider level, not the chain level.
@@ -27,7 +27,7 @@ module Crucible.LLM.Fallback
   , roundRobinUsageChat
   ) where
 
-import Control.Exception (Exception, SomeException, throwIO, try)
+import Control.Exception (Exception, SomeAsyncException (..), SomeException, fromException, throwIO, try)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -47,7 +47,7 @@ newtype FallbackError = FallbackExhausted [(Text, Text)]
 
 instance Exception FallbackError
 
--- | Try members starting at index s (wrapping), advancing on any failure.
+-- | Try members starting at index s (wrapping), advancing on any synchronous failure.
 attempt :: Int -> [Provider] -> (Provider -> IO r) -> IO r
 attempt s ps act
   | null ps   = throwIO (FallbackExhausted [])
@@ -59,16 +59,20 @@ attempt s ps act
       r <- try @SomeException (act p)
       case r of
         Right v -> pure v
-        Left e  -> go rest ((p.name, T.pack (show e)) : errs)
+        Left e
+          | Just (SomeAsyncException _) <- fromException e -> throwIO e
+          | otherwise -> go rest ((p.name, T.pack (show e)) : errs)
 
 -- | A counter that yields 0, 1, 2, ... across calls.
 nextIndex :: IORef Int -> IO Int
 nextIndex ref = atomicModifyIORef' ref (\i -> (i + 1, i))
 
+-- | Interpret 'LLM' over a fallback chain. Use as @Fallback.run@.
 run :: (IOE :> es) => [Provider] -> Eff (LLM : es) a -> Eff es a
 run ps = interpret $ \_ -> \case
   Complete msgs -> liftIO (fst <$> attempt 0 ps (\p -> p.complete msgs))
 
+-- | Like 'run', also returning accumulated 'Usage' from the answering members.
 usage :: (IOE :> es) => [Provider] -> Eff (LLM : es) a -> Eff es (a, Usage)
 usage ps = reinterpret (runState mempty) $ \_ -> \case
   Complete msgs -> do
@@ -76,10 +80,12 @@ usage ps = reinterpret (runState mempty) $ \_ -> \case
     modify (<> u)
     pure t
 
+-- | Interpret 'Chat' over a fallback chain. Use as @Fallback.runChat@.
 runChat :: (IOE :> es) => [Provider] -> Eff (Chat : es) a -> Eff es a
 runChat ps = interpret $ \_ -> \case
   Converse specs msgs -> liftIO (fst <$> attempt 0 ps (\p -> p.converse specs msgs))
 
+-- | Like 'runChat', also returning accumulated 'Usage'.
 usageChat :: (IOE :> es) => [Provider] -> Eff (Chat : es) a -> Eff es (a, Usage)
 usageChat ps = reinterpret (runState mempty) $ \_ -> \case
   Converse specs msgs -> do
@@ -87,6 +93,7 @@ usageChat ps = reinterpret (runState mempty) $ \_ -> \case
     modify (<> u)
     pure t
 
+-- | Like 'run', but each call starts one member further along the list. Use as @Fallback.roundRobin@.
 roundRobin :: (IOE :> es) => [Provider] -> Eff (LLM : es) a -> Eff es a
 roundRobin ps action = do
   ref <- liftIO (newIORef 0)
@@ -95,6 +102,7 @@ roundRobin ps action = do
       s <- nextIndex ref
       fst <$> attempt s ps (\p -> p.complete msgs)) action
 
+-- | Like 'roundRobin', also returning accumulated 'Usage'.
 roundRobinUsage :: (IOE :> es) => [Provider] -> Eff (LLM : es) a -> Eff es (a, Usage)
 roundRobinUsage ps action = do
   ref <- liftIO (newIORef 0)
@@ -105,6 +113,7 @@ roundRobinUsage ps action = do
       modify (<> u)
       pure t) action
 
+-- | Like 'runChat', but each call starts one member further along the list.
 roundRobinChat :: (IOE :> es) => [Provider] -> Eff (Chat : es) a -> Eff es a
 roundRobinChat ps action = do
   ref <- liftIO (newIORef 0)
@@ -113,6 +122,7 @@ roundRobinChat ps action = do
       s <- nextIndex ref
       fst <$> attempt s ps (\p -> p.converse specs msgs)) action
 
+-- | Like 'roundRobinChat', also returning accumulated 'Usage'.
 roundRobinUsageChat :: (IOE :> es) => [Provider] -> Eff (Chat : es) a -> Eff es (a, Usage)
 roundRobinUsageChat ps action = do
   ref <- liftIO (newIORef 0)
