@@ -88,11 +88,12 @@ The tool-agent path is the same shape, substituting `Anthropic.streamChat` and
 ```haskell
 import qualified Crucible.LLM.Anthropic.Stream as Anthropic
 import Crucible.Chat (runToolAgent)
+import Crucible.Tool.Generic (tools)
 
 (toolStream, tUsage) <- runEff
   ( runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
       (Anthropic.streamChat cfg
-        (runToolAgent [weatherTool]
+        (runToolAgent (tools weatherBox)
           "Use the tool to get the weather in Brisbane, then tell me.")) )
 ```
 

@@ -115,14 +115,21 @@ paths do, plus the summed `Usage`. See [Streaming](streaming.md).
 | `LLM`  | `complete`        | `runLLMScripted` · `Anthropic.run` · `Anthropic.usage` · `Anthropic.record` · `Anthropic.replay` · `Anthropic.stream` |
 | `Chat` | `converse`        | `runChatScripted` · `Anthropic.runChat` · `Anthropic.usageChat` · `Anthropic.recordChat` · `Anthropic.replayChat` · `Anthropic.streamChat` |
 | `Emit` | `emit`            | `runEmitIO` · `ignoreEmit` · `runEmitList` |
-| `Tools`| `callTool`        | `runTools` (dispatch to a `[Tool es]` list) |
+| `Tools`| `callTool`        | `runTools` (dispatch to a `[Tool es]` list; `CallTool` returns `Either ToolError Value`; unknown tools report the available names) |
 
 The `stream`/`streamChat` interpreters additionally require `Emit :> es`; they
 live in `Crucible.LLM.Anthropic.Stream` and are conventionally imported under
 the same `Anthropic` alias. The `Tools` effect serves the text-path agent loop
 in `Crucible.Agent` (`runAgent`); the `Chat` tool loop dispatches tools
-directly, so most callers never see it. See [Tool calling](tool-calling.md) for
-`Tool` construction and the loop.
+directly, so most callers never see it.
+
+`Tool` values are built in one of three ways: via the Generic record-toolbox
+derivation (`Crucible.Tool.Generic.tools`), via the type-level-name constructor
+(`tool @"name"`), or via `toolWith` / `rawTool` for irregular names and
+hand-written schemas. `runTools` routes each `CallTool` request to the matching
+`Tool` by name; an unknown name returns `Left (UnknownTool name availableNames)`
+so the model can self-correct. See [Tool calling](tool-calling.md) for the full
+construction and loop details.
 
 ## Swapping interpreters
 

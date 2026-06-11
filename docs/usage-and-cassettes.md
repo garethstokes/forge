@@ -60,7 +60,7 @@ import qualified Crucible.LLM.Anthropic as Anthropic
 
 (toolAns, usage) <- runEff
   ( Anthropic.usageChat cfg
-      (runToolAgent [weatherTool]
+      (runToolAgent (tools weatherBox)
         "Use the tool to get the weather in Brisbane, then tell me.") )
 
 -- Illustrative per-MTok rates (not authoritative pricing).
@@ -100,10 +100,9 @@ the same order, with no network access.
 ```haskell
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.Chat (runToolAgent)
+import Crucible.Tool.Generic (tools)
 
 let chatCassette = "/tmp/crucible-chat-cassette.jsonl"
-    weatherTool3 = Tl.Tool "get_weather" weatherSchema
-      (\_ -> pure (A.String "It is 26C and sunny."))
     toolQuestion = "Use the tool to get the weather in Brisbane, then tell me."
 
 writeFile chatCassette ""  -- fresh cassette
@@ -111,12 +110,12 @@ writeFile chatCassette ""  -- fresh cassette
 -- live: hits the network, writes each response to the cassette
 recordedAns <- runEff
   ( Anthropic.recordChat chatCassette cfg
-      (runToolAgent [weatherTool3] toolQuestion) )
+      (runToolAgent (tools weatherBox) toolQuestion) )
 
 -- replay: reads the cassette, no network required
 replayedAns <- runEff
   ( Anthropic.replayChat chatCassette
-      (runToolAgent [weatherTool3] toolQuestion) )
+      (runToolAgent (tools weatherBox) toolQuestion) )
 
 case (recordedAns, replayedAns) of
   (Right a, Right b) | a == b ->
