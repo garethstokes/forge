@@ -18,10 +18,16 @@ effectful capabilities, Anthropic interpreters, skills/tools).
 - `app/` — the `manifest-evals` CLI: `migrate`, `run <runId>`, and
   `score <runId> <graderVersionId>...` (env: `MANIFEST_DATABASE_URL`,
   `ANTHROPIC_API_KEY`, `EVALS_CONCURRENCY`).
+- `evals-api/` — the JSON wire DTO package: request/response types shared
+  between the native warp server and the wasm Miso SPA.
+- `evals-ui/` — the Miso SPA (wasm); also its own zinc workspace for wasm
+  builds — see `scripts/build-ui.sh`.
+- `app-dashboard/` — the warp server: serves the JSON API and the static SPA.
 - `test/` — `SchemaSpec` (schema scenarios), `ExecuteSpec` (assembly,
   executeRun happy path / per-example error / resume / multi-turn recording),
-  and `GradeSpec` (config/exact/engine/checklist/resume/metrics/edge-cases)
-  against an ephemeral Postgres (`Manifest.Testing.withEphemeralDb`).
+  `GradeSpec` (config/exact/engine/checklist/resume/metrics/edge-cases), and
+  `ApiSpec` (wire DTO round-trips) against an ephemeral Postgres
+  (`Manifest.Testing.withEphemeralDb`).
 
 ## Build
 
@@ -35,3 +41,49 @@ nix develop -c zinc test
 
 Both `manifest` and `crucible` are git-pinned in `zinc.toml` together with
 their transitive closures (~111 packages under one lock).
+
+## Dashboard
+
+A read-only eval dashboard: browse runs, drill into per-example outputs and
+scores, and compare two runs side-by-side. It is a single-page application
+(one wasm Miso SPA) backed by a native warp JSON API.
+
+### Build
+
+```bash
+# native: server + CLI
+nix develop -c zinc build
+
+# wasm UI reactor (evals-ui sub-workspace); restages static/
+bash scripts/build-ui.sh
+```
+
+### Run
+
+Environment variables:
+
+| Variable | Required | Default |
+|---|---|---|
+| `MANIFEST_DATABASE_URL` | yes | — |
+| `EVALS_HTTP_PORT` | no | `8787` |
+| `EVALS_STATIC_DIR` | no | `./static` |
+
+```bash
+./.zinc/build/evals-dashboard
+```
+
+Seed a demo database to explore the UI without real eval data:
+
+```bash
+bash scripts/seed-demo.sh   # creates and seeds a *demo* database
+```
+
+### Views
+
+- `#/runs` — runs grouped by dataset, metric chips per run, pick any two to
+  compare.
+- `#/runs/<id>` — per-example outputs and scores; error rows flagged.
+- `#/compare/<a>/<b>` — examples aligned by key, score deltas, disagreements
+  highlighted.
+
+Runs and scoring remain CLI-driven; the dashboard is read-only.
