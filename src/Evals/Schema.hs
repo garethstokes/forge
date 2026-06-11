@@ -251,7 +251,7 @@ instance HasRelation Output "example" where
 
 instance Entity Score where
   tableMeta = genericTableMeta @ScoreT "scores"
-  indexes   = [ btree #output ]
+  indexes   = [ unique [#output, #graderVersion], btree #output ]
 
 instance HasRelation Score "grader" where
   type Related     Score "grader" = GraderVersion

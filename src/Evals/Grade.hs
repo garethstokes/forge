@@ -32,7 +32,7 @@ import Control.Monad (when)
 import Data.Aeson (Value (..), eitherDecodeStrict, object, (.=))
 import qualified Data.Aeson.Types as AT
 import Data.Either (partitionEithers)
-import Data.List (find)
+import Data.List (find, nub)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -99,6 +99,9 @@ gradeExact (Just (Aeson expected)) (Just txt) = Right $ case expected of
 
 -- | Crucible folds all-samples-errored judging into a tagged zero score; we
 -- persist those as error rows. The tag is produced only by the error path.
+-- A checklist where every criterion's judge errored is NOT detected — crucible
+-- folds per-criterion errors into criterion fails, so it persists as a
+-- legitimate low score.
 isJudgeError :: Eval.Score -> Bool
 isJudgeError s = s.value == 0 && "judge error: " `T.isPrefixOf` s.rationale
 
@@ -123,7 +126,8 @@ scoreRun pool concurrency runner runId gvIds = do
     get @Run (Key runId) >>= \case
       Nothing -> pure Nothing
       Just _run -> do
-        mgvs <- mapM (get @GraderVersion . Key) gvIds
+        -- nub before the gets: duplicates would double-grade every pair
+        mgvs <- mapM (\i -> get @GraderVersion (Key i)) (nub gvIds)
         case sequence mgvs of
           Nothing  -> pure Nothing
           Just gvs -> do
@@ -132,16 +136,17 @@ scoreRun pool concurrency runner runId gvIds = do
               Nothing -> pure Nothing
               Just gs -> do
                 outputs  <- selectWhere [ #run ==. runId ]
-                existing <- concat <$> mapM (\gv -> selectWhere [ #graderVersion ==. gv.id ]) gvs
-                pure (Just (zip gs gvs, outputs :: [Output], existing :: [Score]))
+                existing <- concat <$> mapM (\gv -> existingFor gv.id) gvs
+                pure (Just (zip gs gvs, outputs :: [Output], existing))
   case setup of
     Nothing -> pure ScoreOutcome { total = 0, scored = 0, errored = 0, skipped = 0 }
     Just (graders, outputs, existing) -> do
       let pairs = [ (g, gv, out) | (g, gv) <- graders, out <- outputs ]
-          prior gv out = find (\s -> s.output == out.id && s.graderVersion == gv.id) existing
+          -- existing :: [(OutputId, (GraderVersionId, Maybe Text))]
+          prior gv out = find (\(oid, (gvid, _)) -> oid == out.id && gvid == gv.id) existing
           classify (g, gv, out)
             | isJust out.error = Left ()
-            | Just s <- prior gv out, s.error == Nothing = Left ()
+            | Just (_, (_, Nothing)) <- prior gv out = Left ()
             | otherwise = Right (g, gv, out, isJust (prior gv out))
           (skips, work) = partitionEithers (map classify pairs)
       sem <- newQSem (max 1 concurrency)
@@ -231,6 +236,17 @@ scoreRun pool concurrency runner runId gvIds = do
           { id = RunMetricId 0, run = runId, graderVersion = gv.id
           , mean = mean, passRate = pr, count = n, computedAt = now } :: RunMetric)
         pure ()
+
+    -- Scores for one grader version scoped to this run: join through Output
+    -- so we only fetch rows belonging to this run, not all runs. Returns
+    -- (output id, (grader version id, error)) — nested pair because
+    -- runQuery's Selectable instances handle 3-tuples as (a, (b, c)).
+    existingFor :: GraderVersionId -> Db [(OutputId, (GraderVersionId, Maybe Text))]
+    existingFor gvId = runQuery $ do
+      s <- from @Score
+      o <- innerJoin @Output (\o -> o ?. #id .== s ?. #output)
+      where_ (o ?. #run .== val runId .&& s ?. #graderVersion .== val gvId)
+      pure (s ?. #output, (s ?. #graderVersion, s ?. #error))
 
 -- | A crucible score as the @Score.detail@ jsonb.
 detailJson :: Eval.Score -> Value
