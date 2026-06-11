@@ -62,7 +62,7 @@ type GradeRunner =
 (`Eval` = `Crucible.Eval` imported qualified — its `Score` clashes with the
 entity.) The live runner builds an `AnthropicConfig` from the grader config
 (model/max_tokens/timeout/retries → same mapping as C's `cfgFrom`, which is
-generalised to share: `cfgFromParams :: Text -> Text -> Value ->
+generalised to share: `cfgFromParams :: Text -> Maybe Text -> Value ->
 AnthropicConfig` (key, model, params jsonb) used by both `cfgFrom` and the
 grader path; the grader's model defaults to `defaultAnthropicConfig`'s when
 config has none) and runs

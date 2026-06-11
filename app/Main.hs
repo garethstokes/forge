@@ -5,7 +5,9 @@
 
 -- | The eval CLI: @manifest-evals migrate@ reconciles the schema;
 -- @manifest-evals run \<runId\> [--concurrency N]@ executes a queued run with
--- the live Anthropic backend. Config from env: @MANIFEST_DATABASE_URL@,
+-- the live Anthropic backend; @manifest-evals score \<runId\>
+-- \<graderVersionId\>... [--concurrency N]@ scores its outputs with the live
+-- crucible judge. Config from env: @MANIFEST_DATABASE_URL@,
 -- @ANTHROPIC_API_KEY@, @EVALS_CONCURRENCY@ (flag wins over env; default 4).
 module Main (main) where
 
@@ -20,7 +22,9 @@ import Manifest.Postgres (Pool, closePool, newPool)
 
 import Evals.Execute (RunOutcome (..), executeRun)
 import Evals.Execute.Anthropic (liveAnthropicRunner)
-import Evals.Ids (RunId (..))
+import Evals.Grade (ScoreOutcome (..), scoreRun)
+import Evals.Grade.Anthropic (liveGradeRunner)
+import Evals.Ids (GraderVersionId (..), RunId (..))
 import Evals.Migrate (migrateAll)
 
 main :: IO ()
@@ -39,7 +43,26 @@ main = getArgs >>= \case
         <> show o.succeeded <> " succeeded, "
         <> show o.errored <> " errored, "
         <> show o.skipped <> " skipped (resume)"
-  _ -> die "usage: manifest-evals migrate | manifest-evals run <runId> [--concurrency N]"
+  ("score" : ridStr : rest) -> do
+    let (gvStrs, flags) = break (== "--concurrency") rest
+    if null gvStrs
+      then die usage
+      else do
+        rid  <- maybe (die ("not a run id: " <> ridStr)) pure (readMaybe ridStr)
+        gvs  <- mapM (\s -> maybe (die ("not a grader version id: " <> s)) (pure . GraderVersionId) (readMaybe s)) gvStrs
+        key  <- requireEnv "ANTHROPIC_API_KEY"
+        conc <- concurrencyFrom flags
+        withEnvPool $ \pool -> do
+          o <- scoreRun pool conc (liveGradeRunner (T.pack key)) (RunId rid) gvs
+          putStrLn $ "score " <> ridStr <> ": "
+            <> show o.total <> " pairs, "
+            <> show o.scored <> " scored, "
+            <> show o.errored <> " errored, "
+            <> show o.skipped <> " skipped"
+  _ -> die usage
+
+usage :: String
+usage = "usage: manifest-evals migrate | manifest-evals run <runId> [--concurrency N] | manifest-evals score <runId> <graderVersionId>... [--concurrency N]"
 
 requireEnv :: String -> IO String
 requireEnv name =
