@@ -47,7 +47,7 @@ calibrate :: (LLM :> es)
 calibrate n render rubric labelled = do
   outcomes <- mapM (\(nm, a, h) -> (nm, h,) <$> vote False n rubric (render a)) labelled
   let errs   = [nm | (nm, _, AllErrored _) <- outcomes]
-      judged = [(nm, h, p, y, f) | (nm, h, Decided p _ y f) <- outcomes]
+      judged = [(nm, h, p, y, f) | (nm, h, Decided p _ _ y f) <- outcomes]
       total  = length judged
       agree  = length [() | (_, h, p, _, _) <- judged, h == p]
       jYes   = length [() | (_, _, True,  _, _) <- judged]

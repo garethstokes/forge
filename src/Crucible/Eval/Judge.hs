@@ -77,9 +77,12 @@ Output to grade: ${graded}|]
         Right v -> pure (Right v)
         Left e2 -> pure (Left (JudgeError e2.message))
 
--- | The result of an n-sample majority vote.
+-- | The result of an n-sample majority vote. 'why' is a SAMPLE from the
+-- winning side, not the reason the vote went that way (a rationale attached
+-- to a vote outcome is not causal); 'dissent' keeps the first rationale from
+-- the losing side, when one was cast.
 data VoteOutcome
-  = Decided { pass :: Bool, why :: Text, yes :: Int, no :: Int }
+  = Decided { pass :: Bool, why :: Text, dissent :: Maybe Text, yes :: Int, no :: Int }
   | AllErrored Text
   deriving (Eq, Show)
 
@@ -89,21 +92,25 @@ data VoteOutcome
 -- consumes an attempt without casting a vote; if every attempt errors, the
 -- outcome is 'AllErrored'. A tie on an exhausted budget (possible only via
 -- errors) resolves to fail. The rationale kept is the first vote on the
--- winning side. Callers should use odd n; n <= 1 is a single sample.
+-- winning side; the first losing-side rationale is kept as 'dissent'.
+-- Callers should use odd n; n <= 1 is a single sample.
 vote :: (LLM :> es) => Bool -> Int -> Text -> Text -> Eff es VoteOutcome
 vote earlyStop n rubric graded = go n' (0, 0) (Nothing, Nothing) ""
   where
     n'   = max 1 n
     need = n' `div` 2 + 1
 
+    decideYes (firstYes, firstNo) y f = Decided True  (fromMaybe "" firstYes) firstNo  y f
+    decideNo  (firstYes, firstNo) y f = Decided False (fromMaybe "" firstNo)  firstYes y f
+
     go :: (LLM :> es) => Int -> (Int, Int) -> (Maybe Text, Maybe Text) -> Text -> Eff es VoteOutcome
-    go 0 (y, f) (firstYes, firstNo) lastErr
+    go 0 (y, f) firsts lastErr
       | y == 0 && f == 0 = pure (AllErrored lastErr)
-      | y > f            = pure (Decided True  (fromMaybe "" firstYes) y f)
-      | otherwise        = pure (Decided False (fromMaybe "" firstNo)  y f)
+      | y > f            = pure (decideYes firsts y f)
+      | otherwise        = pure (decideNo firsts y f)
     go k tally@(y, f) firsts@(firstYes, firstNo) lastErr
-      | earlyStop && y >= need = pure (Decided True  (fromMaybe "" firstYes) y f)
-      | earlyStop && f >= need = pure (Decided False (fromMaybe "" firstNo)  y f)
+      | earlyStop && y >= need = pure (decideYes firsts y f)
+      | earlyStop && f >= need = pure (decideNo firsts y f)
       | otherwise = do
           r <- judgeOnce rubric graded
           case r of

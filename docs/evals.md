@@ -114,6 +114,32 @@ and two runs will invent different ones. "Cites at least one source URL" has
 one answer. Negative criteria ("does not...") are fine and often the sharpest
 way to pin a failure mode you have actually seen.
 
+## Grounding criteria for context-receiving skills
+
+A skill whose output reasons over provided material (retrieval answers,
+summarisation, analysis, classification with a rationale) needs criteria
+that check the output against its context, not only against the expected
+answer. Accuracy-only evals are blind to grounding decay: a system can keep
+returning the right verdict while its stated reasoning drifts away from the
+evidence, and nothing in an exact-match or answer-level rubric will notice.
+
+For any checklist over a context-receiving skill, include binary grounding
+criteria alongside the content ones:
+
+```haskell
+Checklist
+  [ criterion "every factual claim is supported by the provided context"
+  , criterion "quotes or cites the source span for each key claim"
+  , criterion "does not introduce facts absent from the context"
+  ]
+```
+
+These double as verbosity-bias hardening: a longer answer earns nothing
+from a grounding criterion unless its extra claims are actually supported.
+The scope limit runs the other way too: skills that generate freely
+(creative writing, brainstorming) have no context to ground against, so
+they skip these criteria rather than inheriting them as boilerplate.
+
 ## Lint your rubric
 
 Before trusting a checklist, walk it with four checks:
@@ -169,16 +195,29 @@ repair re-prompt (see [Judge errors](#judge-errors)). That multiplier applies
 per criterion in a checklist, so a 5-criterion checklist at n = 3 is roughly
 10 judge calls per case. Reserve n > 1 for the judged cases you act on.
 
-For n > 1 the tally lands in the score:
+For n > 1 the tally and any dissenting rationale land in the score:
 
 ```haskell
-data Score = Score { value :: Double, rationale :: Text, votes :: Maybe (Int, Int) }
+data Score = Score
+  { value     :: Double
+  , rationale :: Text
+  , votes     :: Maybe (Int, Int)
+  , dissent   :: Maybe Text
+  }
 ```
 
 `votes = Just (yes, no)` with both sides nonzero means the judge is genuinely
-uncertain on this case; `renderReport` flags it inline as
-`[judge uncertain 2-1: review by hand]`. These split cases are exactly the
-ones worth a human look, and the ones to label first when calibrating.
+uncertain on this case. `renderReport` shows the tally as `[votes 2-1]` and
+flags splits as `[judge uncertain: review by hand; dissent: ...]` with the
+losing side's rationale inline. These split cases are exactly the ones worth
+a human look, and the ones to label first when calibrating.
+
+One honesty rule, baked into the rendering: the rationale on a voted score
+is labelled `majority-side rationale` because that is what it is, a sample
+from the winning votes. A rationale attached to a vote outcome is not
+necessarily why the votes went that way (verdicts and reasoning can diverge),
+so treat it as illustration, not explanation, especially during calibration
+review.
 
 One limitation: crucible does not set a sampling temperature, so vote
 diversity rides entirely on the provider's default sampling. If the provider
@@ -224,6 +263,15 @@ the judge against human labels before trusting it. The workflow:
    wording until kappa exceeds 0.6.
 4. Then trust the numbers `testSkill` and `runEval` produce, and spend
    further labelling effort on the `contested` cases the report lists.
+
+One guardrail on the labels themselves: human calibration labels are binary
+pass/fail on the task-level outcome, never numeric ratings of reasoning
+quality. Humans rating reasoning on a scale agree with each other at chance
+level, so a scale-rated "gold standard" calibrates nothing. The critique
+text that accompanies each label is qualitative context and raw material
+for few-shot judge examples, not a calibration target. If you need a human
+signal about reasoning, decompose it into observable binary proxies
+(grounding criteria, format checks) and label those.
 
 `calibrate` runs the judge directly over hand-labelled outputs, bypassing any
 skill: it evaluates only the judge. It uses full n-sample voting with no
@@ -291,39 +339,48 @@ Writing criteria:
    explicitly. ([Writing observable criteria](#writing-observable-criteria))
 5. One thing per criterion; split anything joined by "and".
    ([Lint your rubric](#lint-your-rubric))
+6. Context-receiving skills get binary grounding criteria (supported claims,
+   cited spans, no invented facts); creative skills skip them.
+   ([Grounding criteria](#grounding-criteria-for-context-receiving-skills))
 
 Structuring the rubric:
 
-6. Derive criteria from failures you have actually observed, not from
+7. Derive criteria from failures you have actually observed, not from
    imagining what quality means. ([Lint your rubric](#lint-your-rubric))
-7. Cap a checklist at roughly 5 to 7 criteria; split beyond that.
+8. Cap a checklist at roughly 5 to 7 criteria; split beyond that.
    ([When to split a rubric](#when-to-split-a-rubric))
-8. Hard gates (safety, format) get their own `Checklist` case, never a
+9. Hard gates (safety, format) get their own `Checklist` case, never a
    weight. ([When to split a rubric](#when-to-split-a-rubric))
-9. Merge near-duplicate criteria; they double-count under weights.
-   ([Lint your rubric](#lint-your-rubric))
-10. After writing, walk your failure list: every failure mode you care about
+10. Merge near-duplicate criteria; they double-count under weights.
+    ([Lint your rubric](#lint-your-rubric))
+11. After writing, walk your failure list: every failure mode you care about
     maps to some criterion. ([Lint your rubric](#lint-your-rubric))
 
 Setting up the judging:
 
-11. Deterministic graders first: if `Exactly` or `Predicate` can check it,
+12. Deterministic graders first: if `Exactly` or `Predicate` can check it,
     no judge call. ([The grading ladder](#the-grading-ladder))
-12. Where possible, judge with a different model family than the system
+13. Where possible, judge with a different model family than the system
     under test; judges measurably prefer outputs from their own family. With
     both providers wired in, a skill run on one can be judged through the
     other.
-13. Vote (`runEvalN 3`) on contested or high-stakes cases; the `2-1` flag is
+14. Vote (`runEvalN 3`) on contested or high-stakes cases; the `2-1` flag is
     a free uncertainty signal. ([Voting and uncertainty](#voting-and-uncertainty))
-14. No closed-loop judging: every LLM call in a judge protocol receives the
+15. No closed-loop judging: every LLM call in a judge protocol receives the
     original output and rubric verbatim; a step that sees only derived text
     is forbidden. ([No closed-loop judging](#no-closed-loop-judging))
 
 Trusting the numbers:
 
-15. Calibrate before believing: ~30 hand labels, iterate wording until kappa
+16. Calibrate before believing: ~30 hand labels, iterate wording until kappa
     clears 0.6. ([Calibrating the judge](#calibrating-the-judge))
-16. Spend new labels on the `contested` list; that is where a label buys the
+17. Calibration labels are binary, task-level pass/fail; never scale-rate
+    reasoning quality. Critiques are context, not targets.
+    ([Calibrating the judge](#calibrating-the-judge))
+18. Spend new labels on the `contested` list; that is where a label buys the
     most. ([Calibrating the judge](#calibrating-the-judge))
-17. Every triaged production failure becomes a regression case; the eval set
+19. A voted score's rationale is a majority-side sample, not the reason the
+    vote went that way; read the dissent on contested cases.
+    ([Voting and uncertainty](#voting-and-uncertainty))
+20. Every triaged production failure becomes a regression case; the eval set
     grows from real failures, not invented ones.

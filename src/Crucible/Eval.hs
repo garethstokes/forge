@@ -48,13 +48,21 @@ data Case i a = Case { input :: i, name :: Text, expect :: Expectation a }
 
 -- | A score in [0,1] with a rationale. For judged scores produced by a vote,
 -- 'votes' records the tally (yes, no); both sides nonzero means the judge is
--- uncertain on this case. Deterministic scores carry 'Nothing'.
-data Score = Score { value :: Double, rationale :: Text, votes :: Maybe (Int, Int) }
+-- uncertain on this case, and 'dissent' carries the first losing-side
+-- rationale. The rationale of a voted score is a SAMPLE from the majority
+-- side, not the reason the vote went that way. Deterministic scores carry
+-- 'Nothing' for both.
+data Score = Score
+  { value     :: Double
+  , rationale :: Text
+  , votes     :: Maybe (Int, Int)
+  , dissent   :: Maybe Text
+  }
   deriving (Eq, Show)
 
 -- | Score with no vote tally.
 score :: Double -> Text -> Score
-score v r = Score v r Nothing
+score v r = Score v r Nothing Nothing
 
 data Result i a = Result { case' :: Case i a, output :: a, score :: Score }
 data Report i a = Report { results :: [Result i a], passRate :: Double, meanScore :: Double }
@@ -76,9 +84,11 @@ judgeN n render rubric actual =
 -- | Convert a vote outcome to a Score; the Bool suppresses the tally for
 -- single-sample judging.
 voteScore :: Bool -> VoteOutcome -> Score
-voteScore _      (AllErrored m)    = score 0.0 ("judge error: " <> m)
-voteScore single (Decided p w y f) =
-  Score (if p then 1.0 else 0.0) w (if single then Nothing else Just (y, f))
+voteScore _      (AllErrored m)      = score 0.0 ("judge error: " <> m)
+voteScore single (Decided p w d y f) =
+  Score (if p then 1.0 else 0.0) w
+    (if single then Nothing else Just (y, f))
+    (if single then Nothing else d)
 
 -- | Score one output against its expectation, single-sample judging.
 scoreM :: (Eq a, LLM :> es) => (a -> Text) -> Expectation a -> a -> Eff es Score
@@ -112,8 +122,8 @@ checklistScore n render cs actual = do
     judge1 c = do
       out <- vote True n ("the output must satisfy: " <> c.label) (render actual)
       pure $ case out of
-        AllErrored m    -> (c, False, "judge error: " <> m)
-        Decided p w _ _ -> (c, p, w)
+        AllErrored m      -> (c, False, "judge error: " <> m)
+        Decided p w _ _ _ -> (c, p, w)
 
 -- | Run a system-under-test over a dataset and aggregate, single-sample
 -- judging (equivalent to @'runEvalN' 1@).
@@ -135,20 +145,31 @@ runEvalN n render sut cases = do
       s   <- scoreN n render ex out
       pure (Result c out s)
 
--- | A human-readable report: one line per case (with judge-uncertainty and
--- judge-error annotations), then a summary.
+-- | A human-readable report: one line per case, then a summary. Voted
+-- scores show the tally and label their rationale as majority-side (a
+-- sample from the winning votes, not the reason the vote went that way);
+-- contested cases are flagged with the dissenting rationale shown, and
+-- judge errors are called out.
 renderReport :: Report i a -> Text
 renderReport Report{results = rs, passRate = pr, meanScore = ms} =
   T.intercalate "\n" $
-  [ caseName <> ": " <> tshow s.value <> " (" <> s.rationale <> ")" <> annot s
+  [ caseName <> ": " <> tshow s.value <> " (" <> body s <> ")" <> annot s
   | Result{case' = Case{name = caseName}, score = s} <- rs ]
   ++ [ "", "pass-rate: " <> tshow pr <> "  mean: " <> tshow ms ]
   where
     tshow :: Show x => x -> Text
     tshow = T.pack . show
-    annot s = uncertain s <> jerr s
+    body s = case s.votes of
+      Just _  -> "majority-side rationale: " <> s.rationale
+      Nothing -> s.rationale
+    annot s = tally s <> uncertain s <> jerr s
+    tally s = case s.votes of
+      Just (y, f) -> "  [votes " <> tshow y <> "-" <> tshow f <> "]"
+      Nothing     -> ""
     uncertain s = case s.votes of
       Just (y, f) | y > 0 && f > 0 ->
-        "  [judge uncertain " <> tshow y <> "-" <> tshow f <> ": review by hand]"
+        "  [judge uncertain: review by hand"
+          <> maybe "" ("; dissent: " <>) s.dissent
+          <> "]"
       _ -> ""
     jerr s = if "judge error: " `T.isInfixOf` s.rationale then "  [judge error]" else ""

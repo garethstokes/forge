@@ -1041,7 +1041,9 @@ main = runChecks
                       [ Case ("a" :: Text) "contested" (Rubric "r")
                       , Case ("b" :: Text) "errs" (Rubric "r") ]))
            r = renderReport rep
-       in ( T.isInfixOf "[judge uncertain 2-1: review by hand]" r
+       in ( T.isInfixOf "[votes 2-1]" r
+             && T.isInfixOf "[judge uncertain: review by hand; dissent: n]" r
+             && T.isInfixOf "majority-side rationale: y" r
           , T.isInfixOf "[judge error]" r ))
   -- eval rubric upgrades: calibration
   , check "calibrate: agreement/kappa/fail metrics on scripted verdicts"
