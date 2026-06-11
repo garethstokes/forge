@@ -72,7 +72,8 @@ main = do
   (Anthropic and OpenAI), and cassette interpreters.
 - **Typed skills**: declare a `Skill` with input/output codecs; the output
   schema is injected into the prompt and the reply tolerantly decoded. Attach
-  test cases with `withTests` and run them with `testSkill`.
+  test cases with `withTests`, run them with `testSkill`, and hill-climb the
+  instruction against them with `improveSkill`.
 - **Typed tool-calling**: declare a toolbox as a record of plain handlers;
   field names become tool names, arguments are decoded and results encoded
   through codecs, and the model drives a capped, self-correcting
@@ -93,8 +94,9 @@ main = do
 - [Getting started](getting-started.md): config, a first live call, a typed
   function, a cassette replay.
 - [Effects](effects.md): the capability effects and their interpreters.
-- [Typed functions](typed-functions.md): `skill`/`call`, codecs, schema
-  injection, tolerant decode, retries.
+- [Typed functions](typed-functions.md): `skill`/`call`, structured
+  instructions, codecs, schema injection, tolerant decode, retries, few-shot
+  examples, `improveSkill`.
 - [Evals](evals.md): expectations, checklists, the judge, voting, calibration.
 - [Tool calling](tool-calling.md): record toolboxes, `runToolAgent`, the loop,
   the cap, tool schemas and errors.
