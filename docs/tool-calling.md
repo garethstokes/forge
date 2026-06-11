@@ -279,3 +279,219 @@ in [Effects](effects.md). Token accounting across tool-loop rounds is covered in
 [Usage & cassettes](usage-and-cassettes.md). To stream the final assistant
 response as it arrives while the tool loop runs normally, see
 [Streaming](streaming.md).
+
+## The text-path agent
+
+Some models and endpoints do not support native `tool_use` blocks in the
+response wire format. The text-path agent in `Crucible.Agent` and
+`Crucible.Decision` handles this case: every turn is a plain text completion
+(the `LLM` effect), and the model is instructed to emit a JSON object whose
+shape encodes either a tool call or a final answer. No provider-specific schema
+is involved; the entire contract is expressed in the system prompt.
+
+### When to use it
+
+Use the text-path agent when:
+
+- the model or endpoint does not support structured `tool_use` output (for
+  example a local or self-hosted model behind an OpenAI-compatible chat
+  endpoint that only returns `content` strings),
+- or you want total portability and are willing to accept the reliability trade
+  described at the end of this section.
+
+When the provider supports native tool calling, prefer `runToolAgent` (the
+`Chat`-effect path): the provider parses arguments server-side, errors are
+well-typed, and no prompt engineering is required to teach the model the
+schema.
+
+### The `Decision` type and `decisionCodec`
+
+The model emits one of two things each turn:
+
+```haskell
+data Decision tool answer = CallTool tool | Done answer
+```
+
+`decisionCodec` builds a `JSONCodec (Decision tool answer)` from a tool codec
+and an answer codec. It tries the tool codec first; if that fails, it tries the
+answer codec:
+
+```haskell
+decisionCodec
+  :: JSONCodec tool
+  -> JSONCodec answer
+  -> JSONCodec (Decision tool answer)
+```
+
+For the common case where the tool codec is `toolCallCodec` (decoding
+`{"tool": <name>, "args": {...}}`), the combined decision codec accepts exactly
+two shapes:
+
+- `{"tool": "get_weather", "args": {"city": "Brisbane"}}` decodes as
+  `CallTool (ToolCall "get_weather" ...)`.
+- `{"answer": "It is 26C and sunny."}` decodes as `Done "It is 26C and sunny."`.
+
+`reduce` maps a `Decision` to a `Step` for the control loop:
+
+```haskell
+data Step tool answer = Continue tool | Halt answer
+
+reduce :: Decision tool answer -> Step tool answer
+reduce (CallTool t) = Continue t
+reduce (Done a)     = Halt a
+```
+
+`reduce` is pure and total. The control loop pivots on its result without
+performing any effects.
+
+### The control loop
+
+`startAgent` seeds the transcript with a system message that states the
+required JSON schema (derived from the codec via `schemaText`) and a user
+message containing the question:
+
+```haskell
+startAgent :: JSONCodec (Decision tool answer) -> Text -> AgentState
+```
+
+`runAgent` drives the loop. Its type lists the required capabilities:
+
+```haskell
+runAgent
+  :: (LLM :> es, Tools :> es)
+  => JSONCodec (Decision ToolCall answer)
+  -> AgentState
+  -> Eff es answer
+```
+
+The loop:
+
+1. Call `complete` with the current transcript to get the model's raw text reply.
+2. Decode the reply through the codec with `decodeLLM`. On failure, append
+   the assistant reply and a user message containing the parse error, then
+   repeat from step 1. The model receives its own malformed output and the
+   parse error and can self-correct.
+3. On success, call `reduce`:
+   - `Halt answer` -- return the answer.
+   - `Continue (ToolCall name args)` -- call `callTool name args`, encode
+     the result as a `Tool` message appended to the transcript, and repeat
+     from step 1.
+
+Tool results are encoded as compact JSON text. Errors from `callTool` are
+rendered via `renderToolError` and prepended with `"error: "` before being
+appended, so the model sees the structured feedback and can issue a corrected
+call on the next turn.
+
+`AgentState` is a newtype over `[Message]`. `startAgent` is the only
+constructor you need in practice; you can inspect or extend the transcript
+directly if you need to inject additional context.
+
+### Tools dispatch
+
+`runTools` interprets the `Tools` effect against a `[Tool es]` toolbox,
+following the same `Tool` type used on the native path:
+
+```haskell
+runTools :: [Tool es] -> Eff (Tools : es) a -> Eff es a
+```
+
+An unknown tool name produces `Left (UnknownTool name availableNames)`.
+Arguments that do not decode through the tool's input codec produce
+`Left (BadArgs name decodeError schema)`. Both are rendered by `renderToolError`
+and fed back into the transcript as described above.
+
+The `[Tool es]` list can be built with `tool`, `toolWith`, `rawTool`, or the
+record toolbox via `Crucible.Tool.Generic.tools` -- the same constructors used
+on the `Chat` path. First match wins in dispatch.
+
+`toolsHelp :: [Tool es] -> Text` renders a prose listing of the toolbox
+suitable for inclusion in the system prompt, one line per tool:
+
+```
+- get_weather(args: {"type":"object","properties":{"city":{"type":"string"}},...})
+- add(args: {"type":"object","properties":{"a":{"type":"number"},...}})
+```
+
+The listing is used in the system prompt so the model knows which tool names
+are valid and what shape each expects.
+
+### Example
+
+The following is adapted from `Crucible.Example`. It runs the full text-path
+agent in a pure stack with canned model replies:
+
+```haskell
+import Data.Text (Text)
+import Effectful (runPureEff)
+import qualified Data.Aeson as A
+import Data.Aeson.Types (parseMaybe)
+import Crucible.Codec (JSONCodec, object, field, str)
+import Crucible.Decision (Decision, decisionCodec)
+import Crucible.LLM (runLLMScripted, Message(..), Role(..))
+import Crucible.Tool
+import Crucible.Agent (AgentState(..), runAgent)
+
+-- hand-written schema and rawTool handler
+weatherSchema :: A.Value
+weatherSchema = A.object
+  [ "type"       A..= A.String "object"
+  , "properties" A..= A.object
+      [ "city" A..= A.object ["type" A..= A.String "string"] ]
+  , "required"   A..= A.toJSON [A.String "city"]
+  ]
+
+weatherTool :: Tool es
+weatherTool = rawTool "get_weather" weatherSchema $ \args ->
+  pure $ case parseMaybe (A.withObject "" (\o -> o A..: "city")) args of
+    Just c  -> A.String ("sunny in " <> c)
+    Nothing -> A.String "unknown city"
+
+myTools :: [Tool es]
+myTools = [weatherTool]
+
+-- codec: {"answer": <text>}
+answerCodec :: JSONCodec Text
+answerCodec = object (field "answer" id str)
+
+myCodec :: JSONCodec (Decision ToolCall Text)
+myCodec = decisionCodec toolCallCodec answerCodec
+
+-- seed the transcript manually (or use startAgent myCodec question)
+start :: AgentState
+start = AgentState
+  [ Message System ("Tools:\n" <> toolsHelp myTools
+      <> "\nReply with JSON: {\"tool\":<name>,\"args\":{...}} or {\"answer\":<text>}.")
+  , Message User "What is the weather in Brisbane?" ]
+
+-- canned replies: first a tool call, then a final answer
+cannedReplies :: [Text]
+cannedReplies =
+  [ "{\"tool\":\"get_weather\",\"args\":{\"city\":\"Brisbane\"}}"
+  , "{\"answer\":\"It is sunny in Brisbane.\"}"
+  ]
+
+result :: Text
+result =
+  runPureEff
+    . runTools myTools
+    . runLLMScripted cannedReplies
+    $ runAgent myCodec start
+-- result == "It is sunny in Brisbane."
+```
+
+The effect stack layers `runTools` over `runLLMScripted` over `runPureEff`.
+No IO is involved: this is a self-contained, deterministic unit test harness.
+Swap `runLLMScripted` for a live interpreter to point the loop at a real model.
+
+### Comparison with the Chat path
+
+The `Chat`-effect path (`runToolAgent`) sends tool definitions as structured
+`tools` blocks in the API request. The provider parses the model's response and
+returns `tool_use` content blocks with validated JSON arguments. The text path
+has the model emit JSON in the message body: parsing happens client-side in
+`decodeLLM`, and the schema contract is enforced only through the system prompt.
+
+The text path trades wire-native reliability for total provider independence.
+Use the `Chat` path when available; use `Crucible.Agent` when the provider
+does not support structured tool calling or when you need to run the loop
+against a plain text completion endpoint.
