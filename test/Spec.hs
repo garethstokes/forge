@@ -36,7 +36,7 @@ import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt)
-import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith)
+import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
@@ -1134,6 +1134,30 @@ main = runChecks
                  (calibrateWith 1 10 1 id "r"
                     [("a", "o" :: Text, True), ("b", "o2", True), ("c", "o3", True)]))
        in (r.exampleCount, r.measured))
+  -- crucible-2h9: bootstrap CIs on kappa
+  , check "bootstrapKappa: deterministic per seed"
+      True
+      (let ps = [(True, True), (True, False), (False, False), (False, True), (True, True), (False, False)]
+       in bootstrapKappa 9 1000 ps == bootstrapKappa 9 1000 ps)
+  , check "bootstrapKappa: perfect agreement collapses tight"
+      ((0.0, 1.0))
+      (bootstrapKappa 3 1000 [(True, True), (False, False), (True, True), (False, False)])
+  , check "bootstrapKappa: mixed pairs bracket the point estimate"
+      (True, True)
+      (let ps = [(True, True), (True, True), (True, True), (False, False)
+                , (False, False), (False, False), (True, False), (False, True)]
+           k = 0.5
+           (lo, hi) = bootstrapKappa 11 1000 ps
+       in (lo <= k && k <= hi, lo < hi))
+  , check "bootstrapKappa: degenerate sizes collapse to the point"
+      (True, True)
+      (let one = bootstrapKappa 1 1000 [(True, False)]
+           none = bootstrapKappa 1 1000 []
+       in (fst one == snd one, none == (0, 0)))
+  , check "renderCalibration: kappa line carries the CI"
+      True
+      (T.isInfixOf "[95% CI "
+        (renderCalibration (CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0))))
   , check "renderCalibration: examples line only when used"
       (True, False)
       (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2 (0, 0)
