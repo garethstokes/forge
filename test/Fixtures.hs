@@ -108,13 +108,13 @@ deriving via (Table "employees" EmployeeT) instance Entity Employee
 -- forward FK (nullable belongs-to self): the manager is the employee whose PK =
 -- self.employee_manager, or Nothing when the self-FK is NULL (top of the chain).
 instance HasRelation Employee "manager" where
-  type Target      Employee "manager" = Maybe Employee
+  type Related     Employee "manager" = Maybe Employee
   type Cardinality Employee "manager" = 'Opt
   relSpec = belongsToMaybe (Proxy @"employeeManager")
 
 -- reverse FK (has-many self): reports are employees whose employee_manager = self.PK
 instance HasRelation Employee "reports" where
-  type Target      Employee "reports" = [Employee]
+  type Related     Employee "reports" = [Employee]
   type Cardinality Employee "reports" = 'Many
   relSpec = hasMany (Proxy @"employeeManager")
 
@@ -129,22 +129,22 @@ type Comment = CommentT Identity
 deriving via (Table "comments" CommentT) instance Entity Comment
 
 instance HasRelation Post "comments" where
-  type Target      Post "comments" = [Comment]
+  type Related     Post "comments" = [Comment]
   type Cardinality Post "comments" = 'Many
   relSpec = hasMany (Proxy @"commentPost")
 
 instance HasRelation User "posts" where
-  type Target      User "posts" = [Post]
+  type Related     User "posts" = [Post]
   type Cardinality User "posts" = 'Many
   relSpec = hasMany (Proxy @"postAuthor")
 
 instance HasRelation User "profile" where
-  type Target      User "profile" = Maybe Profile
+  type Related     User "profile" = Maybe Profile
   type Cardinality User "profile" = 'Opt
   relSpec = hasOpt (Proxy @"profileUser")
 
 instance HasRelation Post "author" where
-  type Target      Post "author" = User
+  type Related     Post "author" = User
   type Cardinality Post "author" = 'One
   relSpec = belongsTo (Proxy @"postAuthor")
 

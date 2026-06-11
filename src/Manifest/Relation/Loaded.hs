@@ -81,7 +81,7 @@ type family Insert (name :: Symbol) (loaded :: [Symbol]) :: [Symbol] where
 
 -- | Load relation @name@ onto an 'Ent', recording it in the load-set phantom.
 with :: forall name a l.
-        (HasRelation a name, KnownSymbol name, Typeable (Target a name))
+        (HasRelation a name, KnownSymbol name, Typeable (Related a name))
      => Strategy name -> Ent l a -> Db (Ent (Insert name l) a)
 with strat (Ent v rels) = do
   t <- case strat of
@@ -92,7 +92,7 @@ with strat (Ent v rels) = do
 -- | The @joined@ strategy execution: load relation @name@ via a single LEFT
 -- JOIN that pins the owning row by its PK, then decode the child/target portion
 -- of each row (skipping LEFT-JOIN misses), wrapping by cardinality.
-joinedLoad :: forall a name. (HasRelation a name) => a -> Db (Target a name)
+joinedLoad :: forall a name. (HasRelation a name) => a -> Db (Related a name)
 joinedLoad parent = case relSpec @a @name of
   RelMany childFk -> joinReverse childFk parent
   RelOpt  childFk -> listToMaybe <$> joinReverse childFk parent
@@ -162,9 +162,9 @@ type family MemberCmp o name xs a where
 rel :: forall name a loaded.
        ( HasRelation a name
        , Member name loaded a
-       , Typeable (Target a name)
+       , Typeable (Related a name)
        )
-    => Rel a name -> Ent loaded a -> Target a name
+    => Rel a name -> Ent loaded a -> Related a name
 rel _ (Ent _ rels) =
   case Map.lookup (symbolVal (Proxy @name)) rels >>= fromDynamic of
     Just t  -> t

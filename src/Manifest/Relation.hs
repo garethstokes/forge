@@ -30,13 +30,13 @@ import Manifest.Error (DbError(OtherError), DbException(..))
 import Manifest.Session (Db, decodeRowDb, execDb, setBaseline)
 
 -- | Load relation @name@ off a bare value (the A path). Zero type-level
--- tracking; returns the plain 'Target' ([Post] / Maybe Profile).
-load :: forall a name. (HasRelation a name) => Rel a name -> a -> Db (Target a name)
+-- tracking; returns the plain 'Related' ([Post] / Maybe Profile).
+load :: forall a name. (HasRelation a name) => Rel a name -> a -> Db (Related a name)
 load _ = loadRel @a @name
 
 -- | The strategy execution shared by the A and D paths: run a separate SELECT
 -- for the children (the @selectin@ strategy) and wrap by cardinality.
-loadRel :: forall a name. (HasRelation a name) => a -> Db (Target a name)
+loadRel :: forall a name. (HasRelation a name) => a -> Db (Related a name)
 loadRel parent = case relSpec @a @name of
   RelMany childFk -> selectByKey childFk (pkParam parent)
   RelOpt  childFk -> listToMaybe <$> selectByKey childFk (pkParam parent)
@@ -106,8 +106,8 @@ selectByKeyIn keyCol keyVals = do
 -- on the existential). Non-Many leaf relations are rejected at runtime.
 loadNested
   :: forall a n1 mid n2 leaf.
-     ( HasRelation a n1, Target a n1 ~ [mid], Entity mid
-     , HasRelation mid n2, Target mid n2 ~ [leaf], Entity leaf )
+     ( HasRelation a n1, Related a n1 ~ [mid], Entity mid
+     , HasRelation mid n2, Related mid n2 ~ [leaf], Entity leaf )
   => Path a n1 mid n2 -> a -> Db [(mid, [leaf])]
 loadNested _ parent = do
   mids <- loadRel @a @n1 parent                  -- [mid]

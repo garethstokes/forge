@@ -40,32 +40,32 @@ the foreign-key spec:
 {-# LANGUAGE TypeFamilies #-}
 
 instance HasRelation User "posts" where
-  type Target      User "posts" = [Post]
+  type Related     User "posts" = [Post]
   type Cardinality User "posts" = 'Many
   relSpec = hasMany (Proxy @"postAuthor")    -- FK column on the child
 ```
 
 The three cardinalities, and the builders that declare them:
 
-| Card | `Target` shape | Builder | Meaning |
+| Card | `Related` shape | Builder | Meaning |
 |---|---|---|---|
 | `'Many` | `[Post]` | `hasMany (Proxy @"postAuthor")` | reverse FK: children whose FK = parent's PK |
 | `'Opt` | `Maybe Profile` | `hasOpt (Proxy @"profileUser")` | optional reverse FK (at most one child) |
 | `'One` | `User` | `belongsTo (Proxy @"postAuthor")` | forward FK: the target whose PK = self's FK |
 | `'Opt` | `Maybe Employee` | `belongsToMaybe (Proxy @"employeeManager")` | nullable forward FK |
 
-The `Target` and `Cardinality` type families drive the result types totally:
+The `Related` and `Cardinality` type families drive the result types totally:
 `'Many` gives `[Post]`, `'Opt` gives `Maybe Profile`, `'One` gives `User`. The FK
 column name is computed from the label by the same `camelCase` to `snake_case` rule
 the deriver uses, so it agrees with the table metadata.
 
 ## The A-path: `load`
 
-`load` takes a relation reference and a bare value and returns the `Target`,
+`load` takes a relation reference and a bare value and returns the `Related`,
 directly:
 
 ```hs
-load :: HasRelation a name => Rel a name -> a -> Db (Target a name)
+load :: HasRelation a name => Rel a name -> a -> Db (Related a name)
 ```
 
 ```haskell
@@ -74,7 +74,7 @@ posts <- load #posts user        -- :: Db [Post]
 
 No wrapper, no phantom, no type annotations. The result is an ordinary `[Post]` of
 managed values you can edit and `save`. The same call shape covers the other
-cardinalities, the result type following `Target`:
+cardinalities, the result type following `Related`:
 
 ```hs
 author   <- load #author post     -- :: Db User          (belongs-to, 'One)
@@ -94,7 +94,7 @@ getEnt :: (Entity a, DbType (PrimKey a))
 with   :: HasRelation a name
        => Strategy name -> Ent l a -> Db (Ent (Insert name l) a)   -- load a relation in
 rel    :: (HasRelation a name, Member name loaded a)
-       => Rel a name -> Ent loaded a -> Target a name      -- total read-back
+       => Rel a name -> Ent loaded a -> Related a name      -- total read-back
 ```
 
 `manage u` wraps a bare value with an empty load-set; `with (selectin #posts)` loads
@@ -142,7 +142,7 @@ the path operator `./` and `loadNested`:
 
 ```hs
 (./)       :: Rel a n1 -> Rel mid n2 -> Path a n1 mid n2
-loadNested :: (HasRelation a n1, Target a n1 ~ [mid], …)
+loadNested :: (HasRelation a n1, Related a n1 ~ [mid], …)
            => Path a n1 mid n2 -> a -> Db [(mid, [leaf])]
 ```
 
@@ -166,13 +166,13 @@ forward and a reverse relation on the same type:
 ```haskell
 -- forward FK (nullable belongs-to self): the employee's manager, or Nothing at the top
 instance HasRelation Employee "manager" where
-  type Target      Employee "manager" = Maybe Employee
+  type Related     Employee "manager" = Maybe Employee
   type Cardinality Employee "manager" = 'Opt
   relSpec = belongsToMaybe (Proxy @"employeeManager")
 
 -- reverse FK (has-many self): the employees who report to this one
 instance HasRelation Employee "reports" where
-  type Target      Employee "reports" = [Employee]
+  type Related     Employee "reports" = [Employee]
   type Cardinality Employee "reports" = 'Many
   relSpec = hasMany (Proxy @"employeeManager")
 ```
@@ -201,12 +201,12 @@ Each side `hasMany` the join entity, and the join entity `belongsTo` each side:
 
 ```haskell
 instance HasRelation Student "enrollments" where
-  type Target      Student "enrollments" = [Enrollment]
+  type Related     Student "enrollments" = [Enrollment]
   type Cardinality Student "enrollments" = 'Many
   relSpec = hasMany (Proxy @"enrollmentStudent")   -- enrolments whose student FK = this student
 
 instance HasRelation Enrollment "course" where
-  type Target      Enrollment "course" = Course
+  type Related     Enrollment "course" = Course
   type Cardinality Enrollment "course" = 'One
   relSpec = belongsTo (Proxy @"enrollmentCourse")  -- the course this enrolment points at
 ```
@@ -232,7 +232,7 @@ A-path (`load #posts`), the D-path (`with (selectin #posts)` then `rel #posts`),
 proves `joined #posts` emits a `LEFT JOIN` by inspecting the statement log, all as
 live tests against Postgres. The shapes generalise across the cardinalities and the
 self-referential case shown above; the load path is the same, only the result type
-changes with `Target`.
+changes with `Related`.
 
 ## Status
 

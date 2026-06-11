@@ -33,9 +33,9 @@ data Card = Many | One | Opt
 -- | A relationship named @name@ on entity @a@. SP2 core supports the
 -- \"FK on the child references the parent's PK\" shape (Many and Opt).
 class (Entity a, KnownSymbol name) => HasRelation a (name :: Symbol) where
-  type Target      a name :: Type   -- ^ [Post] / Maybe Profile
+  type Related     a name :: Type   -- ^ [Post] / Maybe Profile
   type Cardinality a name :: Card   -- ^ 'Many / 'Opt
-  relSpec :: RelSpec (Target a name)
+  relSpec :: RelSpec (Related a name)
 
 -- | A relationship's runtime spec, indexed by its target type so the loader
 -- is type-safe. Each carries the child's 'Entity' dictionary and the child
@@ -47,7 +47,7 @@ data RelSpec t where
   RelOptOne :: Entity c => ByteString -> RelSpec (Maybe c)   -- forward FK, nullable target
 
 -- | @hasMany #childFk@ — a to-many relationship whose child rows are those
--- with @child_fk = parent_pk@. The child type comes from the 'Target'.
+-- with @child_fk = parent_pk@. The child type comes from the 'Related'.
 hasMany :: forall c fk. (Entity c, KnownSymbol fk) => Proxy fk -> RelSpec [c]
 hasMany _ = RelMany (camelToSnake (symbolVal (Proxy @fk)))
 
