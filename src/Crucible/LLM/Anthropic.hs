@@ -29,6 +29,7 @@ module Crucible.LLM.Anthropic
   ( AnthropicConfig (..)
   , defaultAnthropicConfig
   , newAnthropicManager
+  , provider
   , requestJson
   , run
   , record
@@ -90,6 +91,7 @@ import qualified Data.Vector as V
 import qualified Crucible.Chat as Chat
 import Crucible.Chat (Block (..), Chat (..), ToolUse (..), Turn (..), blockJson, parseTurn, turnContentJson)
 import Crucible.LLM (LLM (..), Message (..), Role (..))
+import Crucible.LLM.Provider (Provider (..))
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
 
@@ -397,3 +399,14 @@ parseUsage t = either (const mempty) id $ do
         u <- o .: "usage"
         Usage <$> u .: "input_tokens" <*> u .: "output_tokens")
     v
+
+-- | Package this provider for 'Crucible.LLM.Fallback' chains: one shared
+-- TLS manager, per-call functions carrying the full retry policy.
+provider :: AnthropicConfig -> IO Provider
+provider cfg = do
+  mgr <- newAnthropicManager cfg
+  pure Provider
+    { name     = "anthropic"
+    , complete = anthropicCompleteUsage cfg mgr
+    , converse = converseOnce cfg mgr
+    }
