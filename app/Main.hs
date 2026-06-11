@@ -145,7 +145,7 @@ main = do
       -- improveSkill: one live reflection round over a deliberately weak skill.
       let weak = withTests
             [ Case ("the meeting is at 3pm tomorrow" :: T.Text) "extracts-time"
-                (Exactly ("3pm" :: T.Text)) ]
+                (Exactly ("15:00" :: T.Text)) ]
             (skill "extract-time" str str (\s -> [text|What time? ${s}|]))
       (_, improveSteps) <- runEff (Anthropic.run cfg (improveSkill 1 id weak))
       TIO.putStrLn ("improveSkill: " <> T.pack (show (length improveSteps)) <> " step(s) "
