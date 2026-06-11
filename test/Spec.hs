@@ -32,6 +32,7 @@ import Crucible.Agent (startAgent, runAgent)
 import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
+import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
@@ -82,6 +83,18 @@ newtype Answer = Answer Text deriving (Eq, Show)
 -- Sample type for type-driven tool constructor test
 data Loc = Loc { locCity :: Text } deriving (Show, Generic)
 instance HasCodec Loc where codec = genericCodec
+
+-- crucible typed-tool overhaul: record toolbox fixture
+data DemoBox es = DemoBox
+  { demo_weather :: Loc -> Eff es Text
+  , demo_time    :: Eff es Text
+  } deriving (Generic)
+
+demoBox :: DemoBox es
+demoBox = DemoBox
+  { demo_weather = \(Loc c) -> pure ("sunny in " <> c)
+  , demo_time    = pure "noon"
+  }
 
 -- M12 Task 3: runToolAgent fixture
 -- Tool's schema field is an aeson Value (JSON Schema object)
@@ -843,4 +856,27 @@ main = runChecks
        check "Anthropic.replayChat: replays a tool loop to the final answer"
          (Right "Sunny in Brisbane!")
          r
+  , check "tools: record fields become tools, in field order"
+      ["demo_weather", "demo_time"]
+      (map (.name) (tools demoBox :: [Tl.Tool '[]]))
+  , check "tools: derived handler decodes args and encodes result"
+      (Right (A.String "sunny in Hobart"))
+      (case tools demoBox :: [Tl.Tool '[]] of
+         (w : _) -> runPureEff (Tl.invoke w (object ["locCity" .= String "Hobart"]))
+         []      -> Left (Tl.UnknownTool "empty" []))
+  , check "tools: zero-arg tool accepts an empty object"
+      (Right (A.String "noon"))
+      (case tools demoBox :: [Tl.Tool '[]] of
+         [_, t] -> runPureEff (Tl.invoke t (object []))
+         _      -> Left (Tl.UnknownTool "shape" []))
+  , check "tools: zero-arg tool tolerates invented keys"
+      (Right (A.String "noon"))
+      (case tools demoBox :: [Tl.Tool '[]] of
+         [_, t] -> runPureEff (Tl.invoke t (object ["surprise" .= String "args"]))
+         _      -> Left (Tl.UnknownTool "shape" []))
+  , check "tools: zero-arg schema is an object"
+      (Just (String "object"))
+      (case tools demoBox :: [Tl.Tool '[]] of
+         [_, t] -> schemaType t.schema
+         _      -> Nothing)
   ]

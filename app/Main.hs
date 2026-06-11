@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -18,7 +19,8 @@ import qualified Data.Text.IO as TIO
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
 
-import Effectful (runEff)
+import Effectful (Eff, runEff)
+import Crucible.Tool.Generic (tools)
 
 import Crucible.LLM (Message (..), Role (..), complete)
 import Crucible.LLM.Anthropic
@@ -44,6 +46,16 @@ import System.IO (hFlush, stdout)
 
 data Sentiment = Sentiment { sentLabel :: T.Text } deriving (Show, Generic)
 instance HasCodec Sentiment where codec = genericCodec
+
+data WeatherQ = WeatherQ { city :: T.Text } deriving (Show, Generic)
+instance HasCodec WeatherQ where codec = genericCodec
+
+data WeatherTools es = WeatherTools
+  { get_weather :: WeatherQ -> Eff es T.Text }
+  deriving (Generic)
+
+weatherBox :: WeatherTools es
+weatherBox = WeatherTools { get_weather = \_ -> pure "It is 26C and sunny." }
 
 prompt :: [Message]
 prompt =
@@ -74,14 +86,7 @@ main = do
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
         Left e   -> TIO.putStrLn ("typed fn decode error: " <> e.message)
-      let weatherSchema = A.object
-            [ "type" A..= A.String "object"
-            , "properties" A..= A.object [ "city" A..= A.object ["type" A..= A.String "string"] ]
-            , "required" A..= A.toJSON [A.String "city"]
-            ]
-          weatherTool = Tl.rawTool "get_weather" weatherSchema
-            (\_ -> pure (A.String "It is 26C and sunny."))
-      (toolAns, usage) <- runEff (Anthropic.usageChat cfg (runToolAgent [weatherTool] "Use the tool to get the weather in Brisbane, then tell me."))
+      (toolAns, usage) <- runEff (Anthropic.usageChat cfg (runToolAgent (tools weatherBox) "Use the tool to get the weather in Brisbane, then tell me."))
       case toolAns of
         Right a  -> TIO.putStrLn ("tool agent: " <> a)
         Left err -> TIO.putStrLn ("tool agent error: " <> T.pack (show err))
@@ -107,7 +112,7 @@ main = do
       TIO.putStr "stream tool: "
       (toolStream, tUsage) <-
         runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-                  (Anthropic.streamChat cfg (runToolAgent [weatherTool] "Use the tool to get the weather in Brisbane, then tell me.")))
+                  (Anthropic.streamChat cfg (runToolAgent (tools weatherBox) "Use the tool to get the weather in Brisbane, then tell me.")))
       TIO.putStrLn ""
       case toolStream of
         Right a  -> TIO.putStrLn ("stream tool result: " <> a)
@@ -117,8 +122,8 @@ main = do
       let chatCassette = "/tmp/crucible-chat-cassette.jsonl"
           toolQuestion = "Use the tool to get the weather in Brisbane, then tell me."
       TIO.writeFile chatCassette ""  -- fresh cassette
-      recordedAns <- runEff (Anthropic.recordChat chatCassette cfg (runToolAgent [weatherTool] toolQuestion))
-      replayedAns <- runEff (Anthropic.replayChat chatCassette (runToolAgent [weatherTool] toolQuestion))
+      recordedAns <- runEff (Anthropic.recordChat chatCassette cfg (runToolAgent (tools weatherBox) toolQuestion))
+      replayedAns <- runEff (Anthropic.replayChat chatCassette (runToolAgent (tools weatherBox) toolQuestion))
       case (recordedAns, replayedAns) of
         (Right a, Right b)
           | a == b    -> TIO.putStrLn ("chat cassette: OK replay matches: " <> a)
@@ -134,7 +139,7 @@ main = do
           case otyped of
             Right o  -> TIO.putStrLn ("openai typed fn: " <> sentLabel o)
             Left e   -> TIO.putStrLn ("openai typed fn decode error: " <> e.message)
-          (oAns, oUsage) <- runEff (OpenAI.usageChat ocfg (runToolAgent [weatherTool] toolQuestion))
+          (oAns, oUsage) <- runEff (OpenAI.usageChat ocfg (runToolAgent (tools weatherBox) toolQuestion))
           case oAns of
             Right a  -> TIO.putStrLn ("openai tool agent: " <> a)
             Left err -> TIO.putStrLn ("openai tool agent error: " <> T.pack (show err))
@@ -149,7 +154,7 @@ main = do
           TIO.putStr "openai stream tool: "
           (oToolStream, otUsage) <-
             runEff (runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
-                      (OpenAI.streamChat ocfg (runToolAgent [weatherTool] toolQuestion)))
+                      (OpenAI.streamChat ocfg (runToolAgent (tools weatherBox) toolQuestion)))
           TIO.putStrLn ""
           case oToolStream of
             Right a  -> TIO.putStrLn ("openai stream tool result: " <> a)
@@ -157,8 +162,8 @@ main = do
           TIO.putStrLn ("openai stream tool usage: " <> T.pack (show (usTotalTokens otUsage)) <> " tokens")
           let oChatCassette = "/tmp/crucible-openai-chat-cassette.jsonl"
           TIO.writeFile oChatCassette ""
-          oRecorded <- runEff (OpenAI.recordChat oChatCassette ocfg (runToolAgent [weatherTool] toolQuestion))
-          oReplayed <- runEff (OpenAI.replayChat oChatCassette (runToolAgent [weatherTool] toolQuestion))
+          oRecorded <- runEff (OpenAI.recordChat oChatCassette ocfg (runToolAgent (tools weatherBox) toolQuestion))
+          oReplayed <- runEff (OpenAI.replayChat oChatCassette (runToolAgent (tools weatherBox) toolQuestion))
           case (oRecorded, oReplayed) of
             (Right a, Right b)
               | a == b    -> TIO.putStrLn ("openai chat cassette: OK replay matches: " <> a)
