@@ -187,6 +187,15 @@ addition once Checklist exists.
    default, and constructor-vs-function shape.
 4. Any planned Likert-style "rate the reasoning" human labels to kill?
    (Calibration should stay binary and task-level.)
+   **Decision (2026-06-11): confirmed, nothing to kill.** Human calibration
+   labels are binary and task-level only — `calibrate`'s `Bool` label is a
+   design commitment, not a shortcut; resist widening it to a score. Human
+   critique text is qualitative context (few-shot examples for the judge
+   prompt), never a numeric calibration target. If human signal on
+   reasoning quality is ever needed, decompose it into observable binary
+   proxies ("is the cited span present in the context?") rather than
+   Likert-rating "faithfulness". One guardrail line to be added to the
+   calibrate documentation.
 
 ## Sources
 
