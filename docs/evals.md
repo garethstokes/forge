@@ -185,6 +185,33 @@ diversity rides entirely on the provider's default sampling. If the provider
 returns near-deterministic replies, three votes are three copies of one
 opinion and the tally will look more confident than it is.
 
+## No closed-loop judging
+
+A hard rule for any judge protocol, current or future: **every LLM call in
+the protocol must receive the original skill output and the rubric,
+verbatim.** Judging from a summary, a critique, or the transcript of another
+judge step is forbidden. A previous step quoting the artifact does not
+count; only the artifact does.
+
+The reason is structural, not stylistic. In a closed chain (evidence shown
+once, each step derived only from the previous step), the connection between
+the evidence and the verdict can only decay as steps accumulate. The
+measured failure mode is quiet: multi-step judge debates keep their accuracy
+while the reasoning detaches from the evidence, and majority-voted debate
+collapses reasoning faithfulness almost entirely. Re-injecting the original
+artifact at every step is what prevents it; prompting the steps to argue
+more carefully does not.
+
+crucible's own voting is open-loop by construction: each `judgeN` sample is
+an independent call that receives the original output and rubric, and the
+votes are aggregated mechanically, not by another model. Keep that shape.
+If a protocol cannot re-inject the originals at some step, do not build
+that step: use independent one-shot judges plus a mechanical vote instead.
+
+The review test, one line: does every LLM call in this protocol receive the
+original output and the rubric? If any call sees only derived text, the
+protocol is closed-loop and the answer is no.
+
 ## Calibrating the judge
 
 Suite numbers are only as good as the judge that produced them, so calibrate
@@ -288,12 +315,15 @@ Setting up the judging:
     other.
 13. Vote (`runEvalN 3`) on contested or high-stakes cases; the `2-1` flag is
     a free uncertainty signal. ([Voting and uncertainty](#voting-and-uncertainty))
+14. No closed-loop judging: every LLM call in a judge protocol receives the
+    original output and rubric verbatim; a step that sees only derived text
+    is forbidden. ([No closed-loop judging](#no-closed-loop-judging))
 
 Trusting the numbers:
 
-14. Calibrate before believing: ~30 hand labels, iterate wording until kappa
+15. Calibrate before believing: ~30 hand labels, iterate wording until kappa
     clears 0.6. ([Calibrating the judge](#calibrating-the-judge))
-15. Spend new labels on the `contested` list; that is where a label buys the
+16. Spend new labels on the `contested` list; that is where a label buys the
     most. ([Calibrating the judge](#calibrating-the-judge))
-16. Every triaged production failure becomes a regression case; the eval set
+17. Every triaged production failure becomes a regression case; the eval set
     grows from real failures, not invented ones.
