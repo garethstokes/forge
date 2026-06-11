@@ -321,6 +321,9 @@ compareHandler pool req respond =
                         then Nothing
                         else Just (minimumBy (comparing (\(n, v, _) -> (n, v))) candidateKeys)
                 -- Build a score lookup map: outputId -> Score (for chosen grader only).
+                -- NOTE: chosenGvId comes from run A's candidate set; this assumes one
+                -- GraderVersion row per (grader name, version) — if B were scored by a
+                -- DIFFERENT row sharing the same (name, version), B's scores would drop.
                 let chosenGvId = fmap (\(_, _, gvid) -> gvid) mChosenGrader
                     scoresByOutput scores =
                       Map.fromList

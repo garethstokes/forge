@@ -12,3 +12,8 @@ result-*
 .dolt/
 *.db
 .beads-credential-key
+
+# Generated wasm artifacts (restage with scripts/build-ui.sh; GHC-wasm links are non-reproducible)
+static/evals-ui.wasm
+static/ghc_wasm_jsffi.js
+static/js/

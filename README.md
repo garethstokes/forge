@@ -58,6 +58,11 @@ nix develop -c zinc build
 bash scripts/build-ui.sh
 ```
 
+The generated wasm artifacts (`static/evals-ui.wasm`, `static/ghc_wasm_jsffi.js`,
+`static/js/`) are gitignored — GHC-wasm links are non-reproducible, so they would
+churn on every build. Run `scripts/build-ui.sh` once after cloning (it provisions
+the wasm toolchain via zinc) before serving the dashboard.
+
 ### Run
 
 Environment variables:
