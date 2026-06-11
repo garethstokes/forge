@@ -13,7 +13,24 @@ tolerant JSON extraction, and decode-failure retries are all handled for you.
 ## Skill and skill
 
 `Skill i o` is the declared skill type: `i` is the Haskell input, `o` is the
-decoded output. Construct one with:
+decoded output.
+
+A skill's instruction is structured as three parts via `Instruction`:
+
+```haskell
+data Instruction i = Instruction
+  { preamble    :: Text       -- rendered before the task
+  , task        :: i -> Text  -- the core instruction; never machine-edited
+  , constraints :: Text       -- rendered after the input
+  }
+```
+
+`preamble` provides framing or context that comes before the task. `constraints`
+are placement-sensitive: they appear after the input in the user message, where
+instructions are followed most reliably. Both default to empty. They are the
+slots `improveSkill` mutates; `task` is fixed.
+
+Construct a skill with:
 
 ```haskell
 skill
@@ -22,6 +39,25 @@ skill
   -> JSONCodec o      -- output codec (schema injection + tolerant decode)
   -> (i -> Text)      -- task instruction
   -> Skill i o
+```
+
+`skill` wraps a bare task function with empty preamble and constraints. When you
+want to declare all three parts up front, use `skillWith`:
+
+```haskell
+skillWith
+  :: Text             -- name
+  -> JSONCodec i      -- input codec
+  -> JSONCodec o      -- output codec
+  -> Instruction i    -- preamble + task + constraints
+  -> Skill i o
+```
+
+To update the slots on an existing skill without reconstructing it:
+
+```haskell
+withPreamble    :: Text -> Skill i o -> Skill i o
+withConstraints :: Text -> Skill i o -> Skill i o
 ```
 
 `retries` defaults to 2. Override it with `withRetries :: Int -> Skill i o -> Skill i o`.
@@ -35,9 +71,12 @@ call :: (LLM :> es) => Skill i o -> i -> Eff es (Either DecodeError o)
 `call` needs only `LLM :> es`. It runs unchanged under `runLLMScripted`,
 `Anthropic.replay`, and `Anthropic.run`. The steps it performs:
 
-1. Build a system message: `"Respond ONLY with JSON matching this schema:\n<schema>"`.
-2. Build a user message: the instruction applied to the input, followed by the
-   JSON-encoded input value.
+1. Build a system message: the output schema followed by a machine line:
+   `"Your reply is parsed by a machine; any text outside the JSON is an error."`.
+2. Build a user message: preamble (if non-empty), then the task instruction
+   applied to the input, then the JSON-encoded input wrapped in `<input>`/`</input>`
+   delimiters, then constraints (if non-empty), then a trailing format reminder:
+   `"Respond with JSON only; your reply is parsed by a machine."`.
 3. Call `complete` to get the raw model reply.
 4. Run `decodeLLM` on the reply.
 5. On a decode failure: append the raw reply and the parse error to the conversation
@@ -172,6 +211,9 @@ classify = skill "classify" str polarityCodec
 
 Append constraints (audience, length, format) after the main instruction. Constraints
 near the end of a prompt are followed more reliably than those buried in a preamble.
+Instruction transformers still wrap the task function; the `Instruction` preamble
+and constraints fields are the machine-editable layer around it, written by
+`improveSkill` rather than hand-crafted in the transformer chain.
 
 ### Skill chaining
 
@@ -257,12 +299,12 @@ wrong).
 ## Schema injection
 
 `schemaText :: JSONCodec a -> Text` renders a codec's JSON Schema as compact JSON
-text. `call` calls it on the output codec and prepends the result to the system
-prompt:
+text. `call` calls it on the output codec and uses the result in the system message:
 
 ```
 Respond ONLY with JSON matching this schema:
 {"type":"object","properties":{"sentLabel":{"type":"string"}},"required":["sentLabel"]}
+Your reply is parsed by a machine; any text outside the JSON is an error.
 ```
 
 The model sees the contract before it generates a single token. For `enum` codecs
@@ -270,8 +312,10 @@ the schema enumerates the permitted string values; for records it lists required
 fields and their types. To inspect what will be sent (for prompt tuning, say),
 call `schemaText fn.output` directly. To see the full seed conversation, use
 `prompt :: Skill i o -> i -> [Message]`: it returns the exact messages `call`
-sends for a given input (the System message carrying the schema contract, then
-the User message with the instruction and the rendered input).
+sends for a given input. The System message carries the schema contract and the
+machine line; the User message contains the preamble, the task, the input
+wrapped in `<input>`/`</input>` delimiters, any constraints, and the trailing
+format reminder.
 
 ## Tolerant decode
 
@@ -342,6 +386,42 @@ against `runLLMScripted` in CI and against a live interpreter when you want a
 real regression signal.
 
 For rubric design, voting, and judge calibration, see [Evals](evals.md).
+
+## Improving a skill
+
+`improveSkill` hill-climbs the preamble and constraints against a skill's
+attached test cases:
+
+```haskell
+improveSkill
+  :: (Eq o, LLM :> es)
+  => Int              -- maximum rounds
+  -> (o -> Text)      -- render function passed to testSkill
+  -> Skill i o        -- skill to improve (must have tests attached)
+  -> Eff es (Skill i o, [ImproveStep])
+```
+
+Each round, a reflector skill reads the failing cases (full original prompts,
+raw outputs, and score rationales, re-injected each round), proposes revised
+preamble and constraints, and then runs a full `testSkill` pass on the
+candidate. The candidate replaces the current best only on a strict
+`meanScore` improvement; rounds where the reflector fails to decode or the
+score does not improve leave the best unchanged. The loop stops early when
+every case passes or the round limit is reached. Cost per round is one full
+`testSkill` run (cases times judge calls, doubled by verdict repairs) plus one
+reflection call.
+
+The returned `[ImproveStep]` is chronological; each step records `round'`,
+`accepted`, `passRate`, `meanScore`, and the proposed `preamble` and
+`constraints`, so you can trace what the reflector tried.
+
+**Honesty rails, not optional.** Optimizing against an LLM judge is Goodhart
+territory. Calibrate the judge before trusting the optimizer's gains: run
+`calibrate` from `Crucible.Eval.Calibrate` and confirm kappa is above 0.6
+(see [Evals](evals.md)). Keep held-out cases out of the skill's tests and
+verify the winner against them by hand; `improveSkill` does no splitting.
+Review the accepted preamble and constraints before shipping them, because they
+are text the reflector wrote.
 
 ## One codec, many uses
 
