@@ -34,6 +34,7 @@ import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport, groundingCheck)
+import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (Verdict(..), verdictCodec)
 import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
@@ -1147,4 +1148,49 @@ main = runChecks
       (case prompt (withExamples [("I love it", "positive")] classifyFn) "meh" of
          (_ : Message User u : _) -> T.isInfixOf "<input>\n\"I love it\"\n</input>" u
          _ -> False)
+  -- improveSkill (hermetic hill-climb)
+  , check "improveSkill: accepted revision returns improved skill + step"
+      (True, [ImproveStep 1 True 1.0 1.0 "Always answer GOOD." "Reply with GOOD only."])
+      (let sk = withTests [Case ("in" :: Text) "c" (Exactly ("GOOD" :: Text))]
+                  (withRetries 0 (skill "s" C.str C.str ("Echo: " <>)))
+           (best, steps) = runPureEff (runLLMScripted
+             [ "\"BAD\""                                                        -- baseline fails
+             , "{\"preamble\":\"Always answer GOOD.\",\"constraints\":\"Reply with GOOD only.\"}"
+             , "\"GOOD\""                                                       -- candidate passes
+             ]
+             (improveSkill 1 id sk))
+       in (best.instruction.preamble == "Always answer GOOD.", steps))
+  , check "improveSkill: no improvement -> rejected, original slots kept"
+      (True, [False])
+      (let sk = withTests [Case ("in" :: Text) "c" (Exactly ("GOOD" :: Text))]
+                  (withRetries 0 (skill "s" C.str C.str ("Echo: " <>)))
+           (best, steps) = runPureEff (runLLMScripted
+             [ "\"BAD\""
+             , "{\"preamble\":\"P\",\"constraints\":\"C\"}"
+             , "\"BAD\""                                                        -- candidate also fails
+             ]
+             (improveSkill 1 id sk))
+       in (best.instruction.preamble == "", map (.accepted) steps))
+  , check "improveSkill: reflector junk burns the round, loop survives"
+      [False]
+      (let sk = withTests [Case ("in" :: Text) "c" (Exactly ("GOOD" :: Text))]
+                  (withRetries 0 (skill "s" C.str C.str ("Echo: " <>)))
+           (_, steps) = runPureEff (runLLMScripted
+             [ "\"BAD\"", "j1", "j2", "j3" ]                                    -- reflector retries 2 = 3 replies
+             (improveSkill 1 id sk))
+       in map (.accepted) steps)
+  , check "improveSkill: empty tests -> immediate return, zero calls"
+      (True, "leftover")
+      (runPureEff (runLLMScripted ["leftover"]
+        (do (_, steps) <- improveSkill 3 id (skill "s" C.str (C.str :: JSONCodec Text) ("Echo: " <>))
+            extra <- complete []
+            pure (null steps, extra))))
+  , check "improveSkill: all-passing baseline -> no reflection call"
+      (True, "leftover")
+      (runPureEff (runLLMScripted ["\"GOOD\"", "leftover"]
+        (do (_, steps) <- improveSkill 3 id
+              (withTests [Case ("in" :: Text) "c" (Exactly ("GOOD" :: Text))]
+                 (withRetries 0 (skill "s" C.str C.str ("Echo: " <>))))
+            extra <- complete []
+            pure (null steps, extra))))
   ]
