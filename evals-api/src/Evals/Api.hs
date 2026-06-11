@@ -13,6 +13,7 @@ module Evals.Api
   , RunDetailDto (..), OutputRowDto (..), ScoreDto (..)
   , CompareDto (..), CompareRowDto (..)
   , ApiError (..)
+  , ChangeDto (..)
   ) where
 
 import Data.Aeson (FromJSON, ToJSON, Value)
@@ -72,3 +73,9 @@ newtype ApiError = ApiError { error :: Text }
   deriving (Eq, Show, Generic)
 instance ToJSON ApiError
 instance FromJSON ApiError
+
+-- | One change-feed wake-up forwarded over SSE: current state for 'table'
+-- moved (key = the row pk as text, when known). A hint to refetch — never data.
+data ChangeDto = ChangeDto
+  { table :: Text, key :: Maybe Text }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)

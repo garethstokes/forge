@@ -236,6 +236,11 @@ main = do
     , rows = []
     }
   rt "ApiError" ApiError { error = "not found" }
+  rt "ChangeDto" (ChangeDto { table = "outputs", key = Just "42" })
+  rt "ChangeDto pk-less" (ChangeDto { table = "scores", key = Nothing })
+  expect "ChangeDto wire keys"
+    ((decode (encode (ChangeDto "runs" (Just "7"))) :: Maybe Value)
+       == Just (object ["table" .= ("runs" :: Text), "key" .= ("7" :: Text)]))
   -- Golden wire assertions: pin the exact JSON shape, not just the round-trip.
   expect "ApiError wire shape" $
     (decode (encode (ApiError "x")) :: Maybe Value)

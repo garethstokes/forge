@@ -34,8 +34,8 @@ depends = ["base", "text", "bytestring", "wai", "warp", "http-types", "filepath"
 [dependencies.manifest]
 repo = "https://github.com/garethstokes/manifest.git"
 # Includes recursive cascade deletes (manifest-va2) and the
-# HasRelation.Target -> Related family rename (manifest-jkq).
-rev = "f59be95b09382a2547e60463446207697e716acb"
+# HasRelation.Target -> Related family rename (manifest-jkq) + the change feed (z8h slice 1).
+rev = "0e414c29f77fe8668daefdcbbb5af56576ff1267"
 
 [dependencies.crucible]
 repo = "https://github.com/garethstokes/crucible.git"

@@ -209,10 +209,11 @@ instance Entity GraderVersion where
 -- Run / Output / Score: instances -----------------------------------------------------
 
 instance Entity Run where
-  tableMeta    = genericTableMeta @RunT "runs"
-  cascadeRules = [ cascade (Proxy @Output)    (Proxy @"run") Cascade
-                 , cascade (Proxy @RunMetric) (Proxy @"run") Cascade ]
-  indexes      = [ gin #meta, btree #datasetVersion, btree #targetVersion ]
+  tableMeta     = genericTableMeta @RunT "runs"
+  cascadeRules  = [ cascade (Proxy @Output)    (Proxy @"run") Cascade
+                  , cascade (Proxy @RunMetric) (Proxy @"run") Cascade ]
+  indexes       = [ gin #meta, btree #datasetVersion, btree #targetVersion ]
+  notifyChanges = True
 
 instance HasRelation Run "outputs" where
   type Related     Run "outputs" = [Output]
@@ -230,9 +231,10 @@ instance HasRelation Run "datasetVersion" where
   relSpec = belongsTo (Proxy @"datasetVersion")
 
 instance Entity Output where
-  tableMeta    = genericTableMeta @OutputT "outputs"
-  cascadeRules = [ cascade (Proxy @Score) (Proxy @"output") Cascade ]
-  indexes      = [ gin #response, btree #run ]
+  tableMeta     = genericTableMeta @OutputT "outputs"
+  cascadeRules  = [ cascade (Proxy @Score) (Proxy @"output") Cascade ]
+  indexes       = [ gin #response, btree #run ]
+  notifyChanges = True
 
 instance HasRelation Output "scores" where
   type Related     Output "scores" = [Score]
@@ -250,12 +252,15 @@ instance HasRelation Output "example" where
   relSpec = belongsTo (Proxy @"example")
 
 instance Entity Score where
-  tableMeta = genericTableMeta @ScoreT "scores"
-  indexes   = [ unique [#output, #graderVersion] ]  -- also serves output lookups (leading column)
+  tableMeta     = genericTableMeta @ScoreT "scores"
+  indexes       = [ unique [#output, #graderVersion] ]  -- also serves output lookups (leading column)
+  notifyChanges = True
 
 instance HasRelation Score "grader" where
   type Related     Score "grader" = GraderVersion
   type Cardinality Score "grader" = 'One
   relSpec = belongsTo (Proxy @"graderVersion")
 
-deriving via (Table "run_metrics" RunMetricT) instance Entity RunMetric
+instance Entity RunMetric where
+  tableMeta     = genericTableMeta @RunMetricT "run_metrics"
+  notifyChanges = True
