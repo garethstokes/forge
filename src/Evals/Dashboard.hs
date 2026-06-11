@@ -13,10 +13,12 @@ import Control.Exception (SomeException, handle)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
-import Data.List (sortBy, sortOn)
+import Data.List (minimumBy, nub, sortBy, sortOn)
+import Data.Maybe (mapMaybe)
 import Data.Ord (comparing)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import qualified Data.Map.Strict as Map
 import Network.HTTP.Types (Status, status200, status400, status404, status500)
 import Network.Wai (Application, Request, Response, pathInfo, queryString, responseLBS, responseFile)
 import System.Directory (doesFileExist)
@@ -40,6 +42,7 @@ dashboardApp pool staticDir req respond =
       case readMaybe (T.unpack nTxt) :: Maybe Int of
         Nothing  -> respond (badRequest "invalid run id")
         Just n   -> apiWith (runDetailHandler pool (RunId n) respond)
+    ["api", "compare"]      -> apiWith (compareHandler pool req respond)
     ("api" : _)             -> respond notFound
     segments                -> staticHandler staticDir (normalise segments) respond
   where
@@ -255,3 +258,104 @@ scoreDto s = do
     , scoreError    = s.error
     , rationale     = rationale
     }
+
+-- ---------------------------------------------------------------------------
+-- /api/compare
+
+-- | Compare two runs side-by-side, aligned by example key.
+-- Both runs must share the same dataset version (else 400).
+-- Scores are compared for the lexicographically-first (graderName,
+-- graderVersion) pair appearing in either run's scores.
+compareHandler :: Pool -> Request -> (Response -> IO a) -> IO a
+compareHandler pool req respond =
+  case (queryParam "a" req >>= readMaybeInt, queryParam "b" req >>= readMaybeInt) of
+    (Nothing, _) -> respond (badRequest "a and b run ids required")
+    (_, Nothing) -> respond (badRequest "a and b run ids required")
+    (Just aInt, Just bInt) -> do
+      result <- withSession pool $ do
+        mRunA <- get @Run (Key (RunId aInt))
+        mRunB <- get @Run (Key (RunId bInt))
+        case (mRunA, mRunB) of
+          (Nothing, _) -> pure (Left (404 :: Int, "not found"))
+          (_, Nothing) -> pure (Left (404, "not found"))
+          (Just runA, Just runB) ->
+            if runA.datasetVersion /= runB.datasetVersion
+              then pure (Left (400, "runs are over different dataset versions"))
+              else do
+                summA <- runSummary runA
+                summB <- runSummary runB
+                -- Examples of the shared dataset version, sorted by key.
+                examples <- selectWhere [ #datasetVersion ==. runA.datasetVersion ] :: Db [Example]
+                let sortedExamples = sortOn (.key) examples
+                -- Outputs keyed by (runId, exampleId).
+                outsA <- selectWhere [ #run ==. runA.id ] :: Db [Output]
+                outsB <- selectWhere [ #run ==. runB.id ] :: Db [Output]
+                let outputMapA = Map.fromList [ (o.example, o) | o <- outsA ]
+                    outputMapB = Map.fromList [ (o.example, o) | o <- outsB ]
+                -- Collect all scores for both runs; resolve grader identities.
+                allScoresA <- concat <$> mapM (\o -> selectWhere [ #output ==. o.id ] :: Db [Score]) outsA
+                allScoresB <- concat <$> mapM (\o -> selectWhere [ #output ==. o.id ] :: Db [Score]) outsB
+                -- For each score, resolve (graderName, graderVersion) pair.
+                let resolveGrader s = do
+                      mgv <- get @GraderVersion (Key s.graderVersion)
+                      mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
+                      let gName    = maybe "?" (.name) mg
+                          gVersion = maybe 0 (.version) mgv
+                      pure (gName, gVersion, s.graderVersion)
+                graderKeysA <- mapM resolveGrader allScoresA
+                graderKeysB <- mapM resolveGrader allScoresB
+                let allGraderKeys = nub [ (n, v, gvid) | (n, v, gvid) <- graderKeysA ++ graderKeysB ]
+                -- Pick the first grader by (graderName, graderVersion) ordering.
+                let mChosenGrader =
+                      if null allGraderKeys
+                        then Nothing
+                        else Just (minimumBy (comparing (\(n, v, _) -> (n, v))) allGraderKeys)
+                -- Build a score lookup map: outputId -> Score (for chosen grader only).
+                let chosenGvId = fmap (\(_, _, gvid) -> gvid) mChosenGrader
+                    scoresByOutput scores =
+                      Map.fromList
+                        [ (s.output, s)
+                        | s <- scores
+                        , Just s.graderVersion == chosenGvId
+                        ]
+                    scoreMapA = scoresByOutput allScoresA
+                    scoreMapB = scoresByOutput allScoresB
+                -- Build rows.
+                let mkRow ex =
+                      let mOutA  = Map.lookup ex.id outputMapA
+                          mOutB  = Map.lookup ex.id outputMapB
+                          mSA    = mOutA >>= \o -> Map.lookup o.id scoreMapA
+                          mSB    = mOutB >>= \o -> Map.lookup o.id scoreMapB
+                          sAval  = mSA >>= (.value)
+                          sBval  = mSB >>= (.value)
+                      in CompareRowDto
+                           { exampleKey = ex.key
+                           , outputA    = mOutA >>= (.text)
+                           , outputB    = mOutB >>= (.text)
+                           , errorA     = mOutA >>= (.error)
+                           , errorB     = mOutB >>= (.error)
+                           , scoreA     = sAval
+                           , scoreB     = sBval
+                           , passedA    = mSA >>= (.passed)
+                           , passedB    = mSB >>= (.passed)
+                           , delta      = (-) <$> sAval <*> sBval
+                           }
+                    rows = map mkRow sortedExamples
+                    (mGraderName, mGraderVersion) =
+                      case mChosenGrader of
+                        Nothing          -> (Nothing, Nothing)
+                        Just (n, v, _)   -> (Just n, Just v)
+                pure (Right CompareDto
+                  { runA         = summA
+                  , runB         = summB
+                  , graderName    = mGraderName
+                  , graderVersion = mGraderVersion
+                  , rows          = rows
+                  })
+      case result of
+        Left (404, msg) -> respond (json status404 (ApiError { error = msg }))
+        Left (_, msg)   -> respond (badRequest msg)
+        Right dto       -> respond (json status200 dto)
+  where
+    readMaybeInt :: T.Text -> Maybe Int
+    readMaybeInt t = readMaybe (T.unpack t)

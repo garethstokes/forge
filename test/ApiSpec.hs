@@ -263,7 +263,8 @@ main = do
             ]
         )
   serverSpec
-  putStrLn "manifest-evals ApiSpec: dto round-trips + api OK"
+  compareSpec
+  putStrLn "manifest-evals ApiSpec: dto round-trips + api + compare OK"
 
 serverSpec :: IO ()
 serverSpec = withEphemeralDb $ \pool -> do
@@ -364,3 +365,91 @@ serverSpec = withEphemeralDb $ \pool -> do
     expect "static missing.css 404" (statusCode (responseStatus r8) == 404)
   -- Clean up temp static directory
   removeDirectoryRecursive staticDir
+
+compareSpec :: IO ()
+compareSpec = withEphemeralDb $ \pool -> do
+  _ <- withSession pool migrateAll
+  now <- getCurrentTime
+  -- Seed entities for the compare endpoint tests.
+  -- dataset "cmp" version 1, two examples (c2 inserted FIRST to test sort order).
+  (runAId, runBId, runCId) <- withSession pool $ do
+    d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "cmp", slug = "cmp", createdAt = now } :: Dataset)
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    -- Insert c2 first — heap order != key order, so sort must be exercised.
+    c2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c2", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    c1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "tgt-cmp", createdAt = now } :: Target)
+    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "model-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
+    g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
+    gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    -- Run A
+    rA <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    oA1 <- add (Output { id = OutputId 0, run = rA.id, example = c1.id, response = Nothing, text = Just "a1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    oA2 <- add (Output { id = OutputId 0, run = rA.id, example = c2.id, response = Nothing, text = Just "a2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    _   <- add (Score { id = ScoreId 0, output = oA1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (Score { id = ScoreId 0, output = oA2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (RunMetric { id = RunMetricId 0, run = rA.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now } :: RunMetric)
+    -- Run B (same dataset version, reversed scores)
+    rB <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    oB1 <- add (Output { id = OutputId 0, run = rB.id, example = c1.id, response = Nothing, text = Just "b1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    oB2 <- add (Output { id = OutputId 0, run = rB.id, example = c2.id, response = Nothing, text = Just "b2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    _   <- add (Score { id = ScoreId 0, output = oB1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (Score { id = ScoreId 0, output = oB2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (RunMetric { id = RunMetricId 0, run = rB.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now } :: RunMetric)
+    -- Run C: different dataset version (separate dataset, one example, no scores)
+    d2 <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "other", slug = "other", createdAt = now } :: Dataset)
+    v2 <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d2.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    cx <- add (Example { id = ExampleId 0, datasetVersion = v2.id, key = "cx", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    rC <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v2.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    _  <- add (Output { id = OutputId 0, run = rC.id, example = cx.id, response = Nothing, text = Just "cx1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    pure (rA.id, rB.id, rC.id)
+  mgr <- newManager defaultManagerSettings
+  testWithApplication (pure (dashboardApp pool "test-static")) $ \port -> do
+    let getReq path = parseRequest ("http://localhost:" <> show port <> path) >>= flip httpLbs mgr
+        RunId aInt = runAId
+        RunId bInt = runBId
+        RunId cInt = runCId
+    -- Happy path: A vs B
+    rAB <- getReq ("/api/compare?a=" <> show aInt <> "&b=" <> show bInt)
+    expect "compare AB 200" (statusCode (responseStatus rAB) == 200)
+    expect "compare AB shape" $ case decode (responseBody rAB) :: Maybe CompareDto of
+      Nothing  -> False
+      Just dto ->
+        dto.runA.runId == aInt
+        && dto.runB.runId == bInt
+        && not (null dto.runA.metrics)
+        && not (null dto.runB.metrics)
+        && dto.graderName == Just "g"
+        && length dto.rows == 2
+        -- rows ordered by example key: c1 first
+        && let r0 = head dto.rows
+               r1 = dto.rows !! 1
+           in r0.exampleKey == "c1"
+              && r0.outputA  == Just "a1"
+              && r0.outputB  == Just "b1"
+              && r0.scoreA   == Just 1.0
+              && r0.scoreB   == Just 0.0
+              && r0.passedA  == Just True
+              && r0.passedB  == Just False
+              && r0.delta    == Just 1.0
+              && r1.exampleKey == "c2"
+              && r1.outputA  == Just "a2"
+              && r1.outputB  == Just "b2"
+              && r1.scoreA   == Just 0.0
+              && r1.scoreB   == Just 1.0
+              && r1.passedA  == Just False
+              && r1.passedB  == Just True
+              && r1.delta    == Just (-1.0)
+    -- Mismatch: A vs C (different dataset versions) -> 400 + ApiError
+    rAC <- getReq ("/api/compare?a=" <> show aInt <> "&b=" <> show cInt)
+    expect "compare AC 400" (statusCode (responseStatus rAC) == 400)
+    expect "compare AC ApiError" ((decode (responseBody rAC) :: Maybe ApiError) /= Nothing)
+    -- Missing parameter -> 400
+    rMiss <- getReq "/api/compare?a=1"
+    expect "compare missing b 400" (statusCode (responseStatus rMiss) == 400)
+    -- Garbage parameter -> 400
+    rGarb <- getReq "/api/compare?a=notanint&b=1"
+    expect "compare garbage a 400" (statusCode (responseStatus rGarb) == 400)
+    -- Unknown id -> 404
+    rUnk <- getReq ("/api/compare?a=999999&b=" <> show bInt)
+    expect "compare unknown id 404" (statusCode (responseStatus rUnk) == 404)
