@@ -129,9 +129,10 @@ data ScoreT f = Score
   { id            :: Field f (Pk ScoreId)
   , output        :: Field f OutputId
   , graderVersion :: Field f GraderVersionId
-  , value         :: Field f Double
+  , value         :: Field f (Maybe Double)  -- NULL = errored, excluded from aggregates
   , passed        :: Field f (Maybe Bool)
   , detail        :: Field f (Maybe (Aeson Value))
+  , error         :: Field f (Maybe Text)    -- grading failure; row is retried on re-score
   , createdAt     :: Field f UTCTime
   } deriving Generic
 type Score = ScoreT Identity

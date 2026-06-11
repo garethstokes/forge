@@ -7,7 +7,7 @@
 module SchemaSpec (main) where
 
 import Control.Exception (SomeException, try)
-import Control.Monad (unless)
+import Control.Monad (join, unless)
 import Data.Aeson (Value, object, (.=))
 import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
@@ -65,8 +65,8 @@ main = withEphemeralDb $ \pool -> do
 
   -- Scenario D: compare two runs over the same dataset version, by example key.
   cmp <- expectCompareRuns pool now
-  expect "compare: run A scored c1=1.0, c2=0.0" (cRunA cmp == [("c1", 1.0), ("c2", 0.0)])
-  expect "compare: run B scored c1=0.0, c2=1.0" (cRunB cmp == [("c1", 0.0), ("c2", 1.0)])
+  expect "compare: run A scored c1=1.0, c2=0.0" (cRunA cmp == [("c1", Just 1.0), ("c2", Just 0.0)])
+  expect "compare: run B scored c1=0.0, c2=1.0" (cRunB cmp == [("c1", Just 0.0), ("c2", Just 1.0)])
 
   putStrLn "manifest-evals SchemaSpec: migrate + round-trip + cascade + restrict + aggregate + compare-runs OK"
 
@@ -96,8 +96,8 @@ expectCascade pool now = withSession pool $ do
   -- outputs (Run->Output Cascade) and o1's score transitively (Output->Score).
   o1 <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "scored"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = 1.0, passed = Just True
-                   , detail = Nothing, createdAt = now } :: Score)
+  _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+                   , detail = Nothing, error = Nothing, createdAt = now } :: Score)
   _  <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "byrun"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
   withTransaction $ delete r
@@ -176,24 +176,24 @@ expectAggregate pool now = withSession pool $ do
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
   o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "b"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = 0.0, passed = Just False
-                   , detail = Nothing, createdAt = now } :: Score)
-  _  <- add (Score { id = ScoreId 0, output = o2.id, graderVersion = gv.id, value = 1.0, passed = Just True
-                   , detail = Nothing, createdAt = now } :: Score)
+  _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
+                   , detail = Nothing, error = Nothing, createdAt = now } :: Score)
+  _  <- add (Score { id = ScoreId 0, output = o2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+                   , detail = Nothing, error = Nothing, createdAt = now } :: Score)
   rows <- runQuery $ do
     o <- from @Output
     s <- innerJoin @Score (\s -> s ?. #output .== o ?. #id)
     where_ (o ?. #run .== val r.id)
     groupBy (s ?. #graderVersion)
     pure (s ?. #graderVersion, (avg_ (s ?. #value), countRows))
-  -- rows :: [(GraderVersionId, (Maybe Double, Int))]
+  -- rows :: [(GraderVersionId, (Maybe (Maybe Double), Int))]
   let pick = case rows of
         [(k, (m, c))] -> Just (k, m, c)
         _             -> Nothing
   pure AggregateResult
     { aGroups   = length rows
     , aCount    = maybe 0 (\(_, _, c) -> c) pick
-    , aMean     = pick >>= \(_, m, _) -> m
+    , aMean     = pick >>= \(_, m, _) -> join m
     , aGroupGv  = fmap (\(k, _, _) -> k) pick
     , aSeededGv = gv.id
     }
@@ -201,8 +201,8 @@ expectAggregate pool now = withSession pool $ do
 -- Scenario D ------------------------------------------------------------------
 
 data CompareResult = CompareResult
-  { cRunA :: [(Text, Double)]   -- (example key, score value) for run A
-  , cRunB :: [(Text, Double)]   -- (example key, score value) for run B
+  { cRunA :: [(Text, Maybe Double)]   -- (example key, score value) for run A
+  , cRunB :: [(Text, Maybe Double)]   -- (example key, score value) for run B
   }
 
 -- Two runs over the SAME dataset version, scoring the same two examples with
@@ -229,10 +229,10 @@ expectCompareRuns pool now = withSession pool $ do
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
   aO2 <- add (Output { id = OutputId 0, run = rA.id, example = e2.id, response = Nothing, text = Nothing
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _ <- add (Score { id = ScoreId 0, output = aO1.id, graderVersion = gv.id, value = 1.0, passed = Just True
-                  , detail = Nothing, createdAt = now } :: Score)
-  _ <- add (Score { id = ScoreId 0, output = aO2.id, graderVersion = gv.id, value = 0.0, passed = Just False
-                  , detail = Nothing, createdAt = now } :: Score)
+  _ <- add (Score { id = ScoreId 0, output = aO1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+                  , detail = Nothing, error = Nothing, createdAt = now } :: Score)
+  _ <- add (Score { id = ScoreId 0, output = aO2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
+                  , detail = Nothing, error = Nothing, createdAt = now } :: Score)
   -- Run B: c1 -> 0.0, c2 -> 1.0
   rB <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
@@ -240,10 +240,10 @@ expectCompareRuns pool now = withSession pool $ do
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
   bO2 <- add (Output { id = OutputId 0, run = rB.id, example = e2.id, response = Nothing, text = Nothing
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _ <- add (Score { id = ScoreId 0, output = bO1.id, graderVersion = gv.id, value = 0.0, passed = Just False
-                  , detail = Nothing, createdAt = now } :: Score)
-  _ <- add (Score { id = ScoreId 0, output = bO2.id, graderVersion = gv.id, value = 1.0, passed = Just True
-                  , detail = Nothing, createdAt = now } :: Score)
+  _ <- add (Score { id = ScoreId 0, output = bO1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
+                  , detail = Nothing, error = Nothing, createdAt = now } :: Score)
+  _ <- add (Score { id = ScoreId 0, output = bO2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+                  , detail = Nothing, error = Nothing, createdAt = now } :: Score)
   let scoresFor rid = do
         rows <- runQuery $ do
           o <- from @Output
@@ -252,7 +252,7 @@ expectCompareRuns pool now = withSession pool $ do
           where_ (o ?. #run .== val rid)
           orderBy [asc (e ?. #key)]
           pure (e ?. #key, s ?. #value)
-        pure (rows :: [(Text, Double)])
+        pure (rows :: [(Text, Maybe Double)])
   rowsA <- scoresFor rA.id
   rowsB <- scoresFor rB.id
   pure CompareResult { cRunA = rowsA, cRunB = rowsB }

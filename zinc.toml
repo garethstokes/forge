@@ -33,9 +33,8 @@ rev = "f59be95b09382a2547e60463446207697e716acb"
 
 [dependencies.crucible]
 repo = "https://github.com/garethstokes/crucible.git"
-# Pushed remote master: the DevEx naming overhaul (Skill, Chat.Message,
-# Crucible.Decode, qualified interpreters) + the GHC 9.12.2 toolchain bump.
-rev = "0cb8c176394a6966dae2aec23396d60f6a962d79"
+# Pushed remote master: DevEx naming + GHC 9.12.2 + Crucible.Eval (scoreN exported).
+rev = "4c2dc6a50834d7316ebe9e1ef4416b587aae8f01"
 
 # --- crucible's transitive dependency stanzas (copied verbatim) ---
 
