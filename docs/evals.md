@@ -140,6 +140,45 @@ The scope limit runs the other way too: skills that generate freely
 (creative writing, brainstorming) have no context to ground against, so
 they skip these criteria rather than inheriting them as boilerplate.
 
+### Derived claims: groundingCheck
+
+Authored criteria catch missing expected content; they cannot anticipate
+invented content. `groundingCheck` closes that gap by deriving the
+checklist from the output itself: an LLM call decomposes the output into
+atomic factual claims (at most 20, trivia merged), then each claim is
+verified against the evidence with its own binary judge vote. The score is
+supported claims over total claims.
+
+```haskell
+groundingCheck :: (LLM :> es)
+               => Int            -- votes per claim (odd)
+               -> (o -> Text)    -- render the output
+               -> Text           -- the evidence
+               -> o
+               -> Eff es Score
+```
+
+Or attach it as an expectation, with the evidence carried per case:
+
+```haskell
+Case answer "grounded" (Grounded retrievedContext)
+```
+
+A `Grounded` case passes only when every claim is supported: one
+hallucinated fact fails the case, and the rationale names it with the
+judge's reason (`[unsupported] <claim>: ...`). The fractional value still
+feeds `meanScore` as a diagnostic. Use authored grounding criteria and a
+`Grounded` case together: the first checks what should be there, the
+second checks that nothing else is.
+
+Two mechanics worth knowing. The protocol stays open-loop under the rule
+below: the original evidence is re-injected verbatim into every
+verification call, and the claim under test is the subject of the
+judgement, not a substitute for the evidence. And the cost is one
+decompose call (two if its JSON needs the repair re-prompt) plus claims
+times votes judge calls; a decompose failure surfaces as a
+`judge error:` tagged score, distinct from a fail.
+
 ## Lint your rubric
 
 Before trusting a checklist, walk it with four checks:
@@ -340,7 +379,9 @@ Writing criteria:
 5. One thing per criterion; split anything joined by "and".
    ([Lint your rubric](#lint-your-rubric))
 6. Context-receiving skills get binary grounding criteria (supported claims,
-   cited spans, no invented facts); creative skills skip them.
+   cited spans, no invented facts); creative skills skip them. Add a
+   `Grounded` case to catch invented content the authored criteria cannot
+   anticipate.
    ([Grounding criteria](#grounding-criteria-for-context-receiving-skills))
 
 Structuring the rubric:

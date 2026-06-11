@@ -137,6 +137,8 @@ main = do
         [ Case ("It is 26C and sunny in Brisbane." :: T.Text) "weather-report"
             (Checklist [criterion "mentions a temperature", criterion "mentions a city"])
         , Case "pong" "terse-pong" (Rubric "the output is a single short word")
+        , Case "It is 26C and sunny in Brisbane." "grounded-weather"
+            (Grounded "Brisbane forecast: sunny, 26 degrees, light winds.")
         ]))
       TIO.putStrLn (renderReport evalRep)
       -- OpenAI: the same skills and loops, only the interpreter changes.
