@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -25,14 +26,16 @@ module Manifest.Session
   , add
   , save
   , delete
+  , emitChange
   ) where
 
-import Control.Monad (void, unless)
+import Control.Monad (void, unless, when)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Exception (SomeException, throwIO, try)
 import Control.Monad.Trans.Reader (ReaderT(..), ask, runReaderT)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import Data.Maybe (fromMaybe)
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
@@ -114,6 +117,17 @@ decodeRowDb row = case decodeRow (rowDecoder @a) row of
   Right a  -> pure a
   Left err -> Db (liftIO (throwIO (DbException (DecodeFailure err))))
 
+-- | Emit the change-feed wake-up for an opted-in entity. Goes through
+-- 'execDb' so it appears in the statement log; Postgres delivers NOTIFY at
+-- COMMIT inside a transaction (and drops it on ROLLBACK), immediately
+-- otherwise. The payload is the pk as text, or empty for bulk operations.
+emitChange :: forall a. Entity a => SqlParam -> Db ()
+emitChange pk =
+  when (notifyChanges @a) $
+    void $ execDb "SELECT pg_notify($1, $2)"
+      [ Just ("manifest_" <> tmTable (tableMeta @a))
+      , Just (fromMaybe "" pk) ]
+
 -- | flush hook — flushes pending writes before each query when autoflush is on.
 autoflushHook :: Db ()
 autoflushHook = do
@@ -174,6 +188,7 @@ add a = do
     (row : _) -> do
       a' <- decodeRowDb @a row
       setBaseline a'
+      emitChange @a (pkParam a')
       pure a'
     [] -> Db (liftIO (throwIO (DbException (OtherError "add: INSERT returned no row"))))
 
@@ -205,6 +220,7 @@ flushSave a = do
           _ <- execDb (renderUpdate tm (map fst changed) (cmName (pkColumn tm)))
                       (map snd changed ++ [pkParam a])
           setBaseline a
+          emitChange @a (pkParam a)
 
 -- | Emit a DELETE for the record, applying onDelete cascades first, and drop it
 -- from the identity map. Cascades run in two passes over the WHOLE rule tree:
@@ -222,7 +238,9 @@ flushDelete a = do
   -- 2. then the mutating policies, deepest-first
   mutatePass parent path Nothing rules
   -- 3. delete the parent
+  -- Note: cascade-deleted children deliberately do NOT notify — only the root deletion is reported.
   _ <- execDb (renderDelete tm (cmName (pkColumn tm))) [parent]
+  emitChange @a parent
   Db $ do
     sess <- ask
     liftIO $ modifyIORef' (sessIdentity sess) (Map.delete (identityKey a))

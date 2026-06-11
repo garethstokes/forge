@@ -16,7 +16,7 @@ import Manifest.Core.Meta (TableMeta(..), pkColumn, cmName)
 import Manifest.Core.Query (Assign(..), Cond(..))
 import Manifest.Core.Sql (renderConds, renderUpdate)
 import Manifest.Entity (Entity(..), Key(..), PrimKey)
-import Manifest.Session (Db, execDb)
+import Manifest.Session (Db, execDb, emitChange)
 
 -- | Blind single-row UPDATE by primary key. Sets the given assignments with no
 -- snapshot diff; the PK placeholder is bound LAST (after the SET values).
@@ -26,7 +26,7 @@ update key assigns = do
       sql = renderUpdate tm [ c | Assign c _ <- assigns ] (cmName (pkColumn tm))
       ps  = [ v | Assign _ v <- assigns ] ++ [ encode (unKey key) ]
   _ <- execDb sql ps
-  pure ()
+  emitChange @a (encode (unKey key))
 
 -- | Bulk DELETE over arbitrary (ANDed) conditions. No per-row identity.
 deleteWhere :: forall a. Entity a => [Cond a] -> Db ()
@@ -36,4 +36,4 @@ deleteWhere conds = do
       sql               = "DELETE FROM " <> tmTable tm <> whereTxt
       ps                = [ v | Cond _ _ v <- conds ]
   _ <- execDb sql ps
-  pure ()
+  emitChange @a Nothing

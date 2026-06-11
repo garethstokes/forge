@@ -87,6 +87,11 @@ class Typeable a => Entity a where
   -- Default: none. Override with the 'cascade' builder.
   cascadeRules :: [CascadeRule]
   cascadeRules = []
+  -- | Opt this entity into the change feed: every session write emits
+  -- @pg_notify('manifest_<table>', <pk-as-text>)@ — a wake-up for
+  -- "Manifest.Notify" subscribers, never data. Default off.
+  notifyChanges :: Bool
+  notifyChanges = False
   -- | Row-level-security policies for this entity (default: none). Built with the
   -- "Manifest.Rls" DSL; applied by the migration engine.
   rlsPolicies :: [Policy a]
