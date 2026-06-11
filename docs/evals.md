@@ -217,22 +217,50 @@ Keep one `Rubric` per quality concern, and split when:
 
 ## Voting and uncertainty
 
-A single judge sample is a coin with a bias; voting estimates the bias.
-`judgeN` samples the judge up to n times and majority-votes, and `runEvalN`
-threads the same n through `Rubric` cases and every `Checklist` criterion:
+A single judge sample is a coin with a bias; voting estimates the bias. The
+general entry points take a `JudgeOpts` record that controls both the vote
+count and any few-shot examples to show the judge:
 
 ```haskell
+data JudgeOpts = JudgeOpts
+  { votes    :: Int             -- samples per judgement (odd; 1 = single call)
+  , examples :: [JudgeExample]  -- few-shot examples for Rubric judging
+  }
+
+defaultJudgeOpts :: JudgeOpts   -- votes = 1, examples = []
+
+judgeWith   :: (LLM :> es)
+            => JudgeOpts -> (a -> Text) -> Text -> a -> Eff es Score
+runEvalWith :: (Eq a, LLM :> es)
+            => JudgeOpts -> (a -> Text) -> (i -> Eff es a) -> [Case i a]
+            -> Eff es (Report i a)
+```
+
+The four functions you will reach for most often are specializations of these:
+
+```haskell
+judge    :: (LLM :> es) => (a -> Text) -> Text -> a -> Eff es Score
 judgeN   :: (LLM :> es) => Int -> (a -> Text) -> Text -> a -> Eff es Score
+runEval  :: (Eq a, LLM :> es)
+         => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
 runEvalN :: (Eq a, LLM :> es)
          => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
 ```
 
-`judge` and `runEval` are the n = 1 versions. Use odd n. The vote stops early
-once one side holds a strict majority, so n = 3 typically costs about 2 calls
-per judgement; the worst case is n calls, each doubled if its reply needs the
-repair re-prompt (see [Judge errors](#judge-errors)). That multiplier applies
-per criterion in a checklist, so a 5-criterion checklist at n = 3 is roughly
-10 judge calls per case. Reserve n > 1 for the judged cases you act on.
+`judge` and `runEval` are the n = 1 versions; `judgeN n` and `runEvalN n` set
+`votes = n` on `defaultJudgeOpts`. Use `judgeWith` or `runEvalWith` directly
+when you need to pass few-shot examples.
+
+Examples feed `Rubric` judging only. `Checklist` criteria and `Grounded`
+claims each run as their own micro-rubric (one judge call per criterion or
+claim), so they draw no benefit from examples set on the top-level opts.
+
+Use odd n. The vote stops early once one side holds a strict majority, so
+n = 3 typically costs about 2 calls per judgement; the worst case is n calls,
+each doubled if its reply needs the repair re-prompt (see
+[Judge errors](#judge-errors)). That multiplier applies per criterion in a
+checklist, so a 5-criterion checklist at n = 3 is roughly 10 judge calls per
+case. Reserve n > 1 for the judged cases you act on.
 
 For n > 1 the tally and any dissenting rationale land in the score:
 
@@ -302,6 +330,10 @@ the judge against human labels before trusting it. The workflow:
    wording until kappa exceeds 0.6.
 4. Then trust the numbers `testSkill` and `runEval` produce, and spend
    further labelling effort on the `contested` cases the report lists.
+5. Once kappa is healthy, feed the calibration labels forward as few-shot
+   examples: run `calibrateWith` to produce a balanced example set, then
+   pass those examples to `runEvalWith` in the production suite so every
+   judge call is anchored to the verified labels.
 
 One guardrail on the labels themselves: human calibration labels are binary
 pass/fail on the task-level outcome, never numeric ratings of reasoning
@@ -325,12 +357,35 @@ calibrate :: (LLM :> es)
           -> Eff es CalibrationReport
 ```
 
+`calibrateWith` adds a structural holdout: a verdict-balanced subset of the
+labelled cases is fed to the judge as few-shot examples, and every metric is
+computed only on the remaining cases. The function makes the wrong thing
+inexpressible: metrics are always computed on cases the judge never saw as
+examples, so there is no way to accidentally measure on examples.
+
+```haskell
+calibrateWith :: (LLM :> es)
+              => Int                 -- seed (for deterministic shuffling)
+              -> Int                 -- number of examples to draw
+              -> Int                 -- votes per holdout case (odd)
+              -> (a -> Text)         -- render an output for the judge
+              -> Text                -- the rubric under test
+              -> [(Text, a, Bool)]   -- (case name, output, human pass/fail)
+              -> Eff es CalibrationReport
+```
+
+Examples are selected with roughly equal pass and fail cases so the judge
+cannot infer a base-rate prior from the example set. Examples cost prompt
+tokens per holdout call, not extra judge calls.
+
 The `CalibrationReport` carries raw `agreement`, Cohen's `kappa` (agreement
 corrected for chance; raw agreement flatters the judge when most cases pass),
 `failPrecision` (of the judge's fails, how many a human also failed) and
 `failRecall` (of the human fails, how many the judge caught), plus the
-`contested` case names where the vote split and any `judgeErrors`.
-`renderCalibration` prints it:
+`contested` case names where the vote split and any `judgeErrors`. When
+examples were used, two additional fields record how many: `exampleCount`
+and `measured` (the holdout size). `renderCalibration` prints the report;
+the examples line appears only when `exampleCount > 0`:
 
 ```
 agreement:      0.9
@@ -338,6 +393,7 @@ kappa:          0.74
 fail precision: 1.0
 fail recall:    0.75
 contested (label these next): edge-case-7, sarcastic-review
+examples fed: 6  measured on: 24
 ```
 
 Low fail recall means the judge waves through outputs a human would reject:
@@ -420,8 +476,11 @@ Trusting the numbers:
     ([Calibrating the judge](#calibrating-the-judge))
 18. Spend new labels on the `contested` list; that is where a label buys the
     most. ([Calibrating the judge](#calibrating-the-judge))
-19. A voted score's rationale is a majority-side sample, not the reason the
+19. Labels trusted for calibration can be fed forward as judge examples via
+    `calibrateWith` and `runEvalWith`; never measure on examples the judge
+    saw. ([Calibrating the judge](#calibrating-the-judge))
+20. A voted score's rationale is a majority-side sample, not the reason the
     vote went that way; read the dissent on contested cases.
     ([Voting and uncertainty](#voting-and-uncertainty))
-20. Every triaged production failure becomes a regression case; the eval set
+21. Every triaged production failure becomes a regression case; the eval set
     grows from real failures, not invented ones.
