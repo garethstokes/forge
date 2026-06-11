@@ -1,0 +1,248 @@
+---
+title: Evals
+nav_order: 9
+---
+
+# Evals
+
+`Crucible.Eval` scores a system under test against a dataset of cases. Each
+case pairs an input with an expectation; deterministic expectations are scored
+in pure code, judged expectations ask an LLM. The judge plumbing (the grader
+prompt, JSON repair, majority voting) lives in `Crucible.Eval.Judge`, and a
+calibration harness for the judge itself lives in `Crucible.Eval.Calibrate`.
+Everything needs only `LLM :> es`, so the same suite runs scripted in CI,
+from a cassette, or live.
+
+## The grading ladder
+
+Prefer the cheapest grader that can express the check. The `Expectation` type
+is a ladder, from deterministic to judged:
+
+```haskell
+data Expectation a
+  = Exactly a              -- must equal (needs Eq a)
+  | Predicate (a -> Bool)  -- must satisfy
+  | Rubric Text            -- LLM-as-judge against this rubric
+  | Checklist [Criterion]  -- weighted binary criteria, judged one by one
+```
+
+`Exactly` and `Predicate` are free and deterministic: use them whenever the
+property is computable from the output (an exact label, a length bound, a
+parseable date). `Rubric` asks the LLM judge one holistic question; reserve it
+for a single quality concern that resists a predicate. `Checklist` decomposes
+a quality goal into weighted binary criteria, each judged with its own call:
+
+```haskell
+data Criterion = Criterion { label :: Text, weight :: Double }
+
+criterion :: Text -> Criterion   -- a criterion with weight 1
+```
+
+A checklist score is passed weight over total weight, so it lands in [0,1],
+but the case only counts as a pass (in `Report.passRate`) when every
+criterion holds; weights affect `Report.meanScore` only. Binary criteria
+grade more consistently than a 1-5 scale: nobody can say what separates a 3
+from a 4, but "mentions a temperature" is checkable. If you need granularity,
+add criteria rather than widening a scale.
+
+Run a dataset with `runEval`:
+
+```haskell
+runEval :: (Eq a, LLM :> es)
+        => (a -> Text)        -- render an output for the judge
+        -> (i -> Eff es a)    -- the system under test
+        -> [Case i a]
+        -> Eff es (Report i a)
+```
+
+`Case` is `Case { input :: i, name :: Text, expect :: Expectation a }`, and
+the `Report` carries per-case `results`, a `passRate` (fraction of cases that
+scored 1.0), and a `meanScore`. From the demo in `app/Main.hs` (which uses
+`runEvalN 3`; the system under test there is `pure`, grading fixed outputs):
+
+```haskell
+report <- runEff (Anthropic.run cfg (runEval id pure
+  [ Case ("It is 26C and sunny in Brisbane." :: Text) "weather-report"
+      (Checklist [criterion "mentions a temperature", criterion "mentions a city"])
+  , Case "pong" "terse-pong" (Rubric "the output is a single short word")
+  ]))
+TIO.putStrLn (renderReport report)
+```
+
+`renderReport` prints one line per case (value, rationale, and any judge
+annotations), then a summary:
+
+```
+weather-report: 1.0 ([pass] mentions a temperature: the output states "26C"
+[pass] mentions a city: the output names Brisbane)
+terse-pong: 1.0 (the output is the single word "pong")
+
+pass-rate: 1.0  mean: 1.0
+```
+
+To attach cases to a skill instead of running a standalone dataset, see
+`withTests`/`testSkill` in [Typed functions](typed-functions.md).
+
+## Writing observable criteria
+
+Write criteria that are observable, not aspirational. Each criterion should
+be checkable by reading the output alone (plus the input if needed), with no
+hidden judgement call.
+
+Good:
+
+```haskell
+Checklist
+  [ criterion "cites at least one source URL"
+  , criterion "states the temperature with a unit"
+  , criterion "does not recommend a specific product"
+  ]
+```
+
+Aspirational, and therefore noisy:
+
+```haskell
+Checklist
+  [ criterion "is trustworthy"
+  , criterion "is high quality"
+  , criterion "is helpful"
+  ]
+```
+
+"Is trustworthy" forces the judge to invent its own standard on every call,
+and two runs will invent different ones. "Cites at least one source URL" has
+one answer. Negative criteria ("does not...") are fine and often the sharpest
+way to pin a failure mode you have actually seen.
+
+## Lint your rubric
+
+Before trusting a checklist, walk it with four checks:
+
+- **Coverage.** Do the criteria span the failure modes you have actually
+  observed? Criteria should come from reading real failing outputs, not from
+  imagining what quality means. If a failure you care about maps to no
+  criterion, the suite cannot catch it.
+- **Conflation.** A criterion that tests two things ("mentions the city and
+  the temperature") gives one bit for two facts; when it fails you do not
+  know which half failed, and the judge must decide how to score a half-met
+  criterion. Split it.
+- **Direction.** Phrase each criterion so that "yes" is unambiguously the
+  good outcome. "Avoids jargon" is judgeable; "uses appropriate language" is
+  a coin flip.
+- **Redundancy.** Near-duplicate criteria ("mentions a temperature",
+  "includes the degrees") double-count under weights: one underlying failure
+  drags the score down twice, and `meanScore` quietly overweights that
+  concern. Merge them.
+
+## When to split a rubric
+
+Keep one `Rubric` per quality concern, and split when:
+
+- **Criteria fail independently.** If one criterion keeps failing for a
+  different reason than the others, make it its own case so it shows up as
+  its own line in the report rather than a blended score.
+- **A criterion is a hard gate.** Safety and format requirements should not
+  be averaged away by weights. Express a gate as its own `Checklist` case:
+  `passRate` already requires every criterion in a checklist to hold, so the
+  gate fails the case outright regardless of weight.
+- **The rubric outgrows the judge's attention.** Past roughly 5 to 7
+  criteria in one prompt, judge consistency drops. `Checklist` already
+  judges each criterion with its own call, so the per-criterion cost is the
+  same; splitting into cases buys you per-concern reporting.
+
+## Voting and uncertainty
+
+A single judge sample is a coin with a bias; voting estimates the bias.
+`judgeN` samples the judge up to n times and majority-votes, and `runEvalN`
+threads the same n through `Rubric` cases and every `Checklist` criterion:
+
+```haskell
+judgeN   :: (LLM :> es) => Int -> (a -> Text) -> Text -> a -> Eff es Score
+runEvalN :: (Eq a, LLM :> es)
+         => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
+```
+
+`judge` and `runEval` are the n = 1 versions. Use odd n. The vote stops early
+once one side holds a strict majority, so n = 3 typically costs about 2 calls
+per judgement; the worst case is n calls, each doubled if its reply needs the
+repair re-prompt (see [Judge errors](#judge-errors)). That multiplier applies
+per criterion in a checklist, so a 5-criterion checklist at n = 3 is roughly
+10 judge calls per case. Reserve n > 1 for the judged cases you act on.
+
+For n > 1 the tally lands in the score:
+
+```haskell
+data Score = Score { value :: Double, rationale :: Text, votes :: Maybe (Int, Int) }
+```
+
+`votes = Just (yes, no)` with both sides nonzero means the judge is genuinely
+uncertain on this case; `renderReport` flags it inline as
+`[judge uncertain 2-1: review by hand]`. These split cases are exactly the
+ones worth a human look, and the ones to label first when calibrating.
+
+One limitation: crucible does not set a sampling temperature, so vote
+diversity rides entirely on the provider's default sampling. If the provider
+returns near-deterministic replies, three votes are three copies of one
+opinion and the tally will look more confident than it is.
+
+## Calibrating the judge
+
+Suite numbers are only as good as the judge that produced them, so calibrate
+the judge against human labels before trusting it. The workflow:
+
+1. Label around 30 real outputs pass/fail, each with a short critique. Keep
+   labelling until new outputs stop revealing new failure modes.
+2. Run `calibrate` with your rubric over the labelled set.
+3. Compare the judge's rationales to your critiques and iterate the rubric
+   wording until kappa exceeds 0.6.
+4. Then trust the numbers `testSkill` and `runEval` produce, and spend
+   further labelling effort on the `contested` cases the report lists.
+
+`calibrate` runs the judge directly over hand-labelled outputs, bypassing any
+skill: it evaluates only the judge. It uses full n-sample voting with no
+early stopping, so vote margins are comparable across cases:
+
+```haskell
+calibrate :: (LLM :> es)
+          => Int                 -- votes per case (odd)
+          -> (a -> Text)         -- render an output for the judge
+          -> Text                -- the rubric under test
+          -> [(Text, a, Bool)]   -- (case name, output, human pass/fail)
+          -> Eff es CalibrationReport
+```
+
+The `CalibrationReport` carries raw `agreement`, Cohen's `kappa` (agreement
+corrected for chance; raw agreement flatters the judge when most cases pass),
+`failPrecision` (of the judge's fails, how many a human also failed) and
+`failRecall` (of the human fails, how many the judge caught), plus the
+`contested` case names where the vote split and any `judgeErrors`.
+`renderCalibration` prints it:
+
+```
+agreement:      0.9
+kappa:          0.74
+fail precision: 1.0
+fail recall:    0.75
+contested (label these next): edge-case-7, sarcastic-review
+```
+
+Low fail recall means the judge waves through outputs a human would reject:
+tighten the rubric. Low fail precision means it fails good outputs: the
+rubric is demanding something you did not intend.
+
+## Judge errors
+
+The judge replies in JSON (a rationale, then a verdict). When its own reply
+fails to parse, crucible re-prompts it once with the raw reply and the parse
+error; if the repair also fails, that sample errors out. A sample that errors
+consumes a vote attempt without casting a vote, and if every attempt in a
+vote errors, the result is the judge-error score: value 0 with a rationale
+tagged `judge error:`.
+
+This is a different animal from a fail. A fail means the judge read the
+output and rejected it; a judge error means no verdict was obtained at all.
+`renderReport` appends `[judge error]` to affected lines so the two are not
+confused, and `calibrate` excludes judge-error cases from all four rates,
+listing their names in `judgeErrors` instead. If judge errors recur, the fix
+is usually in the rubric text (something in it is steering the judge away
+from the required JSON shape), not in the system under test.

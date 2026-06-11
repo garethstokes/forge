@@ -207,6 +207,8 @@ decode scores 0. `testSkill` needs only `LLM :> es`, so the same cases run
 against `runLLMScripted` in CI and against a live interpreter when you want a
 real regression signal.
 
+For rubric design, voting, and judge calibration, see [Evals](evals.md).
+
 ## One codec, many uses
 
 A type defined once, as `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec`, can be used as a skill output and as a tool handler's

@@ -95,6 +95,7 @@ main = do
 - [Effects](effects.md): the capability effects and their interpreters.
 - [Typed functions](typed-functions.md): `skill`/`call`, codecs, schema
   injection, tolerant decode, retries.
+- [Evals](evals.md): expectations, checklists, the judge, voting, calibration.
 - [Tool calling](tool-calling.md): record toolboxes, `runToolAgent`, the loop,
   the cap, tool schemas and errors.
 - [Streaming](streaming.md): the `Emit` effect and the streaming interpreters.
