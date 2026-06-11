@@ -33,7 +33,8 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
-import Crucible.Eval (Case(..), Expectation(..), Score(..), Result(..), Report(..), runEval, scoreM, judge, renderReport)
+import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport)
+import Crucible.Eval.Judge (Verdict(..), verdictCodec)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
@@ -879,4 +880,89 @@ main = runChecks
       (case tools demoBox :: [Tl.Tool '[]] of
          [_, t] -> schemaType t.schema
          _      -> Nothing)
+  -- eval rubric upgrades: verdict order, repair, voting
+  , check "judge verdict: decodes why-first and legacy field order"
+      (Right True, Right True)
+      ( ( fmap (.pass) (decodeLLM verdictCodec "{\"why\":\"w\",\"pass\":true}")
+        , fmap (.pass) (decodeLLM verdictCodec "{\"pass\":true,\"why\":\"w\"}") ) )
+  , check "judge: repair recovers from one malformed verdict"
+      (1.0, Nothing)
+      (let s = runPureEff (runLLMScripted
+                 ["not json", "{\"why\":\"ok\",\"pass\":true}"]
+                 (judge id "r" ("out" :: Text)))
+       in (s.value, s.votes))
+  , check "judge: two malformed verdicts -> judge error score"
+      (0.0, True)
+      (let s = runPureEff (runLLMScripted ["junk", "junk2"] (judge id "r" ("out" :: Text)))
+       in (s.value, T.isPrefixOf "judge error: " s.rationale))
+  , check "judgeN: unanimous early-stops after two calls"
+      (Just (2, 0), "leftover")
+      (runPureEff (runLLMScripted
+         [ "{\"why\":\"a\",\"pass\":true}", "{\"why\":\"b\",\"pass\":true}", "leftover" ]
+         (do s <- judgeN 3 id "r" ("out" :: Text)
+             extra <- complete []
+             pure (s.votes, extra))))
+  , check "judgeN: 2-1 split consumes three and records the tally"
+      (1.0, Just (2, 1))
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"a\",\"pass\":true}"
+                 , "{\"why\":\"n\",\"pass\":false}"
+                 , "{\"why\":\"c\",\"pass\":true}" ]
+                 (judgeN 3 id "r" ("out" :: Text)))
+       in (s.value, s.votes))
+  , check "judgeN: majority why is kept"
+      "a"
+      ((runPureEff (runLLMScripted
+         [ "{\"why\":\"a\",\"pass\":true}", "{\"why\":\"b\",\"pass\":true}" ]
+         (judgeN 3 id "r" ("out" :: Text)))).rationale)
+  , check "judgeN: errored sample is excluded from the tally"
+      (1.0, Just (2, 0))
+      (let s = runPureEff (runLLMScripted
+                 [ "junk", "junk2"
+                 , "{\"why\":\"a\",\"pass\":true}", "{\"why\":\"b\",\"pass\":true}" ]
+                 (judgeN 3 id "r" ("out" :: Text)))
+       in (s.value, s.votes))
+  -- eval rubric upgrades: checklists
+  , check "checklist: weighted scoring + per-criterion rationale"
+      (True, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"has it\",\"pass\":true}", "{\"why\":\"missing\",\"pass\":false}" ]
+                 (scoreM id (Checklist [Criterion "cites a source" 2, Criterion "is terse" 1]) ("out" :: Text)))
+       in (abs (s.value - 2/3) < 1e-9, T.isInfixOf "[fail] is terse: missing" s.rationale))
+  , check "checklist: all pass scores 1.0 and counts in passRate"
+      (1.0, 1.0)
+      (let rep = runPureEff (runLLMScripted
+                   [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}" ]
+                   (runEval id pure
+                      [Case ("in" :: Text) "c" (Checklist [criterion "a", criterion "b"])]))
+       in (rep.passRate, rep.meanScore))
+  , check "checklist: empty list scores 1.0 with no judge calls"
+      (1.0, "empty checklist")
+      (let s = runPureEff (runLLMScripted []
+                 (scoreM id (Checklist []) ("out" :: Text)))
+       in (s.value, s.rationale))
+  , check "checklist: judge error on a criterion fails that criterion"
+      (0.5, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "junk", "junk2", "{\"why\":\"y\",\"pass\":true}" ]
+                 (scoreM id (Checklist [criterion "a", criterion "b"]) ("out" :: Text)))
+       in (s.value, T.isInfixOf "judge error: " s.rationale))
+  -- eval rubric upgrades: runEvalN + report annotations
+  , check "runEvalN: votes thread to rubric cases"
+      (Just (2, 0))
+      (let rep = runPureEff (runLLMScripted
+                   [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}" ]
+                   (runEvalN 3 id pure [Case ("x" :: Text) "c" (Rubric "r")]))
+       in (head rep.results).score.votes)
+  , check "renderReport: flags contested and judge-error cases"
+      (True, True)
+      (let rep = runPureEff (runLLMScripted
+                   [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"n\",\"pass\":false}", "{\"why\":\"y\",\"pass\":true}"
+                   , "j1", "j2", "j3", "j4", "j5", "j6" ]
+                   (runEvalN 3 id pure
+                      [ Case ("a" :: Text) "contested" (Rubric "r")
+                      , Case ("b" :: Text) "errs" (Rubric "r") ]))
+           r = renderReport rep
+       in ( T.isInfixOf "[judge uncertain 2-1: review by hand]" r
+          , T.isInfixOf "[judge error]" r ))
   ]
