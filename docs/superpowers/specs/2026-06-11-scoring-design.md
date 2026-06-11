@@ -78,7 +78,10 @@ master regardless.
 
 ## 3. Schema change
 
-`Score` (greenfield tables — type-level change, fresh migrate):
+`Score` (greenfield tables — type-level change, fresh migrate; note manifest's
+`diffTable` cannot see a NOT NULL → nullable change at all, so any pre-change
+dev DB must be dropped or `ALTER COLUMN value DROP NOT NULL`ed by hand —
+tracked upstream as a manifest bug):
 
 - `value :: Field f Double` → `Field f (Maybe Double)` — an errored score has
   no value, and SQL `AVG` skips NULLs, keeping aggregates pure for free.
