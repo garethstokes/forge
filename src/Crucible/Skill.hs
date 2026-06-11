@@ -15,7 +15,11 @@
 -- scripted, cassette, and live Anthropic interpreters unchanged.
 module Crucible.Skill
   ( Skill (..)
+  , Instruction (..)
   , skill
+  , skillWith
+  , withPreamble
+  , withConstraints
   , withRetries
   , withTests
   , withExamples
@@ -27,6 +31,7 @@ module Crucible.Skill
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson as A
@@ -40,22 +45,46 @@ import Crucible.Eval (Case (..), Expectation (..), Report, runEval)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
 import Crucible.Decode (decodeLLM, DecodeError (..))
 
--- | A declared LLM skill: a task instruction plus input/output codecs.
-data Skill i o = Skill
-  { name        :: Text        -- ^ for introspection / evals
-  , instruction :: i -> Text   -- ^ the task (may reference input fields)
-  , input       :: JSONCodec i -- ^ used to render the input value into the prompt
-  , output      :: JSONCodec o -- ^ schema injection + tolerant decode
-  , retries     :: Int         -- ^ decode-failure retries
-  , tests       :: [Case i o]  -- ^ attached test cases; run with 'testSkill'
-  , examples    :: [(i, o)]    -- ^ few-shot exchanges rendered into the prompt
+-- | A skill's instruction, structured so tooling can revise the prompt
+-- around a fixed task. 'preamble' renders before the task; 'constraints'
+-- renders after the input (instructions near the end are followed most
+-- reliably). Both default to empty and are the slots 'Crucible.Skill.Improve.improveSkill'
+-- mutates; 'task' is the core instruction and is never machine-edited.
+data Instruction i = Instruction
+  { preamble    :: Text
+  , task        :: i -> Text
+  , constraints :: Text
   }
 
--- | Construct a 'Skill'; @retries@ defaults to 2, @tests@ and @examples@ to none.
+-- | A declared LLM skill: a task instruction plus input/output codecs.
+data Skill i o = Skill
+  { name        :: Text          -- ^ for introspection / evals
+  , instruction :: Instruction i -- ^ preamble + task + constraints
+  , input       :: JSONCodec i   -- ^ used to render the input value into the prompt
+  , output      :: JSONCodec o   -- ^ schema injection + tolerant decode
+  , retries     :: Int           -- ^ decode-failure retries
+  , tests       :: [Case i o]    -- ^ attached test cases; run with 'testSkill'
+  , examples    :: [(i, o)]      -- ^ few-shot exchanges rendered into the prompt
+  }
+
+-- | Construct a 'Skill' from a bare task function (empty preamble and
+-- constraints); @retries@ defaults to 2, @tests@ and @examples@ to none.
 skill :: Text -> JSONCodec i -> JSONCodec o -> (i -> Text) -> Skill i o
-skill n inC outC instr =
-  Skill { name = n, instruction = instr, input = inC, output = outC
+skill n inC outC instr = skillWith n inC outC (Instruction "" instr "")
+
+-- | 'skill' with all three instruction parts declared.
+skillWith :: Text -> JSONCodec i -> JSONCodec o -> Instruction i -> Skill i o
+skillWith n inC outC ins =
+  Skill { name = n, instruction = ins, input = inC, output = outC
         , retries = 2, tests = [], examples = [] }
+
+-- | Replace the instruction's preamble (rendered before the task).
+withPreamble :: Text -> Skill i o -> Skill i o
+withPreamble p fn = let ins = fn.instruction in fn { instruction = ins { preamble = p } }
+
+-- | Replace the instruction's constraints (rendered after the input).
+withConstraints :: Text -> Skill i o -> Skill i o
+withConstraints c fn = let ins = fn.instruction in fn { instruction = ins { constraints = c } }
 
 -- | Override the decode-failure retry budget.
 withRetries :: Int -> Skill i o -> Skill i o
@@ -128,15 +157,22 @@ prompt sk inp =
     schema = schemaText sk.output
     systemMsg = Message System [text|
       Respond ONLY with JSON matching this schema:
-      ${schema}|]
+      ${schema}
+      Your reply is parsed by a machine; any text outside the JSON is an error.|]
     userMsg i' =
-      let task     = sk.instruction i'
+      let pre      = block sk.instruction.preamble
+          task'    = (sk.instruction.task) i'
           rendered = jsonText (toJSONVia sk.input i')
+          cons     = block sk.instruction.constraints
       in Message User [text|
-      ${task}
+      ${pre}${task'}
 
-      Input:
-      ${rendered}|]
+      <input>
+      ${rendered}
+      </input>
+
+      ${cons}Respond with JSON only; your reply is parsed by a machine.|]
+    block t = if T.null t then "" else t <> "\n\n"
     pair (ei, eo) = [userMsg ei, Message Assistant (jsonText (toJSONVia sk.output eo))]
 
 -- | Run a typed skill: build the prompt, call the model, and decode the reply

@@ -16,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Skill (Skill (..), skill, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, call, testSkill)
+import Crucible.Skill (Skill (..), Instruction (..), skill, skillWith, withPreamble, withConstraints, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, call, testSkill)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -1116,4 +1116,35 @@ main = runChecks
          (do rep <- runEvalN 3 id pure [Case ("text" :: Text) "g" (Grounded "ev")]
              extra <- complete []
              pure (rep.passRate, extra))))
+  -- improve-skill cycle: structured instruction + prompt tweaks
+  , check "prompt: slot-less user message has the exact tweaked shape"
+      (Just ("Classify the sentiment of: hi\n\n<input>\n\"hi\"\n</input>\n\nRespond with JSON only; your reply is parsed by a machine."))
+      (case prompt classifyFn "hi" of
+         [_, Message User u] -> Just u
+         _                   -> Nothing)
+  , check "prompt: system message keeps its first line and gains the machine line"
+      (True, True)
+      (case prompt classifyFn "hi" of
+         (Message System s : _) ->
+           ( T.isPrefixOf "Respond ONLY with JSON matching this schema:" s
+           , T.isInfixOf "Your reply is parsed by a machine; any text outside the JSON is an error." s )
+         _ -> (False, False))
+  , check "prompt: preamble renders first, constraints render after the input"
+      True
+      (case prompt (withPreamble "Be terse." (withConstraints "One word only." classifyFn)) "hi" of
+         [_, Message User u] ->
+           T.isPrefixOf "Be terse.\nClassify the sentiment of: hi" u
+             && T.isInfixOf "</input>\n\nOne word only.\nRespond with JSON only" u
+         _ -> False)
+  , check "skillWith: carries all three instruction parts"
+      True
+      (case prompt (skillWith "s" C.str C.str (Instruction "P" ("Task: " <>) "C")) "x" of
+         [_, Message User u] ->
+           T.isPrefixOf "P\nTask: x" u && T.isInfixOf "\nC\nRespond with JSON only" u
+         _ -> False)
+  , check "prompt: few-shot pairs inherit the tweaked template"
+      True
+      (case prompt (withExamples [("I love it", "positive")] classifyFn) "meh" of
+         (_ : Message User u : _) -> T.isInfixOf "<input>\n\"I love it\"\n</input>" u
+         _ -> False)
   ]
