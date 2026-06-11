@@ -33,10 +33,10 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
-import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport, groundingCheck)
+import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
-import Crucible.Eval.Judge (Verdict(..), verdictCodec)
-import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration)
+import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt)
+import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
@@ -1067,6 +1067,75 @@ main = runChecks
                  , "j1", "j2", "j3", "j4", "j5", "j6" ]
                  (calibrate 3 id "r" [("split", "o" :: Text, True), ("broken", "o", True)]))
        in (r.contested, r.judgeErrors, r.agreement))
+  -- crucible-tfu: few-shot calibrated judging
+  , check "balanceExamples: deterministic and balanced"
+      (True, [True, False, True, False])
+      (let exs = [JudgeExample (T.pack (show i)) (odd i) Nothing | i <- [1 .. 8 :: Int]]
+           a = balanceExamples 42 4 exs
+           b = balanceExamples 42 4 exs
+       in (a == b, map (.pass) a))
+  , check "balanceExamples: surplus side fills after the short side runs out"
+      [True, False, True, True]
+      (map (.pass)
+        (balanceExamples 7 4
+          (JudgeExample "f" False Nothing
+             : [JudgeExample (T.pack (show i)) True Nothing | i <- [1 .. 6 :: Int]])))
+  , check "balanceExamples: n over supply returns all; n zero returns none"
+      (3, 0)
+      (let exs = [ JudgeExample "a" True Nothing
+                 , JudgeExample "b" False Nothing
+                 , JudgeExample "c" True Nothing ]
+       in (length (balanceExamples 1 10 exs), length (balanceExamples 1 0 exs)))
+  , check "judgePrompt: zero examples keeps the plain two-line user message"
+      (Just "Rubric: r\nOutput to grade: out")
+      (case judgePrompt [] "r" "out" of
+         [_, Message User u] -> Just u
+         _                   -> Nothing)
+  , check "judgePrompt: examples render verdicts and optional why"
+      (True, True, True)
+      (case judgePrompt [ JudgeExample "good one" True (Just "matches rubric")
+                        , JudgeExample "bad one" False Nothing ] "r" "out" of
+         [_, Message User u] ->
+           ( T.isInfixOf "Examples of past verdicts for this rubric:" u
+           , T.isInfixOf "Example output:\ngood one\nVerdict: pass\nWhy: matches rubric" u
+           , T.isInfixOf "Example output:\nbad one\nVerdict: fail\n" u
+               && T.isSuffixOf "Output to grade: out" u )
+         _ -> (False, False, False))
+  , check "judgeWith: examples change no call accounting"
+      (1.0, "leftover")
+      (runPureEff (runLLMScripted ["{\"why\":\"y\",\"pass\":true}", "leftover"]
+        (do s <- judgeWith (JudgeOpts 1 [JudgeExample "e" True Nothing])
+                   id "r" ("out" :: Text)
+            extra <- complete []
+            pure (s.value, extra))))
+  , check "runEvalWith: rubric and checklist both score under example opts"
+      1.0
+      ((runPureEff (runLLMScripted
+         [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}" ]
+         (runEvalWith (JudgeOpts 1 [JudgeExample "e" True Nothing]) id pure
+            [ Case ("x" :: Text) "rub" (Rubric "r")
+            , Case "y" "chk" (Checklist [criterion "c"]) ]))).passRate)
+  , check "calibrateWith: examples held out of measurement"
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2, "leftover")
+      (runPureEff (runLLMScripted
+        [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}", "leftover" ]
+        (do r <- calibrateWith 42 2 1 id "rubric"
+                   [ ("a", "o1" :: Text, True), ("b", "o2", True)
+                   , ("c", "o3", True), ("d", "o4", True) ]
+            extra <- complete []
+            pure (r, extra))))
+  , check "calibrateWith: clamps so one measurement case remains"
+      (2, 1)
+      (let r = runPureEff (runLLMScripted ["{\"why\":\"\",\"pass\":true}"]
+                 (calibrateWith 1 10 1 id "r"
+                    [("a", "o" :: Text, True), ("b", "o2", True), ("c", "o3", True)]))
+       in (r.exampleCount, r.measured))
+  , check "renderCalibration: examples line only when used"
+      (True, False)
+      (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2
+           withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4
+       in ( T.isInfixOf "examples fed: 2" (renderCalibration withEx)
+          , T.isInfixOf "examples fed" (renderCalibration withoutEx)))
   -- crucible-mo3: derived claim grounding
   , check "groundingCheck: all claims supported -> 1.0 with lines in order"
       (1.0, True)
