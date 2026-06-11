@@ -165,7 +165,12 @@ scoreRun pool concurrency runner runId gvIds = do
     -- the prior errored row.
     gradeOne :: Grader -> GraderVersion -> Output -> Bool -> IO Bool
     gradeOne g gv out regrade = do
-      result <- gradePair g gv out
+      -- The try covers gradePair WHOLE (including the exact kind's Example
+      -- fetch), so even a transient DB error becomes this pair's error row
+      -- rather than cancelling the concurrent batch.
+      result <- try (gradePair g gv out) >>= \case
+        Left (e :: SomeException) -> pure (Left (LlmError (T.pack (show e))))
+        Right r                   -> pure r
       now <- getCurrentTime
       withSession pool $ do
         when regrade $

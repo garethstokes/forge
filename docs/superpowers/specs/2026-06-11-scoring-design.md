@@ -86,6 +86,8 @@ tracked upstream as a manifest bug):
 - `value :: Field f Double` → `Field f (Maybe Double)` — an errored score has
   no value, and SQL `AVG` skips NULLs, keeping aggregates pure for free.
 - New `error :: Field f (Maybe Text)`.
+- New `unique [#output, #graderVersion]` index — at most one Score per pair,
+  backstopping the resume logic's delete-then-insert at the DB level.
 
 A graded row: `value = Just v`, `passed = Just (v >= 1.0)`, `detail = Just
 {"rationale": <text>, "votes": [yes, no]?}`, `error = NULL`. An errored pair:
