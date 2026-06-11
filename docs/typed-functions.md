@@ -231,6 +231,29 @@ Three to five examples capture most of the benefit for classification and
 extraction tasks. The instruction text repeats once per pair, so each example
 adds prompt tokens proportional to instruction length.
 
+### Reasoning before the answer
+
+`withReasoning` wraps the output contract as
+`{"reasoning": <string>, "result": <o>}`: the model writes its reasoning
+first, so the result tokens are conditioned on it (the same effect the eval
+judge uses with its why-then-pass verdict). `call` still returns `o`; the
+reasoning is requested, decoded, and discarded.
+
+```haskell
+extract :: Skill Text Invoice
+extract = withReasoning (skill "extract-invoice" str codec invoiceInstruction)
+```
+
+Use it for extraction and judgement-heavy skills; skip it for trivial
+classification, where the extra output tokens buy nothing. Attached examples
+encode through the same contract with an empty reasoning string; write the
+codec by hand if your examples should demonstrate reasoning too.
+
+When a reply fails to decode, the retry re-prompt now restates the schema
+contract along with the parse error, which converges faster than the error
+alone (the model is reminded what right looks like, not only what went
+wrong).
+
 ## Schema injection
 
 `schemaText :: JSONCodec a -> Text` renders a codec's JSON Schema as compact JSON

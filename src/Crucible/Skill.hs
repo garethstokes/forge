@@ -20,6 +20,7 @@ module Crucible.Skill
   , withTests
   , withExamples
   , examplesFromTests
+  , withReasoning
   , prompt
   , call
   , testSkill
@@ -32,9 +33,9 @@ import qualified Data.Aeson as A
 import NeatInterpolation (text)
 
 import Effectful
-import Autodocodec (toJSONVia)
+import Autodocodec (dimapCodec, toJSONVia)
 
-import Crucible.Codec (JSONCodec, schemaText)
+import Crucible.Codec (JSONCodec, field, object, schemaText, str)
 import Crucible.Eval (Case (..), Expectation (..), Report, runEval)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
 import Crucible.Decode (decodeLLM, DecodeError (..))
@@ -91,6 +92,24 @@ examplesFromTests n fn = fn { examples = fn.examples ++ moved, tests = kept }
     go k (c : cs) =
       let (ms, ks) = go k cs in (ms, c : ks)
 
+-- | Make the skill reason before it answers: the output contract becomes
+-- @{"reasoning": <string>, "result": <o>}@ with the reasoning field first,
+-- so the result tokens are conditioned on the reasoning (the same
+-- CoT-before-verdict effect the eval judge uses). 'call' still returns @o@;
+-- the reasoning is requested, decoded, and discarded. Best for extraction
+-- and judgement-heavy skills; skip it for trivial classification, where the
+-- extra tokens buy nothing. Note: attached examples encode through the same
+-- contract with an empty reasoning string; write the codec by hand if your
+-- examples should demonstrate reasoning too.
+withReasoning :: Skill i o -> Skill i o
+withReasoning fn = fn { output = reasoned fn.output }
+  where
+    reasoned oc =
+      dimapCodec snd (\o -> ("", o))
+        (object
+          ( (,) <$> field "reasoning" fst str
+                <*> field "result"    snd oc ))
+
 -- | Encode a value to JSON text via its codec.
 jsonText :: A.Value -> Text
 jsonText = TE.decodeUtf8 . LB.toStrict . A.encode
@@ -121,11 +140,14 @@ prompt sk inp =
     pair (ei, eo) = [userMsg ei, Message Assistant (jsonText (toJSONVia sk.output eo))]
 
 -- | Run a typed skill: build the prompt, call the model, and decode the reply
--- against the output codec. On a decode failure, re-ask with the parse error fed
--- back (up to 'retries' times); on exhaustion return 'Left'.
+-- against the output codec. On a decode failure, re-ask with the parse error
+-- and the schema contract restated (error feedback converges faster when it
+-- repeats what right looks like), up to 'retries' times; on exhaustion
+-- return 'Left'.
 call :: (LLM :> es) => Skill i o -> i -> Eff es (Either DecodeError o)
 call fn@Skill{output = outC, retries = rets} inp = loop rets (prompt fn inp)
   where
+    schema = schemaText outC
     loop n msgs = do
       raw <- complete msgs
       case decodeLLM outC raw of
@@ -137,7 +159,10 @@ call fn@Skill{output = outC, retries = rets} inp = loop rets (prompt fn inp)
               in loop (n - 1)
                 ( msgs
                     ++ [ Message Assistant raw
-                       , Message User [text|Your reply did not parse: ${e}. Respond with valid JSON only.|]
+                       , Message User [text|
+                           Your reply did not parse: ${e}.
+                           Respond ONLY with valid JSON matching this schema:
+                           ${schema}|]
                        ]
                 )
 

@@ -16,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Skill (Skill (..), skill, withRetries, withTests, withExamples, examplesFromTests, prompt, call, testSkill)
+import Crucible.Skill (Skill (..), skill, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, call, testSkill)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -53,6 +53,7 @@ import Control.Exception (try)
 import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
+import qualified Data.List
 
 -- Sample types for codec tests
 
@@ -507,6 +508,23 @@ main = runChecks
       (Right "positive")
       (runPureEff (runLLMScripted ["\"positive\""]
         (call (withExamples [("I love it", "positive")] classifyFn) "meh")))
+  -- crucible-2ce: reasoning-field convention
+  , check "withReasoning: decodes the result field, discards reasoning"
+      (Right "positive")
+      (runPureEff (runLLMScripted
+        ["{\"reasoning\":\"the review is glowing\",\"result\":\"positive\"}"]
+        (call (withReasoning classifyFn) "I love it")))
+  , check "withReasoning: schema requires reasoning and result"
+      (Just ["reasoning", "result"])
+      (fmap Data.List.sort
+        (AT.parseMaybe (A.withObject "" (\o -> o A..: "required"))
+           (schemaValue (withReasoning classifyFn).output) :: Maybe [Text]))
+  , check "withReasoning: bare reply fails decode, retry recovers"
+      (Right "positive")
+      (runPureEff (runLLMScripted
+        [ "\"positive\""
+        , "{\"reasoning\":\"second try\",\"result\":\"positive\"}" ]
+        (call (withReasoning classifyFn) "I love it")))
   , check "testSkill: moved cases consume no replies"
       (1.0, "leftover")
       (runPureEff (runLLMScripted ["\"B\"", "leftover"]
