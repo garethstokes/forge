@@ -91,16 +91,16 @@ instance {-# OVERLAPPABLE #-} TypeError
   gtools = error "unreachable: TypeError"
 
 -- positional field
-instance GTools (M1 S ('MetaSel 'Nothing u s l) (K1 R t)) es where
-  gtools = error
-    "Crucible.Tool.Generic: positional fields are not supported. \
-    \Use named record fields; the field name becomes the tool name."
+instance TypeError
+  ('Text "Crucible.Tool.Generic: toolbox fields must be named; the field name becomes the tool name.")
+  => GTools (M1 S ('MetaSel 'Nothing u s l) (K1 R t)) es where
+  gtools = error "unreachable: TypeError"
 
 -- sum type
-instance GTools (f :+: g) es where
-  gtools = error
-    "Crucible.Tool.Generic: sum types are not supported. \
-    \A toolbox must be a single-constructor record."
+instance TypeError
+  ('Text "Crucible.Tool.Generic: a toolbox must be a single-constructor record.")
+  => GTools (f :+: g) es where
+  gtools = error "unreachable: TypeError"
 
 -- empty record: a toolbox with no tools
 instance GTools U1 es where
