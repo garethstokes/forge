@@ -25,12 +25,17 @@ data CascadeRule = CascadeRule
   , crChildRules :: [CascadeRule]
   }
 
+-- | Compares only the finite fields; ignores (possibly infinite) 'crChildRules'.
 instance Eq CascadeRule where
   a == b =
     (crChildTable a, crFkColumn a, crPolicy a, crChildPk a)
       == (crChildTable b, crFkColumn b, crPolicy b, crChildPk b)
 
+-- | Shows only the finite fields; never forces 'crChildRules'.
 instance Show CascadeRule where
-  show r =
-    "CascadeRule " <> show (crChildTable r) <> " " <> show (crFkColumn r)
-      <> " " <> show (crPolicy r) <> " " <> show (crChildPk r) <> " <child rules>"
+  showsPrec d r = showParen (d > 10) $
+    showString "CascadeRule "
+      . showsPrec 11 (crChildTable r) . showString " "
+      . showsPrec 11 (crFkColumn r)   . showString " "
+      . showsPrec 11 (crPolicy r)     . showString " "
+      . showsPrec 11 (crChildPk r)    . showString " <child rules>"
