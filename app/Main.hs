@@ -37,6 +37,7 @@ import NeatInterpolation (text)
 import Crucible.Skill (Skill, skill, call)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
+import Crucible.Eval (Case (..), Expectation (..), criterion, runEvalN, renderReport)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -129,6 +130,13 @@ main = do
           | a == b    -> TIO.putStrLn ("chat cassette: OK replay matches: " <> a)
           | otherwise -> TIO.putStrLn ("chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
         _ -> TIO.putStrLn "chat cassette: a run failed"
+      -- Eval: a checklist and an n-vote rubric judged live (runEvalN 3).
+      evalRep <- runEff (Anthropic.run cfg (runEvalN 3 id pure
+        [ Case ("It is 26C and sunny in Brisbane." :: T.Text) "weather-report"
+            (Checklist [criterion "mentions a temperature", criterion "mentions a city"])
+        , Case "pong" "terse-pong" (Rubric "the output is a single short word")
+        ]))
+      TIO.putStrLn (renderReport evalRep)
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
