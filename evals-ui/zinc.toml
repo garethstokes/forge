@@ -20,7 +20,7 @@ version = "0.1.0.0"
 source-dirs = ["src"]
 main = "Main.hs"
 ghc-options = ["-Wall"]
-depends = ["base", "miso", "text", "evals-api"]
+depends = ["base", "miso", "text", "time", "aeson", "evals-api"]
 wasm-exports = ["hs_start"]
 
 [dependencies]

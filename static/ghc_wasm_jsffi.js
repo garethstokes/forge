@@ -99,6 +99,7 @@ getJSVal: (k) => __ghc_wasm_jsffi_jsval_manager.getJSVal(k),
 freeJSVal: (k) => __ghc_wasm_jsffi_jsval_manager.freeJSVal(k),
 scheduleWork: () => setImmediate(__exports.rts_schedulerLoop),
 ZC2ZCmisoZCMisoziDSLziFFIZC: ($1) => {return $1.length},
+ZC3ZCmisoZCMisoziDSLziFFIZC: ($1) => {return Array.isArray($1);},
 ZC5ZCmisoZCMisoziDSLziFFIZC: ($1) => {return requestAnimationFrame($1);},
 ZC6ZCmisoZCMisoziDSLziFFIZC: ($1,$2) => {return $2[$1]},
 ZC7ZCmisoZCMisoziDSLziFFIZC: ($1) => {return $1},
@@ -1435,6 +1436,10 @@ else {
 ZC7ZCmisoZCDataziJSStringZC: ($1,$2) => {if ($1 === $2) return 0;
 else if ($1 > $2) return 1;
 else return -1;},
+ZC15ZCmisoZCDataziJSStringZC: ($1,$2) => ((new TextDecoder('utf-8', {fatal: true})).decode(new Uint8Array(__exports.memory.buffer, $1, $2))),
+ZC16ZCmisoZCDataziJSStringZC: ($1,$2) => ((new Uint8Array(__exports.memory.buffer, $2, $1.byteLength)).set($1)),
+ZC17ZCmisoZCDataziJSStringZC: ($1) => ($1.byteLength),
+ZC18ZCmisoZCDataziJSStringZC: ($1) => ((new TextEncoder()).encode($1)),
 ZC41ZCmisoZCDataziJSStringZC: ($1,$2) => {return $1 + String.fromCharCode($2);},
 ZC42ZCmisoZCDataziJSStringZC: ($1,$2) => {return String.fromCharCode($1) + $2;},
 ZC0ZCghczminternalZCGHCziInternalziWasmziPrimziExportsZC: ($1,$2) => ($1.reject(new WebAssembly.RuntimeError($2))),

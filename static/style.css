@@ -1,0 +1,162 @@
+/* evals dashboard — hand-written, no framework */
+
+:root {
+  --fg: #1c2330;
+  --muted: #6b7280;
+  --line: #e3e7ee;
+  --bg: #f7f8fa;
+  --ok-bg: #e3f6e8;
+  --ok-fg: #166534;
+  --fail-bg: #fde8e8;
+  --fail-fg: #991b1b;
+  --muted-bg: #eef0f4;
+  --accent: #2456c8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.topbar {
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 24px;
+}
+.topbar h1 { margin: 0; font-size: 16px; }
+.topbar a { color: var(--fg); text-decoration: none; }
+
+.content { padding: 16px 24px 48px; max-width: 1200px; margin: 0 auto; }
+
+h2 { font-size: 15px; margin: 24px 0 8px; }
+h3 { font-size: 14px; margin: 0 0 6px; }
+
+a.back { display: inline-block; margin: 4px 0 12px; color: var(--accent); text-decoration: none; }
+a.back:hover { text-decoration: underline; }
+
+/* tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+th, td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: var(--muted-bg);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+tbody tr:hover { background: #f2f6ff; }
+tr.clickable { cursor: pointer; }
+td.key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+
+/* chips */
+.chip {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 12px;
+  background: var(--muted-bg);
+  color: var(--fg);
+  margin: 1px 4px 1px 0;
+  white-space: nowrap;
+}
+.chip.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.chip.fail { background: var(--fail-bg); color: var(--fail-fg); }
+.chip.muted { background: var(--muted-bg); color: var(--muted); }
+.chip.metric { background: #e8eefb; color: #1e3a8a; }
+
+/* output cells: CSS truncation, click-to-expand */
+td.out { max-width: 420px; cursor: pointer; }
+td.out.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+td.out.expanded { white-space: pre-wrap; word-break: break-word; }
+td.out.cell-error, tr.error-row td { background: var(--fail-bg); }
+tr.error-row td.out { color: var(--fail-fg); cursor: default; }
+
+/* scores */
+td.score { white-space: nowrap; }
+.mark.ok { color: var(--ok-fg); }
+.mark.fail { color: var(--fail-fg); }
+td.score-error { color: var(--fail-fg); }
+
+/* compare */
+tr.disagree td { background: #fff7e0; }
+td.delta.pos { color: var(--ok-fg); font-weight: 600; }
+td.delta.neg { color: var(--fail-fg); font-weight: 600; }
+
+.cards { display: flex; gap: 16px; margin: 8px 0 12px; }
+.card {
+  flex: 1;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.grader-line { color: var(--muted); margin: 0 0 10px; }
+
+/* runs toolbar */
+.comparebar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin: 12px 0 4px;
+}
+.comparebar .hint { color: var(--muted); }
+.compare-btn {
+  font: inherit;
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.compare-btn:disabled {
+  background: var(--muted-bg);
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+td.pick { text-align: center; }
+td.pick input { cursor: pointer; }
+
+/* run detail header */
+.run-header { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+.run-header h2 { margin: 0 0 6px; }
+.run-header .meta { display: flex; align-items: center; gap: 12px; color: var(--muted); margin-bottom: 6px; }
+.outputs { margin-top: 4px; }
+
+/* states */
+.loading { color: var(--muted); padding: 24px 0; }
+.error {
+  background: var(--fail-bg);
+  color: var(--fail-fg);
+  border: 1px solid #f3c1c1;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 16px 0;
+}
