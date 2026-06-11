@@ -182,8 +182,8 @@ depends = ["data-default-class"]
 [[locked]]
 name = "crucible"
 repo = "https://github.com/garethstokes/crucible.git"
-rev = "4c2dc6a50834d7316ebe9e1ef4416b587aae8f01"
-sha256 = "sha256:533ca3342bb66242f3f8eb3550cc5932757fe31b851cc6ccd2006253b2c3279a"
+rev = "6229382b3e3252cd7a5faaadd46f316fff746823"
+sha256 = "sha256:9fb76a287fc52929633f08c2ee1e6c56b8c9b6daa1fc7fc32f18a082d96321bb"
 depends = ["aeson", "autodocodec", "autodocodec-schema", "effectful", "effectful-core", "hpke", "http-client-tls", "mlkem", "monad-control", "neat-interpolation", "ram", "retry", "strict-mutable-base"]
 
 [[locked]]

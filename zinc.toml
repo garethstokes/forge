@@ -39,8 +39,10 @@ rev = "f59be95b09382a2547e60463446207697e716acb"
 
 [dependencies.crucible]
 repo = "https://github.com/garethstokes/crucible.git"
-# Pushed remote master: DevEx naming + GHC 9.12.2 + Crucible.Eval (scoreN exported).
-rev = "4c2dc6a50834d7316ebe9e1ef4416b587aae8f01"
+# Pushed remote master: typed Tool overhaul, eval rubric upgrades (Score votes/dissent,
+# Checklist, judgeN, calibrate), prompt composition + withReasoning, groundingCheck,
+# Maybe fields optional in generic schemas.
+rev = "6229382b3e3252cd7a5faaadd46f316fff746823"
 
 # --- crucible's transitive dependency stanzas (copied verbatim) ---
 
