@@ -15,7 +15,7 @@ module Evals.Api
   , ApiError (..)
   ) where
 
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON, ToJSON, Value)
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import GHC.Generics (Generic)
@@ -46,7 +46,7 @@ data ScoreDto = ScoreDto
 
 data OutputRowDto = OutputRowDto
   { exampleKey :: Text, outputText :: Maybe Text, outputError :: Maybe Text
-  , latencyMs :: Maybe Int, scores :: [ScoreDto] }
+  , latencyMs :: Maybe Int, tokens :: Maybe Value, scores :: [ScoreDto] }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 data RunDetailDto = RunDetailDto
@@ -55,11 +55,17 @@ data RunDetailDto = RunDetailDto
 
 data CompareRowDto = CompareRowDto
   { exampleKey :: Text, outputA :: Maybe Text, outputB :: Maybe Text
-  , scoreA :: Maybe Double, scoreB :: Maybe Double, delta :: Maybe Double }
+  , errorA :: Maybe Text, errorB :: Maybe Text
+  , scoreA :: Maybe Double, scoreB :: Maybe Double
+  , passedA :: Maybe Bool, passedB :: Maybe Bool, delta :: Maybe Double }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
+-- | graderName/graderVersion: the single grader whose scores the v1 compare
+-- shows (Nothing when no scores exist on either side).
 data CompareDto = CompareDto
-  { runA :: RunSummaryDto, runB :: RunSummaryDto, rows :: [CompareRowDto] }
+  { runA :: RunSummaryDto, runB :: RunSummaryDto
+  , graderName :: Maybe Text, graderVersion :: Maybe Int
+  , rows :: [CompareRowDto] }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 newtype ApiError = ApiError { error :: Text }

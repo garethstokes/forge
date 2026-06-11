@@ -6,6 +6,10 @@
 -- browser reactor (see evals-ui/zinc.toml wasm-exports).
 module Main where
 
+-- Instances-only import: makes the depends edge on evals-api honest. The UI
+-- does not consume the DTOs yet; the edge proves the evals-api + aeson closure
+-- cross-compiles to wasm alongside the UI.
+import Evals.Api ()
 import Miso
 import qualified Miso.Html as H
 import Miso.Lens (Lens, lens, (+=), (-=))

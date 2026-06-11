@@ -62,7 +62,8 @@ Endpoints:
 - `GET /api/compare?a=<runId>&b=<runId>` — both runs must share a dataset
   version (else 400). Run headers (with metric summaries) + rows aligned by
   example key: each side's output text/error and score values, plus the
-  per-example delta where both sides have a graded score.
+  per-example delta where both sides have a graded score (v1 compares one
+  grader's scores; the response names it).
 
 Config via env, like the CLI: `MANIFEST_DATABASE_URL`, `EVALS_HTTP_PORT`
 (default 8787), `EVALS_STATIC_DIR` (default `./static`). Read-only: the
@@ -74,8 +75,10 @@ Plain records mirroring what each endpoint returns (e.g. `DatasetDto`,
 `DatasetVersionDto`, `RunSummaryDto`, `MetricDto`, `RunDetailDto`,
 `OutputRowDto`, `ScoreDto`, `CompareDto`, `CompareRowDto`), ids as plain
 `Int`s (the typed ids stay server-side), `ToJSON`/`FromJSON` via `Generic`.
-The UI decodes the same types — one definition, both sides of the wire. No
-autodocodec (YAGNI until an external consumer appears).
+The UI decodes the same types — one definition, both sides of the wire.
+Compare rows carry per-side passed/error and the `CompareDto` names the
+single grader v1 compares on. No autodocodec (YAGNI until an external
+consumer appears).
 
 ## 4. The UI (Miso SPA)
 
