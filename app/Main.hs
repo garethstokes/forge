@@ -34,7 +34,8 @@ import qualified Crucible.LLM.OpenAI.Stream as OpenAI
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
-import Crucible.Skill (Skill, skill, call, withExamples)
+import Crucible.Skill (Skill, skill, call, withExamples, withTests)
+import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
 import Crucible.Eval (Case (..), Expectation (..), criterion, runEvalN, renderReport)
@@ -141,6 +142,14 @@ main = do
             (Grounded "Brisbane forecast: sunny, 26 degrees, light winds.")
         ]))
       TIO.putStrLn (renderReport evalRep)
+      -- improveSkill: one live reflection round over a deliberately weak skill.
+      let weak = withTests
+            [ Case ("the meeting is at 3pm tomorrow" :: T.Text) "extracts-time"
+                (Exactly ("3pm" :: T.Text)) ]
+            (skill "extract-time" str str (\s -> [text|What time? ${s}|]))
+      (_, improveSteps) <- runEff (Anthropic.run cfg (improveSkill 1 id weak))
+      TIO.putStrLn ("improveSkill: " <> T.pack (show (length improveSteps)) <> " step(s) "
+                    <> T.pack (show [s.accepted | s <- improveSteps]))
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
