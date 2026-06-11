@@ -30,6 +30,12 @@ import Evals.Schema
 expect :: String -> Bool -> IO ()
 expect msg ok = unless ok (ioError (userError ("FAILED: " <> msg)))
 
+errContains :: Text -> Score -> Bool
+errContains needle s = maybe False (needle `T.isInfixOf`) s.error
+
+near :: Double -> Double -> Bool
+near a b = abs (a - b) < 1e-9
+
 main :: IO ()
 main = do
   configSpec
@@ -39,9 +45,13 @@ main = do
     now <- getCurrentTime
     engineSpec pool now
     errorRowSpec pool now
+    checklistSpec pool now
     resumeSpec pool now
     metricSpec pool now
-  putStrLn "manifest-evals GradeSpec: config + exact + engine + resume + metrics OK"
+    unknownKindSpec pool now
+    missingRunSpec pool now
+    dedupeSpec pool now
+  putStrLn "manifest-evals GradeSpec: config + exact + engine + checklist + resume + metrics + edge-cases OK"
 
 configSpec :: IO ()
 configSpec = do
@@ -80,10 +90,13 @@ exactSpec = do
 -- Seeding -----------------------------------------------------------------
 
 data SeededG = SeededG
-  { runId :: RunId, outputIds :: [OutputId], gvId :: GraderVersionId }
+  { runId :: RunId, gvId :: GraderVersionId }
 
--- One run with two GOOD outputs ("out-a" with expected "out-a", "out-b" with
--- expected "nope") + one ERRORED output, and one grader of the given kind.
+-- One run with three GOOD outputs ("out-a" with expected "out-a", "out-b"
+-- with expected "nope", "out-d" with NO expected value) + one ERRORED
+-- output (no text), and one grader of the given kind. Per (output x grader)
+-- pair that gives, for exact graders: pass, fail, missing-expected error,
+-- output-error skip — and for LLM graders: three gradeable texts + one skip.
 seedScoring :: Pool -> UTCTime -> Text -> Value -> IO SeededG
 seedScoring pool now kind config = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "g", slug = "g", createdAt = now } :: Dataset)
@@ -94,104 +107,190 @@ seedScoring pool now kind config = withSession pool $ do
                      , input = Aeson (toJSON ("q2" :: Text)), expected = Just (Aeson (toJSON ("nope" :: Text))), meta = Nothing } :: Example)
   e3 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e3"
                      , input = Aeson (toJSON ("q3" :: Text)), expected = Nothing, meta = Nothing } :: Example)
+  e4 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e4"
+                     , input = Aeson (toJSON ("q4" :: Text)), expected = Nothing, meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
   tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "SYS"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "out-a"
-                    , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
-  o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "out-b"
-                    , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
-  o3 <- add (Output { id = OutputId 0, run = r.id, example = e3.id, response = Nothing, text = Nothing
-                    , error = Just "llm: boom", latencyMs = Just 1, tokens = Nothing } :: Output)
+  _o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "out-a"
+                     , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
+  _o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "out-b"
+                     , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
+  _o3 <- add (Output { id = OutputId 0, run = r.id, example = e3.id, response = Nothing, text = Nothing
+                     , error = Just "llm: boom", latencyMs = Just 1, tokens = Nothing } :: Output)
+  _o4 <- add (Output { id = OutputId 0, run = r.id, example = e4.id, response = Nothing, text = Just "out-d"
+                     , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
   g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = kind, createdAt = now } :: Grader)
   gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson config, createdAt = now } :: GraderVersion)
-  pure SeededG { runId = r.id, outputIds = [o1.id, o2.id, o3.id], gvId = gv.id }
+  pure SeededG { runId = r.id, gvId = gv.id }
 
 scoresFor :: Pool -> GraderVersionId -> IO [Score]
 scoresFor pool gv = withSession pool (selectWhere [ #graderVersion ==. gv ])
 
 noRunner :: GradeRunner
-noRunner _ _ _ = ioError (userError "runner must not be called for exact")
+noRunner _ _ _ = ioError (userError "runner must not be called")
 
 -- Scenarios ----------------------------------------------------------------
 
--- exact end-to-end: no runner call; pass + fail rows; errored output skipped.
+-- exact end-to-end: no runner call; pass + fail rows; errored output
+-- skipped; missing-expected pair becomes an engine-level error row;
+-- Run.status untouched.
 engineSpec :: Pool -> UTCTime -> IO ()
 engineSpec pool now = do
   sd <- seedScoring pool now "exact" (object [])
   outcome <- scoreRun pool 2 noRunner sd.runId [sd.gvId]
-  expect "exact: outcome" (outcome == ScoreOutcome { total = 3, scored = 2, errored = 0, skipped = 1 })
+  expect "exact: outcome" (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   ss <- scoresFor pool sd.gvId
-  expect "exact: one pass one fail"
-    (sort (map (.value) ss) == [Just 0.0, Just 1.0])
-  expect "exact: passed mirrors value"
-    (sort (map (.passed) ss) == [Just False, Just True])
-  expect "exact: details carry rationales" (all (isJust . (.detail)) ss)
+  expect "exact: one pass one fail (value paired with passed)"
+    (sort [ (s.value, s.passed) | s <- ss, isNothing s.error ]
+       == [(Just 0.0, Just False), (Just 1.0, Just True)])
+  expect "exact: details carry rationales" (all (isJust . (.detail)) [ s | s <- ss, isNothing s.error ])
+  expect "exact: missing expected became an error row"
+    ([ () | s <- ss, errContains "no expected value" s, isNothing s.value, isNothing s.passed ] == [()])
+  mr <- withSession pool (get @Run (Key sd.runId))
+  expect "exact: Run.status untouched" (fmap (.status) mr == Just "succeeded")
 
 -- rubric: recording runner sees the expectation+text; canned scores persist
--- with votes in detail; a judge-error canned score becomes an error row.
+-- with votes in detail; a runner EXCEPTION is captured as a per-pair error
+-- row (try/SomeException -> LlmError -> renderExecError), not a batch kill.
 errorRowSpec :: Pool -> UTCTime -> IO ()
 errorRowSpec pool now = do
   sd <- seedScoring pool now "rubric" (object ["rubric" .= ("be right" :: Text), "votes" .= (3 :: Int)])
   ref <- newIORef ([] :: [Text])
-  let runner gv expn t = do
+  let runner _gv expn t = do
         case expn of
-          Eval.Rubric r -> do
-            let Aeson c = gv.config
-            atomicModifyIORef' ref (\acc -> (acc ++ [r <> "|" <> t <> "|" <> T.pack (show (votesFrom c))], ()))
+          Eval.Rubric r -> atomicModifyIORef' ref (\acc -> (acc ++ [r <> "|" <> t], ()))
           _ -> ioError (userError "expected a Rubric expectation")
-        pure $ if t == "out-a"
-          then Right (Eval.Score { value = 1.0, rationale = "good", votes = Just (2, 1) })
-          else Right (Eval.score 0.0 "judge error: all samples failed")
+        case t of
+          "out-a" -> pure (Right (Eval.Score { value = 1.0, rationale = "good", votes = Just (2, 1) }))
+          "out-b" -> ioError (userError "kaboom")
+          _       -> pure (Right (Eval.score 1.0 "fine"))
   outcome <- scoreRun pool 1 runner sd.runId [sd.gvId]
-  expect "rubric: outcome" (outcome == ScoreOutcome { total = 3, scored = 1, errored = 1, skipped = 1 })
+  expect "rubric: outcome" (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   calls <- readIORef ref
-  expect "rubric: runner saw config rubric + text + votes"
-    (sort calls == ["be right|out-a|3", "be right|out-b|3"])
+  expect "rubric: runner saw config rubric + text for every gradeable output"
+    (sort calls == ["be right|out-a", "be right|out-b", "be right|out-d"])
   ss <- scoresFor pool sd.gvId
   let good = [ s | s <- ss, isNothing s.error ]
       bad  = [ s | s <- ss, isJust s.error ]
-  expect "rubric: one graded row with votes in detail"
-    (map (.value) good == [Just 1.0]
-       && map (.detail) good == [Just (Aeson (object ["rationale" .= ("good" :: Text), "votes" .= [2 :: Int, 1]]))])
-  expect "rubric: judge error became an error row (value NULL)"
-    (map (.value) bad == [Nothing] && all (isNothing . (.passed)) bad)
+  expect "rubric: two graded rows, votes preserved in detail"
+    (sort [ (s.value, s.passed) | s <- good ] == [(Just 1.0, Just True), (Just 1.0, Just True)]
+       && Just (Aeson (object ["rationale" .= ("good" :: Text), "votes" .= [2 :: Int, 1]]))
+            `elem` map (.detail) good)
+  expect "rubric: thrown exception became an error row carrying the message"
+    (map (.value) bad == [Nothing] && all (isNothing . (.passed)) bad
+       && all (errContains "kaboom") bad)
 
--- resume: good rows skipped; errored rows deleted + re-graded once.
+-- checklist: criteria (with default weight) threaded to the runner; a
+-- non-voted score pins the votes-free detail json; a judge-error canned
+-- score becomes an error row.
+checklistSpec :: Pool -> UTCTime -> IO ()
+checklistSpec pool now = do
+  sd <- seedScoring pool now "checklist"
+          (object ["criteria" .= [ object ["label" .= ("cites" :: Text), "weight" .= (2.0 :: Double)]
+                                 , object ["label" .= ("polite" :: Text)] ]])
+  ref <- newIORef ([] :: [[(Text, Double)]])
+  let runner _gv expn t = do
+        case expn of
+          Eval.Checklist cs ->
+            atomicModifyIORef' ref (\acc -> (acc ++ [map (\c -> (c.label, c.weight)) cs], ()))
+          _ -> ioError (userError "expected a Checklist expectation")
+        pure $ case t of
+          "out-a" -> Right (Eval.score 0.5 "partial")
+          "out-b" -> Right (Eval.score 0.0 "judge error: all samples failed")
+          _       -> Right (Eval.score 1.0 "ok")
+  outcome <- scoreRun pool 1 runner sd.runId [sd.gvId]
+  expect "checklist: outcome" (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
+  calls <- readIORef ref
+  expect "checklist: criteria threaded on every call (weight defaults 1)"
+    (length calls == 3 && all (== [("cites", 2.0), ("polite", 1.0)]) calls)
+  ss <- scoresFor pool sd.gvId
+  let partial = [ s | s <- ss, s.value == Just 0.5 ]
+      bad     = [ s | s <- ss, isJust s.error ]
+  expect "checklist: partial score row (passed False, votes-free detail)"
+    (map (.passed) partial == [Just False]
+       && map (.detail) partial == [Just (Aeson (object ["rationale" .= ("partial" :: Text)]))])
+  expect "checklist: judge-error score became an error row"
+    (length bad == 1 && all (isNothing . (.value)) bad && all (errContains "judge error") bad)
+
+-- resume: good rows skipped; errored rows deleted + re-graded each run
+-- (still-failing pairs error again); hand-errored good rows re-grade clean.
 resumeSpec :: Pool -> UTCTime -> IO ()
 resumeSpec pool now = do
   sd <- seedScoring pool now "exact" (object [])
-  _ <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
+  outcome1 <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
+  expect "resume: first run grades 2, errors 1 (no expected), skips 1"
+    (outcome1 == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   outcome2 <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
-  expect "resume: all good pairs skipped on re-run"
-    (outcome2 == ScoreOutcome { total = 3, scored = 0, errored = 0, skipped = 3 })
+  expect "resume: re-run skips good pairs, re-grades the still-failing pair"
+    (outcome2 == ScoreOutcome { total = 4, scored = 0, errored = 1, skipped = 3 })
   ss <- scoresFor pool sd.gvId
-  expect "resume: no duplicate rows" (length ss == 2)
-  withSession pool $ update @Score (Key (head [ s.id | s <- ss ]))
+  expect "resume: no duplicate rows" (length ss == 3)
+  withSession pool $ update @Score (Key (head [ s.id | s <- ss, isNothing s.error ]))
     [ #value =. (Nothing :: Maybe Double), #passed =. (Nothing :: Maybe Bool)
     , #detail =. (Nothing :: Maybe (Aeson Value)), #error =. Just "llm: transient" ]
   outcome3 <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
-  expect "resume: errored pair re-graded"
-    (outcome3 == ScoreOutcome { total = 3, scored = 1, errored = 0, skipped = 2 })
+  expect "resume: hand-errored pair re-graded; still-failing pair errors again"
+    (outcome3 == ScoreOutcome { total = 4, scored = 1, errored = 1, skipped = 2 })
   ss2 <- scoresFor pool sd.gvId
-  expect "resume: still two rows, none errored"
-    (length ss2 == 2 && all (isNothing . (.error)) ss2)
+  expect "resume: still three rows, exactly the missing-expected one errored"
+    (length ss2 == 3 && [ () | s <- ss2, errContains "no expected value" s ] == [()]
+       && length [ s | s <- ss2, isJust s.error ] == 1)
 
--- metrics: AVG ignores error rows; recompute replaces.
+-- metrics: AVG ignores error rows (a runner Left counts as errored in the
+-- outcome); recompute replaces and folds re-graded pairs in.
 metricSpec :: Pool -> UTCTime -> IO ()
 metricSpec pool now = do
   sd <- seedScoring pool now "rubric" (object ["rubric" .= ("r" :: Text)])
-  let runner _ _ t = pure $ if t == "out-a"
-        then Right (Eval.score 1.0 "good")
-        else Left (LlmError "transient")
-  _ <- scoreRun pool 1 runner sd.runId [sd.gvId]
+  let runner _ _ t = pure $ case t of
+        "out-a" -> Right (Eval.score 1.0 "good")
+        "out-b" -> Left (LlmError "transient")
+        _       -> Right (Eval.score 0.0 "bad")
+  outcome1 <- scoreRun pool 1 runner sd.runId [sd.gvId]
+  expect "metric: runner Left counts as errored in the outcome"
+    (outcome1 == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   ms <- withSession pool (selectWhere [ #graderVersion ==. sd.gvId ]) :: IO [RunMetric]
-  expect "metric: one row, mean over graded only, count 1"
-    (map (\m -> (m.mean, m.passRate, m.count)) ms == [(1.0, Just 1.0, 1)])
-  let runner2 _ _ _ = pure (Right (Eval.score 0.0 "bad"))
+  expect "metric: one row, mean over graded only, count 2"
+    (map (\m -> (m.mean, m.passRate, m.count)) ms == [(0.5, Just 0.5, 2)])
+  let runner2 _ _ _ = pure (Right (Eval.score 1.0 "good now"))
   _ <- scoreRun pool 1 runner2 sd.runId [sd.gvId]
   ms2 <- withSession pool (selectWhere [ #graderVersion ==. sd.gvId ]) :: IO [RunMetric]
-  expect "metric: replaced, now over two graded rows"
-    (map (\m -> (m.mean, m.passRate, m.count)) ms2 == [(0.5, Just 0.5, 2)])
+  expect "metric: replaced, errored pair re-graded into the aggregate"
+    (case ms2 of
+       [m] -> m.count == 3 && near m.mean (2 / 3) && maybe False (\p -> near p (2 / 3)) m.passRate
+       _   -> False)
+
+-- unknown grader kind: every gradeable pair errors with a decode error; the
+-- output-error skip still applies; the runner is never called.
+unknownKindSpec :: Pool -> UTCTime -> IO ()
+unknownKindSpec pool now = do
+  sd <- seedScoring pool now "alien" (object [])
+  outcome <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
+  expect "unknown kind: outcome" (outcome == ScoreOutcome { total = 4, scored = 0, errored = 3, skipped = 1 })
+  ss <- scoresFor pool sd.gvId
+  expect "unknown kind: every error row names the kind"
+    (length ss == 3 && all (errContains "unknown grader kind") ss)
+
+-- missing run: all-zero outcome, nothing written.
+missingRunSpec :: Pool -> UTCTime -> IO ()
+missingRunSpec pool now = do
+  sd <- seedScoring pool now "exact" (object [])
+  outcome <- scoreRun pool 1 noRunner (RunId 999999) [sd.gvId]
+  expect "missing run: all-zero outcome"
+    (outcome == ScoreOutcome { total = 0, scored = 0, errored = 0, skipped = 0 })
+  ss <- scoresFor pool sd.gvId
+  expect "missing run: no Score rows written" (null ss)
+  ms <- withSession pool (selectWhere [ #graderVersion ==. sd.gvId ]) :: IO [RunMetric]
+  expect "missing run: no RunMetric rows written" (null ms)
+
+-- duplicate grader version ids are nubbed: same outcome and rows as one.
+dedupeSpec :: Pool -> UTCTime -> IO ()
+dedupeSpec pool now = do
+  sd <- seedScoring pool now "exact" (object [])
+  outcome <- scoreRun pool 1 noRunner sd.runId [sd.gvId, sd.gvId]
+  expect "dedupe: duplicate gv ids grade once"
+    (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
+  ss <- scoresFor pool sd.gvId
+  expect "dedupe: no duplicate rows" (length ss == 3)
