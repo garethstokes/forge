@@ -3,22 +3,21 @@
 -- reaching into Manifest's own test directory.
 module Manifest.Testing
   ( withEphemeralDb
+  , withEphemeralDb'
   ) where
 
 import Control.Exception (SomeException, finally, try)
 import qualified Data.ByteString.Char8 as BC
+import Data.ByteString (ByteString)
 import System.Directory (removeDirectoryRecursive)
 import System.Process (callProcess, readProcess)
 import Manifest.Postgres (Pool, closePool, newPool)
 
--- | Spin up an ephemeral, isolated Postgres for the action: initdb + pg_ctl on a
--- private unix socket, hand over a 2-connection pool with NO tables created,
--- then tear down (bracket-style, even on exception).
---
--- This is the @withCluster []@ behaviour extracted from the test harness so that
--- it is reachable from consumer packages.
-withEphemeralDb :: (Pool -> IO a) -> IO a
-withEphemeralDb body = do
+-- | Like 'withEphemeralDb' but also hands over the cluster's conninfo, for
+-- callers that need their own extra connection (e.g. a Manifest.Notify
+-- listener, which must not occupy a pool slot).
+withEphemeralDb' :: (ByteString -> Pool -> IO a) -> IO a
+withEphemeralDb' body = do
   base <- fmap (takeWhile (/= '\n')) (readProcess "mktemp" ["-d", "/tmp/manifest-pg.XXXXXX"] "")
   let dataDir  = base ++ "/data"
       sock     = base                     -- unix socket dir
@@ -32,4 +31,13 @@ withEphemeralDb body = do
     _ <- readProcess "initdb" ["-D", dataDir, "-U", "postgres", "-A", "trust", "--no-sync"] ""
     callProcess "pg_ctl" ["start", "-D", dataDir, "-w", "-l", base ++ "/postgres.log", "-o", pgOpts]
     pool <- newPool conninfo 2
-    body pool `finally` closePool pool
+    body conninfo pool `finally` closePool pool
+
+-- | Spin up an ephemeral, isolated Postgres for the action: initdb + pg_ctl on a
+-- private unix socket, hand over a 2-connection pool with NO tables created,
+-- then tear down (bracket-style, even on exception).
+--
+-- This is the @withCluster []@ behaviour extracted from the test harness so that
+-- it is reachable from consumer packages.
+withEphemeralDb :: (Pool -> IO a) -> IO a
+withEphemeralDb body = withEphemeralDb' (\_ pool -> body pool)
