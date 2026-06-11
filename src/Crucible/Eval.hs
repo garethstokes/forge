@@ -17,12 +17,14 @@ module Crucible.Eval
   , Score(..), score, Verdict(..)
   , Result(..), Report(..)
   , runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport
+  , groundingCheck
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
 
+import Crucible.Eval.Grounding (GroundingOutcome (..), groundingOutcome)
 import Crucible.Eval.Judge (Verdict (..), VoteOutcome (..), vote)
 import Crucible.LLM (LLM)
 
@@ -32,6 +34,8 @@ data Expectation a
   | Predicate (a -> Bool)  -- ^ must satisfy
   | Rubric Text            -- ^ LLM-as-judge against this rubric
   | Checklist [Criterion]  -- ^ weighted binary criteria, judged one by one
+  | Grounded Text          -- ^ every factual claim in the output must be
+                           --   supported by this evidence (derived claims)
 
 -- | One checklist item: a concrete, observable requirement and its weight.
 -- Write observable criteria ("cites a source URL"), not aspirational ones
@@ -102,6 +106,7 @@ scoreN n render exp_ actual = case exp_ of
   Predicate p   -> pure (score (ind (p actual)) (if p actual then "predicate held" else "predicate failed"))
   Rubric r      -> judgeN n render r actual
   Checklist cs  -> checklistScore n render cs actual
+  Grounded ev   -> groundingScore <$> groundingOutcome n ev (render actual)
   where ind b = if b then 1.0 else 0.0
 
 -- | Judge each criterion with its own binary call; score = passed weight /
@@ -124,6 +129,26 @@ checklistScore n render cs actual = do
       pure $ case out of
         AllErrored m      -> (c, False, "judge error: " <> m)
         Decided p w _ _ _ -> (c, p, w)
+
+-- | Check that every factual claim in an output is supported by the given
+-- evidence: decompose into atomic claims (at most 20, one decompose call
+-- plus one repair attempt), verify each with an n-vote judge call, and
+-- score supported over total. value reaches 1.0 only when every claim is
+-- supported, so a 'Grounded' case passes only with zero unsupported
+-- claims. A decompose failure scores 0 with a @judge error: @ tagged
+-- rationale; 'votes'\/'dissent' stay Nothing (per-claim tallies do not
+-- aggregate). Cost: 1-2 decompose calls plus claims x votes judge calls.
+groundingCheck :: (LLM :> es) => Int -> (o -> Text) -> Text -> o -> Eff es Score
+groundingCheck n render ev o = groundingScore <$> groundingOutcome n ev (render o)
+
+-- | Convert a grounding outcome to a Score.
+groundingScore :: GroundingOutcome -> Score
+groundingScore (GroundingOutcome s t ls) =
+  score (fromIntegral s / fromIntegral t) (T.intercalate "\n" ls)
+groundingScore NoClaims =
+  score 1.0 "no factual claims"
+groundingScore (DecomposeFailed m) =
+  score 0.0 ("judge error: claim decomposition failed: " <> m)
 
 -- | Run a system-under-test over a dataset and aggregate, single-sample
 -- judging (equivalent to @'runEvalN' 1@).

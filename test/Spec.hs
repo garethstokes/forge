@@ -33,7 +33,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
-import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport)
+import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport, groundingCheck)
 import Crucible.Eval.Judge (Verdict(..), verdictCodec)
 import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
@@ -1066,4 +1066,54 @@ main = runChecks
                  , "j1", "j2", "j3", "j4", "j5", "j6" ]
                  (calibrate 3 id "r" [("split", "o" :: Text, True), ("broken", "o", True)]))
        in (r.contested, r.judgeErrors, r.agreement))
+  -- crucible-mo3: derived claim grounding
+  , check "groundingCheck: all claims supported -> 1.0 with lines in order"
+      (1.0, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "[\"the temperature is 26C\",\"the city is Brisbane\"]"
+                 , "{\"why\":\"evidence says 26 degrees\",\"pass\":true}"
+                 , "{\"why\":\"evidence names Brisbane\",\"pass\":true}" ]
+                 (groundingCheck 1 id "Brisbane forecast: sunny, 26 degrees." ("It is 26C in Brisbane." :: Text)))
+       in ( s.value
+          , T.isInfixOf "[supported] the temperature is 26C: evidence says 26 degrees" s.rationale
+              && T.isInfixOf "[supported] the city is Brisbane: evidence names Brisbane" s.rationale ))
+  , check "groundingCheck: unsupported claim halves the score and is named"
+      (0.5, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "[\"the temperature is 26C\",\"it is raining\"]"
+                 , "{\"why\":\"supported\",\"pass\":true}"
+                 , "{\"why\":\"evidence says sunny\",\"pass\":false}" ]
+                 (groundingCheck 1 id "sunny, 26 degrees" ("out" :: Text)))
+       in (s.value, T.isInfixOf "[unsupported] it is raining: evidence says sunny" s.rationale))
+  , check "groundingCheck: no claims -> vacuous 1.0, zero verification calls"
+      (1.0, "no factual claims", "leftover")
+      (runPureEff (runLLMScripted ["[]", "leftover"]
+        (do s <- groundingCheck 1 id "ev" ("out" :: Text)
+            extra <- complete []
+            pure (s.value, s.rationale, extra))))
+  , check "groundingCheck: decompose failure -> tagged judge error"
+      (0.0, True)
+      (let s = runPureEff (runLLMScripted ["junk", "junk2"]
+                 (groundingCheck 1 id "ev" ("out" :: Text)))
+       in (s.value, T.isPrefixOf "judge error: claim decomposition failed:" s.rationale))
+  , check "groundingCheck: decompose repair recovers"
+      1.0
+      ((runPureEff (runLLMScripted
+         [ "junk", "[\"a claim\"]", "{\"why\":\"yes\",\"pass\":true}" ]
+         (groundingCheck 1 id "ev" ("out" :: Text)))).value)
+  , check "groundingCheck: claim vote all-errors counts unsupported"
+      (0.0, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "[\"a claim\"]", "junk", "junk2" ]
+                 (groundingCheck 1 id "ev" ("out" :: Text)))
+       in (s.value, T.isInfixOf "[unsupported] a claim: judge error:" s.rationale))
+  , check "Grounded: threads votes through runEvalN"
+      (1.0, "leftover")
+      (runPureEff (runLLMScripted
+         [ "[\"one claim\"]"
+         , "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}"
+         , "leftover" ]
+         (do rep <- runEvalN 3 id pure [Case ("text" :: Text) "g" (Grounded "ev")]
+             extra <- complete []
+             pure (rep.passRate, extra))))
   ]
