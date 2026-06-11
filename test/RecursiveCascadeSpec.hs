@@ -16,7 +16,7 @@ module RecursiveCascadeSpec (tests) where
 
 import Control.Exception (SomeException, try)
 import qualified Data.ByteString.Char8 as BC
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, sortOn)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -111,14 +111,16 @@ withRecDb body = withEphemeralDb $ \pool -> do
   body pool
 
 -- | Seed one org with two teams and one member per team; no badges, no lockers.
-seedOrg :: Db Org
+-- Returns the org and its first team (so callers never reach for an unordered
+-- selectWhere head, which could grab another org's team).
+seedOrg :: Db (Org, Team)
 seedOrg = do
   o  <- add (Org { orgId = 0, orgName = "Acme" } :: Org)
   t1 <- add (Team { teamId = 0, teamOrg = orgId o, teamName = "T1" } :: Team)
   t2 <- add (Team { teamId = 0, teamOrg = orgId o, teamName = "T2" } :: Team)
   _  <- add (Member { memberId = 0, memberTeam = teamId t1, memberName = "M1" } :: Member)
   _  <- add (Member { memberId = 0, memberTeam = teamId t2, memberName = "M2" } :: Member)
-  pure o
+  pure (o, t1)
 
 countAll :: forall a. Entity a => Pool -> IO Int
 countAll pool = withSession pool (length <$> selectWhere ([] :: [Cond a]))
@@ -130,38 +132,59 @@ tests = group "RecursiveCascade"
   [ test "Cascade recurses: deleting the org removes teams AND members" $
       withRecDb $ \pool -> do
         usedSubquery <- withSession pool $ do
-          o <- seedOrg
+          (o, _) <- seedOrg
+          o2 <- add (Org { orgId = 0, orgName = "Other" } :: Org)
+          t3 <- add (Team { teamId = 0, teamOrg = orgId o2, teamName = "T3" } :: Team)
+          _  <- add (Member { memberId = 0, memberTeam = teamId t3, memberName = "M3" } :: Member)
           withTransaction $ delete o
           l <- statementLog
           let sqls = map (BC.unpack . fst) l
           pure (any (\s -> "DELETE FROM members" `isInfixOf` s
                         && "IN (SELECT" `isInfixOf` s) sqls)
-        assertReturns "orgs gone"    0 (countAll @Org pool)
-        assertReturns "teams gone"   0 (countAll @Team pool)
-        assertReturns "members gone" 0 (countAll @Member pool)
+        assertReturns "only sibling org remains" 1 (countAll @Org pool)
+        assertReturns "only sibling team remains" 1 (countAll @Team pool)
+        assertReturns "only sibling member remains" 1 (countAll @Member pool)
         assertBool "member delete is scoped by an IN subquery" usedSubquery
   , test "Restrict at depth aborts the whole delete (nothing mutated)" $
       withRecDb $ \pool -> do
         res <- (try :: IO a -> IO (Either SomeException a)) $ withSession pool $ do
-          o <- seedOrg
-          ts <- selectWhere ([] :: [Cond Team])
-          _ <- add (Badge { badgeId = 0, badgeTeam = teamId (head ts), badgeLabel = "B" } :: Badge)
+          (o, t1) <- seedOrg
+          _ <- add (Badge { badgeId = 0, badgeTeam = teamId t1, badgeLabel = "B" } :: Badge)
           withTransaction $ delete o
         assertBool "delete was rejected" (either (const True) (const False) res)
         assertReturns "org survives"     1 (countAll @Org pool)
         assertReturns "teams survive"    2 (countAll @Team pool)
         assertReturns "members survive"  2 (countAll @Member pool)
         assertReturns "badge survives"   1 (countAll @Badge pool)
+  , test "Restrict at depth aborts BEFORE any mutation (autoflush, no txn)" $
+      -- Flush the delete OUTSIDE withTransaction (autoflush at the next query) so
+      -- transaction rollback can NOT mask the walk's ordering: if any Cascade ran
+      -- before the depth-2 Restrict check, the cascaded DELETE would auto-commit
+      -- and the teams/members would be gone even though the delete is rejected.
+      withRecDb $ \pool -> do
+        res <- (try :: IO a -> IO (Either SomeException a)) $ withSession pool $ do
+          (o, t1) <- seedOrg
+          _ <- add (Badge { badgeId = 0, badgeTeam = teamId t1, badgeLabel = "B" } :: Badge)
+          delete o                                  -- queued; flushed by next query
+          _ <- selectWhere ([] :: [Cond Org])       -- autoflush -> flushDelete (no txn)
+          pure ()
+        assertBool "delete was rejected" (either (const True) (const False) res)
+        assertReturns "teams NOT cascaded (restrict ran first)"  2 (countAll @Team pool)
+        assertReturns "members NOT cascaded (restrict ran first)" 2 (countAll @Member pool)
+        assertReturns "org survives" 1 (countAll @Org pool)
   , test "SetNull at depth nulls the FK; the row survives" $
       withRecDb $ \pool -> do
-        fks <- withSession pool $ do
-          o <- seedOrg
-          ts <- selectWhere ([] :: [Cond Team])
-          _ <- add (Locker { lockerId = 0, lockerTeam = Just (teamId (head ts)), lockerCode = "L1" } :: Locker)
+        (fks, t3id) <- withSession pool $ do
+          (o, t1) <- seedOrg
+          _ <- add (Locker { lockerId = 0, lockerTeam = Just (teamId t1), lockerCode = "L1" } :: Locker)
+          o2 <- add (Org { orgId = 0, orgName = "Other" } :: Org)
+          t3 <- add (Team { teamId = 0, teamOrg = orgId o2, teamName = "T3" } :: Team)
+          _ <- add (Locker { lockerId = 0, lockerTeam = Just (teamId t3), lockerCode = "L2" } :: Locker)
           withTransaction $ delete o
           ls <- selectWhere ([] :: [Cond Locker])
-          pure (map lockerTeam ls)
-        assertEqual "locker survives, FK nulled" [Nothing] fks
+          pure (map lockerTeam (sortOn lockerCode ls), teamId t3)
+        assertEqual "main locker FK nulled; sibling locker FK intact"
+                    [Nothing, Just t3id] fks
   , test "cycle guard: self-ref cascades one level per edge and terminates" $
       withRecDb $ \pool -> do
         names <- withSession pool $ do
@@ -179,5 +202,5 @@ tests = group "RecursiveCascade"
       -- touch only the finite fields and never force crChildRules.
       let r = head (cascadeRules @Node)
       assertBool "self-equality terminates" (r == r)
-      assertBool "show terminates non-empty" (not (null (show r)))
+      assertBool "show terminates when fully forced" (length (show r) > 0)
   ]
