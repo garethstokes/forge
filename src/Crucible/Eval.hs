@@ -16,6 +16,8 @@ module Crucible.Eval
   ( Case(..), Expectation(..), Criterion(..), criterion
   , Score(..), score, Verdict(..)
   , Result(..), Report(..)
+  , JudgeExample (..), JudgeOpts (..), defaultJudgeOpts
+  , judgeWith, runEvalWith, scoreWith
   , runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport
   , groundingCheck
   ) where
@@ -25,7 +27,7 @@ import qualified Data.Text as T
 import Effectful
 
 import Crucible.Eval.Grounding (GroundingOutcome (..), groundingOutcome)
-import Crucible.Eval.Judge (Verdict (..), VoteOutcome (..), vote)
+import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), defaultJudgeOpts, vote)
 import Crucible.LLM (LLM)
 
 -- | What a case's output is checked against.
@@ -71,9 +73,14 @@ score v r = Score v r Nothing Nothing
 data Result i a = Result { case' :: Case i a, output :: a, score :: Score }
 data Report i a = Report { results :: [Result i a], passRate :: Double, meanScore :: Double }
 
+-- | LLM-as-judge with explicit options (votes, few-shot examples).
+judgeWith :: (LLM :> es) => JudgeOpts -> (a -> Text) -> Text -> a -> Eff es Score
+judgeWith opts render rubric actual =
+  voteScore (opts.votes <= 1) <$> vote True opts rubric (render actual)
+
 -- | LLM-as-judge, single sample (equivalent to @'judgeN' 1@).
 judge :: (LLM :> es) => (a -> Text) -> Text -> a -> Eff es Score
-judge = judgeN 1
+judge = judgeWith defaultJudgeOpts
 
 -- | LLM-as-judge with n-sample majority voting (use odd n; the vote stops
 -- early once decided, so n=3 typically costs ~2 calls). For n > 1 the tally
@@ -82,8 +89,7 @@ judge = judgeN 1
 -- @judge error: @). Cost note: each sample is one judge call, two if its
 -- reply needs the repair re-prompt.
 judgeN :: (LLM :> es) => Int -> (a -> Text) -> Text -> a -> Eff es Score
-judgeN n render rubric actual =
-  voteScore (n <= 1) <$> vote True n rubric (render actual)
+judgeN n = judgeWith defaultJudgeOpts { votes = n }
 
 -- | Convert a vote outcome to a Score; the Bool suppresses the tally for
 -- single-sample judging.
@@ -94,20 +100,26 @@ voteScore single (Decided p w d y f) =
     (if single then Nothing else Just (y, f))
     (if single then Nothing else d)
 
+-- | Score one output with explicit judge options. Examples feed 'Rubric'
+-- judging only; 'Checklist' criteria and 'Grounded' claims take the vote
+-- count but ignore examples (each is its own micro-rubric).
+scoreWith :: (Eq a, LLM :> es) => JudgeOpts -> (a -> Text) -> Expectation a -> a -> Eff es Score
+scoreWith opts render exp_ actual = case exp_ of
+  Exactly e    -> pure (score (ind (actual == e)) (if actual == e then "exact match" else "mismatch"))
+  Predicate p  -> pure (score (ind (p actual)) (if p actual then "predicate held" else "predicate failed"))
+  Rubric r     -> judgeWith opts render r actual
+  Checklist cs -> checklistScore opts.votes render cs actual
+  Grounded ev  -> groundingScore <$> groundingOutcome opts.votes ev (render actual)
+  where ind b = if b then 1.0 else 0.0
+
 -- | Score one output against its expectation, single-sample judging.
 scoreM :: (Eq a, LLM :> es) => (a -> Text) -> Expectation a -> a -> Eff es Score
-scoreM = scoreN 1
+scoreM = scoreWith defaultJudgeOpts
 
 -- | 'scoreM' with n-vote judging for 'Rubric' cases and for each
 -- 'Checklist' criterion. Pure for Exactly/Predicate.
 scoreN :: (Eq a, LLM :> es) => Int -> (a -> Text) -> Expectation a -> a -> Eff es Score
-scoreN n render exp_ actual = case exp_ of
-  Exactly e     -> pure (score (ind (actual == e)) (if actual == e then "exact match" else "mismatch"))
-  Predicate p   -> pure (score (ind (p actual)) (if p actual then "predicate held" else "predicate failed"))
-  Rubric r      -> judgeN n render r actual
-  Checklist cs  -> checklistScore n render cs actual
-  Grounded ev   -> groundingScore <$> groundingOutcome n ev (render actual)
-  where ind b = if b then 1.0 else 0.0
+scoreN n = scoreWith defaultJudgeOpts { votes = n }
 
 -- | Judge each criterion with its own binary call; score = passed weight /
 -- total weight. value reaches 1.0 only when every criterion passes. A judge
@@ -125,7 +137,7 @@ checklistScore n render cs actual = do
   pure (score val (T.intercalate "\n" (map ln rs)))
   where
     judge1 c = do
-      out <- vote True n ("the output must satisfy: " <> c.label) (render actual)
+      out <- vote True defaultJudgeOpts { votes = n } ("the output must satisfy: " <> c.label) (render actual)
       pure $ case out of
         AllErrored m      -> (c, False, "judge error: " <> m)
         Decided p w _ _ _ -> (c, p, w)
@@ -150,14 +162,11 @@ groundingScore NoClaims =
 groundingScore (DecomposeFailed m) =
   score 0.0 ("judge error: claim decomposition failed: " <> m)
 
--- | Run a system-under-test over a dataset and aggregate, single-sample
--- judging (equivalent to @'runEvalN' 1@).
-runEval :: (Eq a, LLM :> es) => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
-runEval = runEvalN 1
-
 -- | 'runEval' with n-vote judging for Rubric cases and Checklist criteria.
-runEvalN :: (Eq a, LLM :> es) => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
-runEvalN n render sut cases = do
+runEvalWith :: (Eq a, LLM :> es)
+            => JudgeOpts -> (a -> Text) -> (i -> Eff es a) -> [Case i a]
+            -> Eff es (Report i a)
+runEvalWith opts render sut cases = do
   rs <- mapM run1 cases
   let vals = map (\Result{score = s} -> s.value) rs
       len  = length rs
@@ -167,8 +176,17 @@ runEvalN n render sut cases = do
   where
     run1 c@Case{input = i, expect = ex} = do
       out <- sut i
-      s   <- scoreN n render ex out
+      s   <- scoreWith opts render ex out
       pure (Result c out s)
+
+-- | Run a system-under-test over a dataset and aggregate, single-sample
+-- judging (equivalent to @'runEvalN' 1@).
+runEval :: (Eq a, LLM :> es) => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
+runEval = runEvalWith defaultJudgeOpts
+
+-- | 'runEval' with n-vote judging for Rubric cases and Checklist criteria.
+runEvalN :: (Eq a, LLM :> es) => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
+runEvalN n = runEvalWith defaultJudgeOpts { votes = n }
 
 -- | A human-readable report: one line per case, then a summary. Voted
 -- scores show the tally and label their rationale as majority-side (a

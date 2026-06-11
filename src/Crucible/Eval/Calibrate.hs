@@ -15,6 +15,7 @@
 -- then trust suite numbers. Spend further labels on 'contested' cases.
 module Crucible.Eval.Calibrate
   ( CalibrationReport (..)
+  , calibrateWith
   , calibrate
   , renderCalibration
   ) where
@@ -23,7 +24,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
 
-import Crucible.Eval.Judge (VoteOutcome (..), vote)
+import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), VoteOutcome (..), balanceBy, defaultJudgeOpts, vote)
 import Crucible.LLM (LLM)
 
 -- | Judge-vs-human metrics over a labelled set. Judge-error cases are
@@ -35,8 +36,59 @@ data CalibrationReport = CalibrationReport
   , failRecall    :: Double  -- ^ of human-fails, fraction the judge caught (1 if no human-fails)
   , contested     :: [Text]  -- ^ case names where the vote split (label these next)
   , judgeErrors   :: [Text]  -- ^ case names where the judge errored out
+  , exampleCount  :: Int     -- ^ number of examples fed to the judge
+  , measured      :: Int     -- ^ number of holdout cases metrics are computed over
   }
   deriving (Eq, Show)
+
+-- | Pure metric computation from outcomes + report shape fields.
+reportFrom :: [(Text, Bool, VoteOutcome)] -> Int -> Int -> CalibrationReport
+reportFrom outcomes exampleCount_ measured_ =
+  CalibrationReport po kap fPrec fRec cont errs exampleCount_ measured_
+  where
+    errs   = [nm | (nm, _, AllErrored _) <- outcomes]
+    judged = [(nm, h, p, y, f) | (nm, h, Decided p _ _ y f) <- outcomes]
+    total  = length judged
+    agree  = length [() | (_, h, p, _, _) <- judged, h == p]
+    jYes   = length [() | (_, _, True,  _, _) <- judged]
+    jNo    = total - jYes
+    hYes   = length [() | (_, True,  _, _, _) <- judged]
+    hNo    = total - hYes
+    po     = ratio agree total 0
+    pe     = if total == 0 then 1
+             else fromIntegral (jYes * hYes + jNo * hNo) / fromIntegral (total * total)
+    kap    = if pe >= 1 then 0 else (po - pe) / (1 - pe)
+    jFails = [(h') | (_, h', False, _, _) <- judged]
+    fPrec  = ratio (length (filter not jFails)) (length jFails) 1
+    hFails = [(p') | (_, False, p', _, _) <- judged]
+    fRec   = ratio (length (filter not hFails)) (length hFails) 1
+    cont   = [nm | (nm, _, _, y, f) <- judged, y > 0, f > 0]
+    ratio :: Int -> Int -> Double -> Double
+    ratio _ 0 dflt = dflt
+    ratio num den _ = fromIntegral num / fromIntegral den
+
+-- | 'calibrate' with few-shot examples and a structural holdout: a
+-- verdict-balanced subset of the labelled cases (chosen by seed) is fed to
+-- the judge as examples, and every metric is computed only on the
+-- remaining holdout cases, so agreement is never measured on examples the
+-- judge saw. nExamples is clamped so at least one measurement case
+-- remains. Candidate examples carry no critique (the labelled triple has
+-- no critique field). Examples cost prompt tokens, not extra judge calls.
+calibrateWith :: (LLM :> es)
+              => Int -> Int -> Int
+              -> (a -> Text) -> Text
+              -> [(Text, a, Bool)]
+              -> Eff es CalibrationReport
+calibrateWith seed nExamples n render rubric labelled = do
+  let n' = max 0 (min nExamples (length labelled - 1))
+      indexed = zip [0 :: Int ..] labelled
+      chosen = balanceBy (\(_, (_, _, h)) -> h) seed n' indexed
+      chosenIdx = [i | (i, _) <- chosen]
+      exs = [JudgeExample (render a) h Nothing | (_, (_, a, h)) <- chosen]
+      holdout = [t | (i, t) <- indexed, i `notElem` chosenIdx]
+      opts = JudgeOpts { votes = n, examples = exs }
+  outcomes <- mapM (\(nm, a, h) -> (nm, h,) <$> vote False opts rubric (render a)) holdout
+  pure (reportFrom outcomes (length exs) (length holdout))
 
 -- | Run the judge (full n-sample voting, no early stop, so margins are
 -- comparable) over hand-labelled outputs.
@@ -44,30 +96,7 @@ calibrate :: (LLM :> es)
           => Int -> (a -> Text) -> Text
           -> [(Text, a, Bool)]
           -> Eff es CalibrationReport
-calibrate n render rubric labelled = do
-  outcomes <- mapM (\(nm, a, h) -> (nm, h,) <$> vote False n rubric (render a)) labelled
-  let errs   = [nm | (nm, _, AllErrored _) <- outcomes]
-      judged = [(nm, h, p, y, f) | (nm, h, Decided p _ _ y f) <- outcomes]
-      total  = length judged
-      agree  = length [() | (_, h, p, _, _) <- judged, h == p]
-      jYes   = length [() | (_, _, True,  _, _) <- judged]
-      jNo    = total - jYes
-      hYes   = length [() | (_, True,  _, _, _) <- judged]
-      hNo    = total - hYes
-      po     = ratio agree total 0
-      pe     = if total == 0 then 1
-               else fromIntegral (jYes * hYes + jNo * hNo) / fromIntegral (total * total)
-      kap    = if pe >= 1 then 0 else (po - pe) / (1 - pe)
-      jFails = [(h') | (_, h', False, _, _) <- judged]
-      fPrec  = ratio (length (filter not jFails)) (length jFails) 1
-      hFails = [(p') | (_, False, p', _, _) <- judged]
-      fRec   = ratio (length (filter not hFails)) (length hFails) 1
-      cont   = [nm | (nm, _, _, y, f) <- judged, y > 0, f > 0]
-  pure (CalibrationReport po kap fPrec fRec cont errs)
-  where
-    ratio :: Int -> Int -> Double -> Double
-    ratio _ 0 dflt = dflt
-    ratio num den _ = fromIntegral num / fromIntegral den
+calibrate = calibrateWith 0 0
 
 -- | A short human-readable rendering of a calibration report.
 renderCalibration :: CalibrationReport -> Text
@@ -79,4 +108,8 @@ renderCalibration r = T.intercalate "\n" $
   ]
   ++ [ "contested (label these next): " <> T.intercalate ", " r.contested | not (null r.contested) ]
   ++ [ "judge errors: " <> T.intercalate ", " r.judgeErrors | not (null r.judgeErrors) ]
-  where tshow = T.pack . show
+  ++ [ "examples fed: " <> tshowI r.exampleCount <> "  measured on: " <> tshowI r.measured
+     | r.exampleCount > 0 ]
+  where
+    tshow  = T.pack . show
+    tshowI = T.pack . show @Int

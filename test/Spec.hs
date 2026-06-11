@@ -1048,7 +1048,7 @@ main = runChecks
           , T.isInfixOf "[judge error]" r ))
   -- eval rubric upgrades: calibration
   , check "calibrate: agreement/kappa/fail metrics on scripted verdicts"
-      (CalibrationReport 0.75 0.5 1.0 0.5 [] [])
+      (CalibrationReport 0.75 0.5 1.0 0.5 [] [] 0 4)
       (runPureEff (runLLMScripted
          [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}"
          , "{\"why\":\"\",\"pass\":false}", "{\"why\":\"\",\"pass\":true}" ]
@@ -1056,7 +1056,7 @@ main = runChecks
             [ ("c1", "o" :: Text, True), ("c2", "o", True)
             , ("c3", "o", False), ("c4", "o", False) ])))
   , check "calibrate: degenerate denominators are defined"
-      (CalibrationReport 1.0 0 1.0 1.0 [] [])
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 0 2)
       (runPureEff (runLLMScripted
          [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}" ]
          (calibrate 1 id "r" [("c1", "o" :: Text, True), ("c2", "o", True)])))

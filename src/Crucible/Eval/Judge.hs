@@ -14,14 +14,23 @@ module Crucible.Eval.Judge
   ( Verdict (..)
   , verdictCodec
   , JudgeError (..)
+  , JudgeExample (..)
+  , JudgeOpts (..)
+  , defaultJudgeOpts
+  , balanceExamples
+  , balanceBy
+  , judgePrompt
   , judgeOnce
   , VoteOutcome (..)
   , vote
   ) where
 
 import Control.Applicative ((<|>))
+import Data.Bits (shiftL, shiftR, xor)
+import Data.List (partition, sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Effectful
 import NeatInterpolation (text)
 
@@ -42,6 +51,80 @@ verdictCodec = object (Verdict <$> field "why"  (.why)  str
 -- | The judge's own reply failed to parse, even after one repair attempt.
 newtype JudgeError = JudgeError Text deriving (Eq, Show)
 
+-- | A labelled output shown to the judge as a worked example for the
+-- rubric under test. Verdicts always render; the critique renders only
+-- when present.
+data JudgeExample = JudgeExample
+  { rendered :: Text
+  , pass     :: Bool
+  , why      :: Maybe Text
+  }
+  deriving (Eq, Show)
+
+-- | Knobs for a judged evaluation. Future judge options (abstain policy,
+-- panels) extend this record rather than adding function variants.
+data JudgeOpts = JudgeOpts
+  { votes    :: Int             -- ^ samples per judgement (odd; 1 = single call)
+  , examples :: [JudgeExample]  -- ^ few-shot examples for Rubric judging
+  }
+  deriving (Eq, Show)
+
+defaultJudgeOpts :: JudgeOpts
+defaultJudgeOpts = JudgeOpts { votes = 1, examples = [] }
+
+-- | Deterministic seeded shuffle (xorshift keys; no extra dependencies).
+shuffleSeeded :: Int -> [a] -> [a]
+shuffleSeeded seed xs = map snd (sortOn fst (zip keys xs))
+  where
+    keys = take (length xs) (drop 1 (iterate step (step (seed * 2654435761 + 1))))
+    step x = let a = x `xor` (x `shiftL` 13)
+                 b = a `xor` (a `shiftR` 7)
+             in b `xor` (b `shiftL` 17)
+
+-- | Pick n items, roughly balanced between the two classes of the
+-- predicate, deterministically for a given seed: shuffle each class, then
+-- alternate picks (predicate-true first); when one class runs out, fill
+-- from the other. n over supply returns everything (balanced-first order);
+-- n <= 0 returns [].
+balanceBy :: (x -> Bool) -> Int -> Int -> [x] -> [x]
+balanceBy p seed n xs = take (max 0 n) (interleave yes' no')
+  where
+    (yes, no) = partition p xs
+    yes' = shuffleSeeded seed yes
+    no'  = shuffleSeeded (seed + 1) no
+    interleave (a : as) (b : bs) = a : b : interleave as bs
+    interleave as []             = as
+    interleave [] bs             = bs
+
+-- | 'balanceBy' on the example's verdict: roughly equal pass and fail
+-- examples, so the judge cannot infer a base-rate prior.
+balanceExamples :: Int -> Int -> [JudgeExample] -> [JudgeExample]
+balanceExamples = balanceBy (.pass)
+
+-- | The judge's messages, pure and testable (mirrors 'Crucible.Skill.prompt').
+-- With no examples the user message is byte-identical to the plain
+-- two-line form. Assembled by concatenation: conditional blocks do not
+-- belong in quasiquotes.
+judgePrompt :: [JudgeExample] -> Text -> Text -> [Message]
+judgePrompt exs rubric graded =
+  [ judgeSystem
+  , Message User $ T.concat $
+      ["Rubric: " <> rubric <> "\n"]
+        ++ exampleBlock
+        ++ ["Output to grade: " <> graded]
+  ]
+  where
+    exampleBlock
+      | null exs = []
+      | otherwise =
+          "\nExamples of past verdicts for this rubric:\n\n"
+            : map one exs
+    one e =
+      "Example output:\n" <> e.rendered
+        <> "\nVerdict: " <> (if e.pass then "pass" else "fail")
+        <> maybe "" ("\nWhy: " <>) e.why
+        <> "\n\n"
+
 -- | The hardened grader system message, shared by every judge call.
 judgeSystem :: Message
 judgeSystem = Message System [text|
@@ -55,13 +138,9 @@ judgeSystem = Message System [text|
 -- | One judge call with validate-and-repair: on a verdict decode failure,
 -- re-prompt once with the raw reply and the parse error (the same idiom as
 -- 'Crucible.Skill.call'), then give up with 'JudgeError'.
-judgeOnce :: (LLM :> es) => Text -> Text -> Eff es (Either JudgeError Verdict)
-judgeOnce rubric graded = do
-  let msgs =
-        [ judgeSystem
-        , Message User [text|Rubric: ${rubric}
-Output to grade: ${graded}|]
-        ]
+judgeOnce :: (LLM :> es) => [JudgeExample] -> Text -> Text -> Eff es (Either JudgeError Verdict)
+judgeOnce exs rubric graded = do
+  let msgs = judgePrompt exs rubric graded
   raw <- complete msgs
   case decodeLLM verdictCodec raw of
     Right v -> pure (Right v)
@@ -94,10 +173,10 @@ data VoteOutcome
 -- errors) resolves to fail. The rationale kept is the first vote on the
 -- winning side; the first losing-side rationale is kept as 'dissent'.
 -- Callers should use odd n; n <= 1 is a single sample.
-vote :: (LLM :> es) => Bool -> Int -> Text -> Text -> Eff es VoteOutcome
-vote earlyStop n rubric graded = go n' (0, 0) (Nothing, Nothing) ""
+vote :: (LLM :> es) => Bool -> JudgeOpts -> Text -> Text -> Eff es VoteOutcome
+vote earlyStop opts rubric graded = go n' (0, 0) (Nothing, Nothing) ""
   where
-    n'   = max 1 n
+    n'   = max 1 opts.votes
     need = n' `div` 2 + 1
 
     decideYes (firstYes, firstNo) y f = Decided True  (fromMaybe "" firstYes) firstNo  y f
@@ -112,7 +191,7 @@ vote earlyStop n rubric graded = go n' (0, 0) (Nothing, Nothing) ""
       | earlyStop && y >= need = pure (decideYes firsts y f)
       | earlyStop && f >= need = pure (decideNo firsts y f)
       | otherwise = do
-          r <- judgeOnce rubric graded
+          r <- judgeOnce opts.examples rubric graded
           case r of
             Left (JudgeError m) -> go (k - 1) tally firsts m
             Right v

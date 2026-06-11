@@ -34,7 +34,7 @@ import NeatInterpolation (text)
 
 import Crucible.Codec (JSONCodec, list', schemaText, str)
 import Crucible.Decode (DecodeError (..), decodeLLM)
-import Crucible.Eval.Judge (VoteOutcome (..), vote)
+import Crucible.Eval.Judge (JudgeOpts (..), VoteOutcome (..), defaultJudgeOpts, vote)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
 
 -- | The outcome of a grounding check, before Score conversion (which lives
@@ -71,7 +71,7 @@ groundingOutcome n evidence rendered = do
               (map line rs))
   where
     verify claim = do
-      out <- vote True n "the claim is supported by the evidence" [text|
+      out <- vote True defaultJudgeOpts { votes = n } "the claim is supported by the evidence" [text|
         Evidence:
         ${evidence}
 
