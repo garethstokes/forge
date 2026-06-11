@@ -21,6 +21,7 @@ import qualified Data.Text as T
 import GHC.Generics
 import Autodocodec
   ( JSONCodec, ObjectCodec, HasCodec (codec), requiredFieldWith'
+  , optionalFieldOrNullWith'
   , textCodec, scientificCodec, bimapCodec, dimapCodec, lmapCodec )
 import qualified Autodocodec as AC
 
@@ -64,6 +65,14 @@ instance (Selector s, HasCodec t) => GProd (M1 S s (K1 r t)) where
   gprod =
     dimapCodec (M1 . K1) (\(M1 (K1 v)) -> v)
       (requiredFieldWith' (selNameT @s) codec)
+
+-- A 'Maybe' field is optional on the wire: dropped from the schema's
+-- @required@ list, omitted when 'Nothing', and tolerant of both an absent
+-- key and an explicit @null@ on decode.
+instance {-# OVERLAPPING #-} (Selector s, HasCodec t) => GProd (M1 S s (K1 r (Maybe t))) where
+  gprod =
+    dimapCodec (M1 . K1) (\(M1 (K1 v)) -> v)
+      (optionalFieldOrNullWith' (selNameT @s) codec)
 
 class GSum (f :: * -> *) where
   gsDecode :: Text -> Maybe (f x)

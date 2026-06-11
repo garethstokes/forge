@@ -75,6 +75,11 @@ data Station = Station { name :: Text, latest :: Forecast, conditions :: Sky }
   deriving (Eq, Show, Generic)
 instance HasCodec Station where codec = genericCodec
 
+-- crucible-1im: a record with an optional field, for required-list assertions
+data OptRec = OptRec { reqF :: Text, optF :: Maybe Int }
+  deriving (Eq, Show, Generic)
+instance HasCodec OptRec where codec = genericCodec
+
 stationVal :: Station
 stationVal = Station "Eagle Farm" (Forecast "Brisbane" 26.0 False) Cloudy
 
@@ -305,6 +310,18 @@ main = runChecks
   , check "derived Sky schema is string (enum)"
       (Just (String "string"))
       (schemaType (schemaValue (codec :: JSONCodec Sky)))
+  -- crucible-1im: Maybe fields drop out of the schema's required list
+  , check "generic schema: Maybe field dropped from required"
+      (Just ["reqF"])
+      (AT.parseMaybe (A.withObject "" (\o -> o A..: "required"))
+         (schemaValue (codec :: JSONCodec OptRec)) :: Maybe [Text])
+  , check "generic codec: present and absent optional field decode"
+      (Right (OptRec "x" Nothing), Right (OptRec "x" (Just 3)))
+      ( ( decodeVia (codec :: JSONCodec OptRec) (object ["reqF" .= String "x"])
+        , decodeVia (codec :: JSONCodec OptRec) (object ["reqF" .= String "x", "optF" .= Number 3]) ) )
+  , check "generic codec: explicit null decodes as Nothing"
+      (Right (OptRec "x" Nothing))
+      (decodeVia (codec :: JSONCodec OptRec) (object ["reqF" .= String "x", "optF" .= Null]))
   -- Nested derived Station round-trips
   , check "nested Station schema is object"
       (Just (String "object"))
