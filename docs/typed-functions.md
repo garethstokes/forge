@@ -120,6 +120,117 @@ summarise = skill "summarise" str str
     ${doc}|])
 ```
 
+## Composing prompts
+
+Instructions are `i -> Text` values: plain Haskell functions. That means every
+function composition and abstraction technique in the language applies directly.
+
+### Shared fragments
+
+A house style, legal preamble, or domain context is just a `Text` value spliced
+into an instruction with `${...}`:
+
+```haskell
+houseStyle :: Text
+houseStyle = [text|
+  Be terse. Do not use markdown. Never apologise.|]
+
+classify :: Skill Text Polarity
+classify = skill "classify" str polarityCodec $ \review ->
+  [text|
+    ${houseStyle}
+
+    Classify the sentiment of this product review: ${review}|]
+```
+
+Any instruction that needs that fragment imports and splices it. The compiled
+prompt is a plain `Text` value with no special runtime.
+
+### Instruction transformers
+
+A transformer is an `(i -> Text) -> (i -> Text)` wrapper, composed with `.`
+like any other function:
+
+```haskell
+withAudience :: Text -> (i -> Text) -> (i -> Text)
+withAudience aud instr = \i ->
+  let body = instr i
+  in [text|
+    ${body}
+
+    Write for this audience: ${aud}|]
+```
+
+Apply with function composition:
+
+```haskell
+classify :: Skill Text Polarity
+classify = skill "classify" str polarityCodec
+  (withAudience "a non-technical product manager" $ \review ->
+    [text|Classify the sentiment of: ${review}|])
+```
+
+Append constraints (audience, length, format) after the main instruction. Constraints
+near the end of a prompt are followed more reliably than those buried in a preamble.
+
+### Skill chaining
+
+`call` returns an `Eff es (Either DecodeError o)`, so skills compose monadically.
+The only wrinkle is threading the `Either`:
+
+```haskell
+extractThenSummarise :: Text -> Eff es (Either DecodeError Text)
+extractThenSummarise doc =
+  call extract doc >>= either (pure . Left) (call summarise)
+```
+
+Each skill in the chain is independently retried, typed, and schema-validated.
+The intermediate type is a proper Haskell value so you can inspect, log, or
+branch on it between steps.
+
+### Few-shot examples
+
+`withExamples :: [(i, o)] -> Skill i o -> Skill i o` attaches pairs that are
+rendered as real User/Assistant exchanges before the live turn. The Assistant
+turn is the output codec-encoded reply, so examples demonstrate the exact reply
+contract and cannot drift from the schema.
+
+```haskell
+classify :: Skill Text Polarity
+classify = withExamples
+  [ ("The packaging was damaged but the product works.", Neutral)
+  , ("Absolutely love it, will buy again.", Positive)
+  ]
+  (skill "classify-polarity" str polarityCodec
+    (\s -> [text|Classify the sentiment of: ${s}|]))
+```
+
+When you already have `Exactly` test cases, `examplesFromTests :: Int -> Skill i o -> Skill i o`
+moves the first `n` of them into examples (appending, preserving order), removing
+them from the test list at the same time. Moving rather than copying matters: a
+case that appears in the prompt would score meaninglessly in `testSkill`, because
+the model has seen the answer. By removing what it moves, `examplesFromTests`
+keeps `testSkill` scores meaningful with no special handling.
+
+```haskell
+classify :: Skill Text Polarity
+classify = examplesFromTests 2
+  (withTests
+    [ Case "I love it"       "clear positive" (Exactly Positive)
+    , Case "Arrived broken." "clear negative" (Exactly Negative)
+    , Case "It is fine."     "neutral wording" (Rubric "must not overclaim sentiment")
+    ]
+    (skill "classify-polarity" str polarityCodec
+      (\s -> [text|Classify the sentiment of: ${s}|])))
+```
+
+Here the first two `Exactly` cases become examples; the `Rubric` case stays in
+the test list because `examplesFromTests` skips non-`Exactly` cases.
+
+Three to five examples capture most of the benefit for classification and
+extraction tasks. The instruction text repeats once per pair, so each example
+adds prompt tokens proportional to instruction length.
+
 ## Schema injection
 
 `schemaText :: JSONCodec a -> Text` renders a codec's JSON Schema as compact JSON
