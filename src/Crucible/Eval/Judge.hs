@@ -17,6 +17,7 @@ module Crucible.Eval.Judge
   , JudgeExample (..)
   , JudgeOpts (..)
   , defaultJudgeOpts
+  , xorshiftInts
   , balanceExamples
   , balanceBy
   , judgePrompt
@@ -72,14 +73,18 @@ data JudgeOpts = JudgeOpts
 defaultJudgeOpts :: JudgeOpts
 defaultJudgeOpts = JudgeOpts { votes = 1, examples = [] }
 
--- | Deterministic seeded shuffle (xorshift keys; no extra dependencies).
-shuffleSeeded :: Int -> [a] -> [a]
-shuffleSeeded seed xs = map snd (sortOn fst (zip keys xs))
+-- | An infinite deterministic Int stream from the xorshift step. Exported
+-- for the calibration bootstrap and for tests; not cryptographic.
+xorshiftInts :: Int -> [Int]
+xorshiftInts seed = drop 1 (iterate step (step (seed * 2654435761 + 1)))
   where
-    keys = take (length xs) (drop 1 (iterate step (step (seed * 2654435761 + 1))))
     step x = let a = x `xor` (x `shiftL` 13)
                  b = a `xor` (a `shiftR` 7)
              in b `xor` (b `shiftL` 17)
+
+-- | Deterministic seeded shuffle (xorshift keys; no extra dependencies).
+shuffleSeeded :: Int -> [a] -> [a]
+shuffleSeeded seed xs = map snd (sortOn fst (zip (take (length xs) (xorshiftInts seed)) xs))
 
 -- | Pick n items, roughly balanced between the two classes of the
 -- predicate, deterministically for a given seed: shuffle each class, then

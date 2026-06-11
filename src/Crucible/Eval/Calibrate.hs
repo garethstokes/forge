@@ -15,16 +15,18 @@
 -- then trust suite numbers. Spend further labels on 'contested' cases.
 module Crucible.Eval.Calibrate
   ( CalibrationReport (..)
+  , bootstrapKappa
   , calibrateWith
   , calibrate
   , renderCalibration
   ) where
 
+import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
 
-import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), VoteOutcome (..), balanceBy, defaultJudgeOpts, vote)
+import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), VoteOutcome (..), balanceBy, defaultJudgeOpts, vote, xorshiftInts)
 import Crucible.LLM (LLM)
 
 -- | Judge-vs-human metrics over a labelled set. Judge-error cases are
@@ -38,26 +40,61 @@ data CalibrationReport = CalibrationReport
   , judgeErrors   :: [Text]  -- ^ case names where the judge errored out
   , exampleCount  :: Int     -- ^ number of examples fed to the judge
   , measured      :: Int     -- ^ number of holdout cases metrics are computed over
+  , kappaCI       :: (Double, Double)  -- ^ 95% bootstrap interval for kappa
   }
   deriving (Eq, Show)
 
+-- | Resamples used for the kappa confidence interval.
+bootstrapResamples :: Int
+bootstrapResamples = 1000
+
+-- | Cohen's kappa over (human, judge) verdict pairs, with the degenerate
+-- rules shared by the headline metric: empty input and expected agreement
+-- of 1 both yield 0.
+kappaOf :: [(Bool, Bool)] -> Double
+kappaOf [] = 0
+kappaOf ps =
+  let total = length ps
+      agree = length [() | (h, j) <- ps, h == j]
+      hYes  = length [() | (True, _) <- ps]
+      jYes  = length [() | (_, True) <- ps]
+      hNo   = total - hYes
+      jNo   = total - jYes
+      po    = fromIntegral agree / fromIntegral total
+      pe    = fromIntegral (jYes * hYes + jNo * hNo)
+                / fromIntegral (total * total)
+  in if pe >= 1 then 0 else (po - pe) / (1 - pe)
+
+-- | 95% bootstrap confidence interval for kappa: resample the pairs with
+-- replacement to the original size, recompute kappa per resample, sort,
+-- and take the 2.5th and 97.5th percentile elements. Deterministic for a
+-- given seed. Zero or one pair collapses to the point estimate.
+bootstrapKappa :: Int -> Int -> [(Bool, Bool)] -> (Double, Double)
+bootstrapKappa seed resamples pairs
+  | length pairs <= 1 || resamples <= 0 = (k0, k0)
+  | otherwise =
+      let n     = length pairs
+          idxs  = map (\x -> abs x `mod` n) (xorshiftInts seed)
+          group r = [pairs !! i | i <- take n (drop (r * n) idxs)]
+          ks    = sort [kappaOf (group r) | r <- [0 .. resamples - 1]]
+          loIdx = (resamples * 25) `div` 1000
+          hiIdx = max loIdx ((resamples * 975) `div` 1000 - 1)
+      in (ks !! loIdx, ks !! hiIdx)
+  where k0 = kappaOf pairs
+
 -- | Pure metric computation from outcomes + report shape fields.
-reportFrom :: [(Text, Bool, VoteOutcome)] -> Int -> Int -> CalibrationReport
-reportFrom outcomes exampleCount_ measured_ =
-  CalibrationReport po kap fPrec fRec cont errs exampleCount_ measured_
+reportFrom :: Int -> [(Text, Bool, VoteOutcome)] -> Int -> Int -> CalibrationReport
+reportFrom seed outcomes exampleCount_ measured_ =
+  CalibrationReport po kap fPrec fRec cont errs exampleCount_ measured_ ci
   where
     errs   = [nm | (nm, _, AllErrored _) <- outcomes]
     judged = [(nm, h, p, y, f) | (nm, h, Decided p _ _ y f) <- outcomes]
+    pairs  = [(h, p) | (_, h, p, _, _) <- judged]
     total  = length judged
     agree  = length [() | (_, h, p, _, _) <- judged, h == p]
-    jYes   = length [() | (_, _, True,  _, _) <- judged]
-    jNo    = total - jYes
-    hYes   = length [() | (_, True,  _, _, _) <- judged]
-    hNo    = total - hYes
     po     = ratio agree total 0
-    pe     = if total == 0 then 1
-             else fromIntegral (jYes * hYes + jNo * hNo) / fromIntegral (total * total)
-    kap    = if pe >= 1 then 0 else (po - pe) / (1 - pe)
+    kap    = kappaOf pairs
+    ci     = bootstrapKappa seed bootstrapResamples pairs
     jFails = [(h') | (_, h', False, _, _) <- judged]
     fPrec  = ratio (length (filter not jFails)) (length jFails) 1
     hFails = [(p') | (_, False, p', _, _) <- judged]
@@ -88,7 +125,7 @@ calibrateWith seed nExamples n render rubric labelled = do
       holdout = [t | (i, t) <- indexed, i `notElem` chosenIdx]
       opts = JudgeOpts { votes = n, examples = exs }
   outcomes <- mapM (\(nm, a, h) -> (nm, h,) <$> vote False opts rubric (render a)) holdout
-  pure (reportFrom outcomes (length exs) (length holdout))
+  pure (reportFrom seed outcomes (length exs) (length holdout))
 
 -- | Run the judge (full n-sample voting, no early stop, so margins are
 -- comparable) over hand-labelled outputs.
@@ -103,6 +140,7 @@ renderCalibration :: CalibrationReport -> Text
 renderCalibration r = T.intercalate "\n" $
   [ "agreement:      " <> tshow r.agreement
   , "kappa:          " <> tshow r.kappa
+      <> "  [95% CI " <> tshow lo <> ", " <> tshow hi <> "]"
   , "fail precision: " <> tshow r.failPrecision
   , "fail recall:    " <> tshow r.failRecall
   ]
@@ -111,5 +149,6 @@ renderCalibration r = T.intercalate "\n" $
   ++ [ "examples fed: " <> tshowI r.exampleCount <> "  measured on: " <> tshowI r.measured
      | r.exampleCount > 0 ]
   where
+    (lo, hi) = r.kappaCI
     tshow  = T.pack . show
     tshowI = T.pack . show @Int

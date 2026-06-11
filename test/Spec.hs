@@ -1048,15 +1048,19 @@ main = runChecks
           , T.isInfixOf "[judge error]" r ))
   -- eval rubric upgrades: calibration
   , check "calibrate: agreement/kappa/fail metrics on scripted verdicts"
-      (CalibrationReport 0.75 0.5 1.0 0.5 [] [] 0 4)
-      (runPureEff (runLLMScripted
-         [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}"
-         , "{\"why\":\"\",\"pass\":false}", "{\"why\":\"\",\"pass\":true}" ]
-         (calibrate 1 id "r"
-            [ ("c1", "o" :: Text, True), ("c2", "o", True)
-            , ("c3", "o", False), ("c4", "o", False) ])))
+      (0.75, 0.5, 1.0, 0.5, [], [], 0, 4, True)
+      (let r = runPureEff (runLLMScripted
+                 [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}"
+                 , "{\"why\":\"\",\"pass\":false}", "{\"why\":\"\",\"pass\":true}" ]
+                 (calibrate 1 id "r"
+                    [ ("c1", "o" :: Text, True), ("c2", "o", True)
+                    , ("c3", "o", False), ("c4", "o", False) ]))
+           (lo, hi) = r.kappaCI
+       in ( r.agreement, r.kappa, r.failPrecision, r.failRecall
+          , r.contested, r.judgeErrors, r.exampleCount, r.measured
+          , lo <= r.kappa && r.kappa <= hi ))
   , check "calibrate: degenerate denominators are defined"
-      (CalibrationReport 1.0 0 1.0 1.0 [] [] 0 2)
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 0 2 (0, 0))
       (runPureEff (runLLMScripted
          [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}" ]
          (calibrate 1 id "r" [("c1", "o" :: Text, True), ("c2", "o", True)])))
@@ -1116,7 +1120,7 @@ main = runChecks
             [ Case ("x" :: Text) "rub" (Rubric "r")
             , Case "y" "chk" (Checklist [criterion "c"]) ]))).passRate)
   , check "calibrateWith: examples held out of measurement"
-      (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2, "leftover")
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2 (0, 0), "leftover")
       (runPureEff (runLLMScripted
         [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}", "leftover" ]
         (do r <- calibrateWith 42 2 1 id "rubric"
@@ -1132,8 +1136,8 @@ main = runChecks
        in (r.exampleCount, r.measured))
   , check "renderCalibration: examples line only when used"
       (True, False)
-      (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2
-           withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4
+      (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2 (0, 0)
+           withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0)
        in ( T.isInfixOf "examples fed: 2" (renderCalibration withEx)
           , T.isInfixOf "examples fed" (renderCalibration withoutEx)))
   -- crucible-mo3: derived claim grounding
