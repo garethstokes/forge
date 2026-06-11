@@ -167,6 +167,13 @@ addition once Checklist exists.
    protocols that can't re-inject use independent one-shot judges plus a
    mechanical vote. To be documented in the evals manual.
 2. Label judgeN's rationale as "majority-side rationale" in renderReport?
+   **Decision (2026-06-11): yes.** renderReport shows the vote tally
+   (`pass 2/3`, same line of code as the §5 uncertainty flag), labels the
+   rationale "majority-side rationale (1 of 2)", and keeps dissenting
+   rationales in verbose output — dissent is the most useful artifact on
+   contested cases. n=1 rationales keep their causal framing (CoT-first
+   verdict is conditioned on them); only aggregated rationales get the
+   sample label.
 3. Grounding criteria as a standard rubric ingredient now, SFS-style derived
    checklist as a roadmap item?
 4. Any planned Likert-style "rate the reasoning" human labels to kill?
