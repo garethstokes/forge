@@ -207,39 +207,76 @@ flushSave a = do
           setBaseline a
 
 -- | Emit a DELETE for the record, applying onDelete cascades first, and drop it
--- from the identity map. Cascades run in two passes: all 'Restrict' checks first
--- (aborting the whole delete if any child exists, so nothing is partially
--- mutated), then the mutating policies ('Cascade' DELETE / 'SetNull' UPDATE).
+-- from the identity map. Cascades run in two passes over the WHOLE rule tree:
+-- all reachable 'Restrict' checks first (aborting the delete if any child
+-- exists anywhere in the tree, so nothing is partially mutated), then the
+-- mutating policies, deepest-first ('Cascade' DELETE / 'SetNull' UPDATE).
 flushDelete :: forall a. Entity a => a -> Db ()
 flushDelete a = do
   let tm     = tableMeta @a
       parent = pkParam a
       rules  = cascadeRules @a
+      path   = [tmTable tm]
   -- 1. all Restrict checks first (abort the whole delete if any child exists)
-  mapM_ (restrictCheck parent) [r | r <- rules, crPolicy r == Restrict]
-  -- 2. then the mutating policies
-  mapM_ (applyMutating parent) [r | r <- rules, crPolicy r /= Restrict]
-  -- 3. delete the parent (unchanged from SP1)
+  restrictPass parent path Nothing rules
+  -- 2. then the mutating policies, deepest-first
+  mutatePass parent path Nothing rules
+  -- 3. delete the parent
   _ <- execDb (renderDelete tm (cmName (pkColumn tm))) [parent]
   Db $ do
     sess <- ask
     liftIO $ modifyIORef' (sessIdentity sess) (Map.delete (identityKey a))
 
--- | A 'Restrict' rule: fail the delete if the child table still has rows
--- referencing the parent.
-restrictCheck :: SqlParam -> CascadeRule -> Db ()
-restrictCheck parent (CascadeRule childT fk _ _ _) = do
-  rows <- execDb ("SELECT 1 FROM " <> childT <> " WHERE " <> fk <> " = $1 LIMIT 1") [parent]
-  unless (null rows) $
-    liftIO (throwIO (DbException (OtherError ("onDelete Restrict: " <> show childT <> " still has children"))))
+-- | The walk's scope: Nothing at the root (the rule's FK matches the deleted
+-- PK, @$1@, directly); deeper, the enclosing rule's (table, pk, condition) —
+-- the child FK must be IN the enclosing rule's selected rows.
+type Enclosing = Maybe (ByteString, ByteString, ByteString)
 
--- | Apply a mutating cascade policy ('Cascade' DELETEs children, 'SetNull' NULLs
--- their FK). 'Restrict' is a no-op here (handled by 'restrictCheck').
-applyMutating :: SqlParam -> CascadeRule -> Db ()
-applyMutating parent (CascadeRule childT fk policy _ _) = case policy of
-  Cascade  -> void $ execDb ("DELETE FROM " <> childT <> " WHERE " <> fk <> " = $1") [parent]
-  SetNull  -> void $ execDb ("UPDATE " <> childT <> " SET " <> fk <> " = NULL WHERE " <> fk <> " = $1") [parent]
-  Restrict -> pure ()  -- handled in restrictCheck
+-- | The WHERE condition selecting a rule's in-scope child rows.
+ruleCond :: CascadeRule -> Enclosing -> ByteString
+ruleCond r Nothing = crFkColumn r <> " = $1"
+ruleCond r (Just (pTable, pPk, pCond)) =
+  crFkColumn r <> " IN (SELECT " <> pPk <> " FROM " <> pTable <> " WHERE " <> pCond <> ")"
+
+-- | Descend into a Cascade rule's children unless its table is already on the
+-- path (cycle guard: one level per declared self/mutual edge).
+descend :: SqlParam -> [ByteString] -> Enclosing -> CascadeRule
+        -> (SqlParam -> [ByteString] -> Enclosing -> [CascadeRule] -> Db ()) -> Db ()
+descend parent path enclosing r walk =
+  unless (crChildTable r `elem` path) $
+    walk parent (crChildTable r : path)
+         (Just (crChildTable r, crChildPk r, ruleCond r enclosing))
+         (crChildRules r)
+
+-- | Pass 1: every 'Restrict' rule reachable through 'Cascade' edges, checked
+-- before anything mutates. A hit aborts the whole delete.
+restrictPass :: SqlParam -> [ByteString] -> Enclosing -> [CascadeRule] -> Db ()
+restrictPass parent path enclosing = mapM_ check
+  where
+    check r = case crPolicy r of
+      Restrict -> do
+        rows <- execDb ("SELECT 1 FROM " <> crChildTable r <> " WHERE "
+                          <> ruleCond r enclosing <> " LIMIT 1") [parent]
+        unless (null rows) $
+          liftIO (throwIO (DbException (OtherError
+            ("onDelete Restrict: " <> show (crChildTable r) <> " still has children"))))
+      Cascade  -> descend parent path enclosing r restrictPass
+      SetNull  -> pure ()
+
+-- | Pass 2: mutations, deepest-first. 'Cascade' recurses into the child's own
+-- rules before deleting the child rows; 'SetNull' applies at its depth and
+-- does not descend (those rows survive).
+mutatePass :: SqlParam -> [ByteString] -> Enclosing -> [CascadeRule] -> Db ()
+mutatePass parent path enclosing = mapM_ apply
+  where
+    apply r = case crPolicy r of
+      Restrict -> pure ()  -- handled in restrictPass
+      SetNull  -> void $ execDb ("UPDATE " <> crChildTable r <> " SET " <> crFkColumn r
+                                   <> " = NULL WHERE " <> ruleCond r enclosing) [parent]
+      Cascade  -> do
+        descend parent path enclosing r mutatePass
+        void $ execDb ("DELETE FROM " <> crChildTable r <> " WHERE "
+                         <> ruleCond r enclosing) [parent]
 
 -- | Set GUC variables for the enclosing transaction (LOCAL-scoped via set_config,
 -- so they auto-clear at COMMIT/ROLLBACK and never leak to the next pool checkout).
