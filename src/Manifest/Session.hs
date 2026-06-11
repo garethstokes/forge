@@ -228,7 +228,7 @@ flushDelete a = do
 -- | A 'Restrict' rule: fail the delete if the child table still has rows
 -- referencing the parent.
 restrictCheck :: SqlParam -> CascadeRule -> Db ()
-restrictCheck parent (CascadeRule childT fk _) = do
+restrictCheck parent (CascadeRule childT fk _ _ _) = do
   rows <- execDb ("SELECT 1 FROM " <> childT <> " WHERE " <> fk <> " = $1 LIMIT 1") [parent]
   unless (null rows) $
     liftIO (throwIO (DbException (OtherError ("onDelete Restrict: " <> show childT <> " still has children"))))
@@ -236,7 +236,7 @@ restrictCheck parent (CascadeRule childT fk _) = do
 -- | Apply a mutating cascade policy ('Cascade' DELETEs children, 'SetNull' NULLs
 -- their FK). 'Restrict' is a no-op here (handled by 'restrictCheck').
 applyMutating :: SqlParam -> CascadeRule -> Db ()
-applyMutating parent (CascadeRule childT fk policy) = case policy of
+applyMutating parent (CascadeRule childT fk policy _ _) = case policy of
   Cascade  -> void $ execDb ("DELETE FROM " <> childT <> " WHERE " <> fk <> " = $1") [parent]
   SetNull  -> void $ execDb ("UPDATE " <> childT <> " SET " <> fk <> " = NULL WHERE " <> fk <> " = $1") [parent]
   Restrict -> pure ()  -- handled in restrictCheck

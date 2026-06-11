@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -16,10 +17,13 @@ import Harness
 
 tests :: [Test]
 tests = group "Cascade"
-  [ test "cascade derives the child table + FK column from the child + label" $
-      assertEqual "rule"
-        (CascadeRule "posts" "post_author" Cascade)
-        (cascade (Proxy @Post) (Proxy @"postAuthor") Cascade)
+  [ test "cascade derives child table, FK column and child PK from the child + label" $ do
+      let r = cascade (Proxy @Post) (Proxy @"postAuthor") Cascade
+      assertEqual "child table" "posts" (crChildTable r)
+      assertEqual "fk column" "post_author" (crFkColumn r)
+      assertEqual "policy" Cascade (crPolicy r)
+      assertEqual "child pk" "post_id" (crChildPk r)
+      assertEqual "post has no child rules" 0 (length (crChildRules r))
   , test "Cascade deletes the children" $
       withTestDb $ \pool -> do
         n <- withSession pool $ do

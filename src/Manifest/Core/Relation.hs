@@ -23,8 +23,8 @@ import Data.Kind (Type)
 import Data.Proxy (Proxy(..))
 import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 import Manifest.Core.Cascade (CascadeRule(..), OnDelete)
-import Manifest.Core.Meta (camelToSnake, tmTable)
-import Manifest.Entity (Entity, tableMeta)
+import Manifest.Core.Meta (camelToSnake, cmName, pkColumn, tmTable)
+import Manifest.Entity (Entity, cascadeRules, tableMeta)
 
 -- | Relationship cardinality (promoted to a kind via DataKinds).
 data Card = Many | One | Opt
@@ -68,8 +68,15 @@ belongsToMaybe _ = RelOptOne (camelToSnake (symbolVal (Proxy @fk)))
 
 -- | Declare a cascade rule for a reverse-FK relation: the @Child@ rows whose
 -- @selfFk@ column references this entity's PK get @policy@ on delete. Derives
--- the child table from @Entity Child@ and the FK column name from the label.
+-- the child table + PK from @Entity Child@, the FK column name from the label,
+-- and captures the child's own rules (lazily) so deletes recurse.
 cascade :: forall c fk. (Entity c, KnownSymbol fk)
         => Proxy c -> Proxy fk -> OnDelete -> CascadeRule
-cascade _ _ policy =
-  CascadeRule (tmTable (tableMeta @c)) (camelToSnake (symbolVal (Proxy @fk))) policy
+cascade _ _ policy = CascadeRule
+  { crChildTable = tmTable tm
+  , crFkColumn   = camelToSnake (symbolVal (Proxy @fk))
+  , crPolicy     = policy
+  , crChildPk    = cmName (pkColumn tm)
+  , crChildRules = cascadeRules @c
+  }
+  where tm = tableMeta @c
