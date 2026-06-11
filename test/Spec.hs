@@ -16,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Skill (Skill (..), skill, withRetries, withTests, prompt, call, testSkill)
+import Crucible.Skill (Skill (..), skill, withRetries, withTests, withExamples, examplesFromTests, prompt, call, testSkill)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -456,6 +456,48 @@ main = runChecks
          (_ : Message User u : _) ->
            T.isInfixOf "Classify the sentiment of: hi" u && T.isInfixOf "\"hi\"" u
          _ -> False)
+  -- prompt composition: few-shot examples
+  , check "prompt: example renders as a User/Assistant pair"
+      (4, Just (Message Assistant "\"positive\""), True)
+      (let sk = withExamples [("I love it", "positive")] classifyFn
+           msgs = prompt sk "meh"
+       in ( length msgs
+          , case msgs of (_ : _ : a : _) -> Just a; _ -> Nothing
+          , case msgs of
+              (_ : Message User u : _) ->
+                T.isInfixOf "Classify the sentiment of: I love it" u
+                  && T.isInfixOf "\"I love it\"" u
+              _ -> False ))
+  , check "prompt: zero examples keeps the two-message shape"
+      2
+      (length (prompt classifyFn "hi"))
+  , check "examplesFromTests: moves Exactly cases, keeps the rest"
+      (1, 2)
+      (let sk = examplesFromTests 1
+                  (withTests [ Case "a" "t1" (Exactly "A")
+                             , Case "b" "t2" (Rubric "r")
+                             , Case "c" "t3" (Exactly "C") ] classifyFn)
+       in (length sk.examples, length sk.tests))
+  , check "examplesFromTests: caps at available; zero moves nothing"
+      ((2, 1), (0, 3))
+      (let base = withTests [ Case "a" "t1" (Exactly "A")
+                            , Case "b" "t2" (Rubric "r")
+                            , Case "c" "t3" (Exactly "C") ] classifyFn
+           big  = examplesFromTests 5 base
+           zero = examplesFromTests 0 base
+       in ((length big.examples, length big.tests), (length zero.examples, length zero.tests)))
+  , check "call: exampled skill still decodes"
+      (Right "positive")
+      (runPureEff (runLLMScripted ["\"positive\""]
+        (call (withExamples [("I love it", "positive")] classifyFn) "meh")))
+  , check "testSkill: moved cases consume no replies"
+      (1.0, "leftover")
+      (runPureEff (runLLMScripted ["\"B\"", "leftover"]
+        (do rep <- testSkill id (examplesFromTests 1
+                     (withTests [ Case "a" "ex" (Exactly "A")
+                                , Case "b" "kept" (Exactly "B") ] classifyFn))
+            extra <- complete []
+            pure (rep.passRate, extra))))
   , check "skill: retries on a bad reply then succeeds"
       (Right "positive")
       (runPureEff (runLLMScripted ["not json", "\"positive\""] (call classifyFn "I love it")))

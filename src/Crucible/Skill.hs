@@ -18,6 +18,8 @@ module Crucible.Skill
   , skill
   , withRetries
   , withTests
+  , withExamples
+  , examplesFromTests
   , prompt
   , call
   , testSkill
@@ -45,13 +47,14 @@ data Skill i o = Skill
   , output      :: JSONCodec o -- ^ schema injection + tolerant decode
   , retries     :: Int         -- ^ decode-failure retries
   , tests       :: [Case i o]  -- ^ attached test cases; run with 'testSkill'
+  , examples    :: [(i, o)]    -- ^ few-shot exchanges rendered into the prompt
   }
 
--- | Construct a 'Skill'; @retries@ defaults to 2, @tests@ to none.
+-- | Construct a 'Skill'; @retries@ defaults to 2, @tests@ and @examples@ to none.
 skill :: Text -> JSONCodec i -> JSONCodec o -> (i -> Text) -> Skill i o
 skill n inC outC instr =
   Skill { name = n, instruction = instr, input = inC, output = outC
-        , retries = 2, tests = [] }
+        , retries = 2, tests = [], examples = [] }
 
 -- | Override the decode-failure retry budget.
 withRetries :: Int -> Skill i o -> Skill i o
@@ -62,28 +65,60 @@ withRetries n fn = fn { retries = n }
 withTests :: [Case i o] -> Skill i o -> Skill i o
 withTests cs fn = fn { tests = cs }
 
+-- | Replace the skill's few-shot examples. Each pair renders as a real
+-- User/Assistant exchange before the live one (see 'prompt'); the Assistant
+-- turn is the output encoded via the output codec, so examples demonstrate
+-- the exact reply contract and cannot drift from the schema. Three to five
+-- examples capture most of the benefit; the instruction text repeats once
+-- per pair, so each example costs prompt tokens.
+withExamples :: [(i, o)] -> Skill i o -> Skill i o
+withExamples exs fn = fn { examples = exs }
+
+-- | Move the first @n@ 'Exactly' test cases into the examples (appending to
+-- any existing examples, preserving order). Moving rather than copying means
+-- a case is either taught or tested, never both, so 'testSkill' scores stay
+-- meaningful with no special handling. Non-'Exactly' cases are skipped and
+-- remain tests; fewer than @n@ available moves what exists; @n <= 0@ moves
+-- nothing.
+examplesFromTests :: Int -> Skill i o -> Skill i o
+examplesFromTests n fn = fn { examples = fn.examples ++ moved, tests = kept }
+  where
+    (moved, kept) = go (max 0 n) fn.tests
+    go 0 cs = ([], cs)
+    go _ [] = ([], [])
+    go k (Case i' _ (Exactly o') : cs) =
+      let (ms, ks) = go (k - 1) cs in ((i', o') : ms, ks)
+    go k (c : cs) =
+      let (ms, ks) = go k cs in (ms, c : ks)
+
 -- | Encode a value to JSON text via its codec.
 jsonText :: A.Value -> Text
 jsonText = TE.decodeUtf8 . LB.toStrict . A.encode
 
--- | The seed messages 'call' sends for a given input: a System message carrying
--- the output-schema contract, and a User message with the instruction plus the
--- rendered input. Exposed for introspection/debugging and tested directly.
+-- | The seed messages 'call' sends for a given input: a System message
+-- carrying the output-schema contract, one User/Assistant pair per attached
+-- example (the User turn is the instruction applied to the example input;
+-- the Assistant turn is the codec-encoded example output, a perfect reply),
+-- and finally the live User message. With no examples this is exactly the
+-- two-message prompt it has always been. Exposed for introspection/debugging
+-- and tested directly.
 prompt :: Skill i o -> i -> [Message]
-prompt Skill{output = outC, instruction = instr, input = inC} inp =
-  [ Message System [text|
+prompt sk inp =
+  systemMsg : concatMap pair sk.examples ++ [userMsg inp]
+  where
+    schema = schemaText sk.output
+    systemMsg = Message System [text|
       Respond ONLY with JSON matching this schema:
       ${schema}|]
-  , Message User [text|
+    userMsg i' =
+      let task     = sk.instruction i'
+          rendered = jsonText (toJSONVia sk.input i')
+      in Message User [text|
       ${task}
 
       Input:
       ${rendered}|]
-  ]
-  where
-    schema   = schemaText outC
-    task     = instr inp
-    rendered = jsonText (toJSONVia inC inp)
+    pair (ei, eo) = [userMsg ei, Message Assistant (jsonText (toJSONVia sk.output eo))]
 
 -- | Run a typed skill: build the prompt, call the model, and decode the reply
 -- against the output codec. On a decode failure, re-ask with the parse error fed
