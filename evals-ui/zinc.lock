@@ -1,0 +1,6 @@
+[[locked]]
+name = "miso"
+repo = "https://github.com/dmjio/miso.git"
+rev = "a0778e080a427a891acef81e660c99a2062fa5ba"
+sha256 = "sha256:c4c938e55980cad055e1ccc61c5fcf5e177e9fe7faf44fc6ef7fb4a420fe35ac"
+depends = []

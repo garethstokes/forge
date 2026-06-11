@@ -1,0 +1,30 @@
+# Dual-purpose manifest (gating-spike finding):
+#  - As a MEMBER of the root workspace (root zinc.toml members), so the native
+#    build/test loop sees evals-ui; parseMember ignores [workspace]/[dependencies].
+#  - As its OWN workspace root for the wasm32-wasi build (run zinc from this
+#    dir: `cd evals-ui && zinc build --target wasm32-wasi`). zinc builds the
+#    ENTIRE zinc.lock closure for a target, and the root lock carries native-only
+#    deps (network, postgresql-libpq) that cannot cross-compile to wasm — so the
+#    wasm build needs this separate lock whose closure is just miso.
+[workspace]
+members = ["."]
+ghc = "9.12.2"
+
+[package]
+name = "evals-ui"
+version = "0.1.0.0"
+
+[build.exe.evals-ui]
+source-dirs = ["src"]
+main = "Main.hs"
+ghc-options = ["-Wall"]
+depends = ["base", "miso", "text"]
+wasm-exports = ["hs_start"]
+
+[dependencies]
+
+[dependencies.miso]
+repo = "https://github.com/dmjio/miso.git"
+# master (1.11.0.0): GHC wasm backend support (ffi/wasm, -DWASM, TH-embedded
+# js/miso.js) and the hs_start reactor export pattern from sample-app.
+rev = "a0778e080a427a891acef81e660c99a2062fa5ba"

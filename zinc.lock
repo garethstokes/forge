@@ -41,6 +41,18 @@ sha256 = "sha256:e23227160530a51211b872bde1cfdc23ad905a11770f1c13eab77e69eaa5072
 depends = ["hashable", "unordered-containers"]
 
 [[locked]]
+name = "attoparsec"
+vendored = "0.14.4"
+sha256 = "sha256:3dd3872b2b166493512d048131a721a228804b1844aa9fb243ae50e3775b045a"
+depends = ["scientific"]
+
+[[locked]]
+name = "auto-update"
+vendored = "0.2.6"
+sha256 = "sha256:3b432bb0c0fea78a65bcfd37244efd08ff96d61287608c72511b1fcb6cfc366a"
+depends = []
+
+[[locked]]
 name = "autodocodec"
 vendored = "0.5.0.0"
 sha256 = "sha256:39e1dc6981dadac0cf9a3c7ba5a0505581b4f0c59fb084a54406b44e6b96c813"
@@ -89,9 +101,22 @@ sha256 = "sha256:5691f963cef6d38e5081326607d3f38ecad26f9d9d2b07938136ee82665bca9
 depends = ["assoc", "comonad", "tagged", "th-abstraction"]
 
 [[locked]]
+name = "bitvec"
+vendored = "1.1.6.0"
+sha256 = "sha256:5498242a7f6a2ee8f0ed2f227c61bfb086d3cf6a70feac460d71271f3cd407d1"
+depends = ["primitive", "vector"]
+
+[[locked]]
 name = "blaze-builder"
 vendored = "0.4.4.1"
 sha256 = "sha256:3b04e36a08274a9e0fc47aeeb9aa44b7d999710352651f578ef4f96a22db2384"
+depends = []
+
+[[locked]]
+name = "bsb-http-chunked"
+repo = "https://github.com/sjakobi/bsb-http-chunked.git"
+rev = "c0ecd72fe2beb1cf7de9340cc8b4a31045460532"
+sha256 = "sha256:040de5d8742308de4224bf43236e7e33f89571182a3d7b8848b0edba75bee489"
 depends = []
 
 [[locked]]
@@ -129,6 +154,18 @@ name = "comonad"
 vendored = "5.0.10"
 sha256 = "sha256:eb029eb5e2a9a143ce864d674421d7d8e06c61dbe3c71a81122ed1883f7b967e"
 depends = ["distributive", "indexed-traversable", "tagged"]
+
+[[locked]]
+name = "conduit"
+vendored = "1.3.6.1"
+sha256 = "sha256:c64fa6ce890dd9e35c4819cbe3d85e5a6591394560f24e20247b8e9bf7c0d161"
+depends = ["mono-traversable", "primitive", "resourcet", "unliftio-core", "vector"]
+
+[[locked]]
+name = "conduit-extra"
+vendored = "1.3.8"
+sha256 = "sha256:0688e4f7538dbf1cfb7292896e9450dc83e17def8446361483b57e143bbba7a3"
+depends = ["async", "attoparsec", "conduit", "network", "primitive", "resourcet", "streaming-commons", "typed-process", "unliftio-core"]
 
 [[locked]]
 name = "contravariant"
@@ -300,10 +337,28 @@ sha256 = "sha256:f445c8933ddd79a7dde7beda1f3ccd4e73d93eb2e0c9ecdf1a07f103a427666
 depends = ["base16", "case-insensitive", "cryptohash-md5", "crypton-connection", "data-default", "http-client", "http-types", "network", "network-uri", "tls"]
 
 [[locked]]
+name = "http-date"
+vendored = "0.0.11"
+sha256 = "sha256:7098522f3e020b44eedc04b2aef24c05de9fbc5c56c3fc8217af763a9b05062b"
+depends = ["attoparsec"]
+
+[[locked]]
+name = "http-semantics"
+vendored = "0.4.0"
+sha256 = "sha256:4c365dcb8c49061e37313145025cfdccbb5e15b8103a617cda8fb00b70649cd9"
+depends = ["case-insensitive", "http-types", "network", "network-byte-order", "time-manager", "utf8-string"]
+
+[[locked]]
 name = "http-types"
 vendored = "0.12.5"
 sha256 = "sha256:8906f88a81bd7204cd32d3842f3959b4788a08bdf3ca59704991b3d969b29f7d"
 depends = ["case-insensitive"]
+
+[[locked]]
+name = "http2"
+vendored = "5.4.0"
+sha256 = "sha256:909693a01a6f99d0ad9eea6d6b36ed5ba6a31f340d654935501d6d1de6636304"
+depends = ["async", "case-insensitive", "http-semantics", "http-types", "iproute", "network", "network-byte-order", "network-control", "time-manager", "unix-time", "utf8-string"]
 
 [[locked]]
 name = "indexed-traversable"
@@ -355,6 +410,13 @@ sha256 = "sha256:6246915bd67ce2924e17119dfd7568927678d4d69cdf042765f0a7bf3b79293
 depends = []
 
 [[locked]]
+name = "miso"
+repo = "https://github.com/dmjio/miso.git"
+rev = "a0778e080a427a891acef81e660c99a2062fa5ba"
+sha256 = "sha256:c4c938e55980cad055e1ccc61c5fcf5e177e9fe7faf44fc6ef7fb4a420fe35ac"
+depends = []
+
+[[locked]]
 name = "mlkem"
 vendored = "0.2.1.0"
 sha256 = "sha256:cd66dd1a7386df03b0bdb0409959775b9170cb8c40c9c495962cfe95b9171f4f"
@@ -366,6 +428,12 @@ repo = "https://github.com/basvandijk/monad-control.git"
 rev = "378524047ba8f879133bd94e3586bac821187e9e"
 sha256 = "sha256:6b2486012c1e305fa1fb2f102b9acb8bae8f3ba1c0b77be8e670aa2f7f413ee9"
 depends = ["transformers-base", "transformers-compat"]
+
+[[locked]]
+name = "mono-traversable"
+vendored = "1.0.21.0"
+sha256 = "sha256:afd0bbb381999e11c9892afa8a3f4b42bddac9259cac02f75c3067275d819f24"
+depends = ["hashable", "split", "unordered-containers", "vector", "vector-algorithms"]
 
 [[locked]]
 name = "mtl-compat"
@@ -381,8 +449,9 @@ depends = ["megaparsec"]
 
 [[locked]]
 name = "network"
-vendored = "3.2.8.0"
-sha256 = "sha256:6b61d17403a55cf8df5ae5080e9a23a74d5a53f97730029ddfd6e387a4591fe8"
+repo = "https://github.com/haskell/network.git"
+rev = "86f33ca2d31221c18afc787da4d6ea718616d261"
+sha256 = "sha256:c12b93c50cf8a81620e0d7521608e29aec363808c1436d6c2c9e048a007e8a8e"
 depends = []
 
 [[locked]]
@@ -390,6 +459,12 @@ name = "network-byte-order"
 vendored = "0.1.8"
 sha256 = "sha256:bc1980e4a3fc223468fe509739f579ba379b9e46c483bc2728a9295c75ec7f93"
 depends = []
+
+[[locked]]
+name = "network-control"
+vendored = "0.1.7"
+sha256 = "sha256:738aee196f817ddff5a00dffecf1a2b6c96e80a3a65d7574612db55c3aada0e0"
+depends = ["psqueues", "unix-time"]
 
 [[locked]]
 name = "network-uri"
@@ -437,6 +512,12 @@ sha256 = "sha256:85706b286334a9c981be2d5769bcd32b45796a6b289f1f12b16c20318f4fd93
 depends = ["base-orphans", "bifunctors", "comonad", "contravariant", "distributive", "tagged"]
 
 [[locked]]
+name = "psqueues"
+vendored = "0.2.8.3"
+sha256 = "sha256:34a91901c2e25993049f3c276c8b2761cb81a31aeeecdcc0fd8ef37a75b075e4"
+depends = ["hashable"]
+
+[[locked]]
 name = "ram"
 vendored = "0.22.0"
 sha256 = "sha256:e47aa4312258fcdfc1ab3ae46ab9e783224eaed57ffb8bf5173bebd55948098f"
@@ -447,6 +528,18 @@ name = "random"
 vendored = "1.3.1"
 sha256 = "sha256:41e23ddbe203c51f969da94aaf0b49764dfc656d5df25c390c8a77fd45d262f6"
 depends = ["splitmix"]
+
+[[locked]]
+name = "recv"
+vendored = "0.1.1"
+sha256 = "sha256:fc9571b3611bc7c9d2fdc7c20affb842c97a82f6f018d513516f66cef3a61504"
+depends = ["network"]
+
+[[locked]]
+name = "resourcet"
+vendored = "1.3.0"
+sha256 = "sha256:9f3d01d91f6cb53ad9c8cbb9c8d0d292c3a75daf1a2768cb89424d5d874940c7"
+depends = ["primitive", "unliftio-core"]
 
 [[locked]]
 name = "retry"
@@ -483,6 +576,19 @@ name = "serialise"
 vendored = "0.2.6.1"
 sha256 = "sha256:5e68358502487f4809c5224b4fe1c5c6a6f6ff4a4a5c6029c9374e364d093f1f"
 depends = ["cborg", "half", "hashable", "primitive", "strict", "these", "unordered-containers", "vector"]
+
+[[locked]]
+name = "simple-sendfile"
+vendored = "0.2.32"
+sha256 = "sha256:a3f600ea5addfcd9153804708a047874591449009c57bb9f326387fcdb64bb32"
+depends = ["conduit", "conduit-extra", "network", "resourcet"]
+flags = { fallback = true }
+
+[[locked]]
+name = "split"
+vendored = "0.2.5"
+sha256 = "sha256:8feda0393b4b37882a43c40a39fea8e82c43d3199bee1706fa546c4f1cbe5da5"
+depends = []
 
 [[locked]]
 name = "splitmix"
@@ -558,6 +664,12 @@ sha256 = "sha256:a990d9b4f88a97581df6b0c95e162e0564f60bb8c1f5b0299dca8a77f05782f
 depends = []
 
 [[locked]]
+name = "time-manager"
+vendored = "0.3.2"
+sha256 = "sha256:3deac422b79d0c4744393ed84e1130d7fcc711eea6814ef811dfe649754ac3fc"
+depends = []
+
+[[locked]]
 name = "tls"
 vendored = "2.4.3"
 sha256 = "sha256:d7158e9f4ca3cd26031c7674c2d80b6b4b469522a07d947850c333e554667607"
@@ -574,6 +686,12 @@ name = "transformers-compat"
 vendored = "0.8"
 sha256 = "sha256:d53b9048aa6ce7faccd41c545dc66f1ca61850f6efb1cad93c1c27bcf5c54825"
 depends = []
+
+[[locked]]
+name = "typed-process"
+vendored = "0.2.13.0"
+sha256 = "sha256:05b8bcbff0b27828b047a7a0f3f546a9924e9d1ca85b02dfcc4a7722d156d06b"
+depends = ["async", "unliftio-core"]
 
 [[locked]]
 name = "unix-time"
@@ -598,6 +716,12 @@ name = "unordered-containers"
 vendored = "0.2.21"
 sha256 = "sha256:4a0caf5ccd36dbf3b12c33b2321f5476829e9b30449c53a72d85e5ce836fd5df"
 depends = ["hashable"]
+
+[[locked]]
+name = "utf8-string"
+vendored = "1.0.2"
+sha256 = "sha256:6dc763d9a430b15c0857b66cc7eae14c3b9c3506db8968c79d75e815501e3efb"
+depends = []
 
 [[locked]]
 name = "uuid-types"
@@ -648,10 +772,22 @@ sha256 = "sha256:e6496a0ef3ee5c97a7c5cf28943ff7982ed6bfcd9276b95ff75517da009a375
 depends = ["hashable", "validity", "vector"]
 
 [[locked]]
+name = "vault"
+vendored = "0.3.1.6"
+sha256 = "sha256:d5bb839523db5f64919f9779bd87230a32f68f8e1090029343b63f3dfb2b5c09"
+depends = ["hashable", "unordered-containers"]
+
+[[locked]]
 name = "vector"
 vendored = "0.13.2.0"
 sha256 = "sha256:7902181c9739a2dd76b2a2411a7844fcb409331c94be29ae7d8ff4a9da362210"
 depends = ["primitive", "vector-stream"]
+
+[[locked]]
+name = "vector-algorithms"
+vendored = "0.9.1.0"
+sha256 = "sha256:e61da7d24b696adef44e485bdbdbccc50a61a6c8f2bfa3755d6f5b5a903b057f"
+depends = ["bitvec", "primitive", "vector"]
 
 [[locked]]
 name = "vector-stream"
@@ -660,10 +796,29 @@ sha256 = "sha256:6f11252cc98ea7ec922585d272705c5ee5f8210ddad42ae91466d017a592d48
 depends = []
 
 [[locked]]
+name = "wai"
+vendored = "3.2.4"
+sha256 = "sha256:8b7029d26002696a7f0c19eb93ed2e13cfd95df46eb5bf1eea6e7d8f4806be21"
+depends = ["http-types", "network", "vault"]
+
+[[locked]]
+name = "warp"
+vendored = "3.4.13.1"
+sha256 = "sha256:b0e7914838726ed6836c8b0b7645bf7f5cdefc993872861c57954dd240520c0a"
+depends = ["async", "auto-update", "bsb-http-chunked", "case-insensitive", "crypton-x509", "hashable", "http-date", "http-types", "http2", "iproute", "network", "recv", "simple-sendfile", "streaming-commons", "time-manager", "vault", "wai", "word8"]
+flags = { allow-sendfilefd = false }
+
+[[locked]]
 name = "witherable"
 vendored = "0.5"
 sha256 = "sha256:0f7e74ca548f3e1c39bd35e7f6ec32afd792f8d7091cbece83fc83a073a5c8c1"
 depends = ["base-orphans", "hashable", "indexed-traversable", "indexed-traversable-instances", "unordered-containers", "vector"]
+
+[[locked]]
+name = "word8"
+vendored = "0.1.3"
+sha256 = "sha256:3d2eb586c41cfd2bc91b9dfadb13c09d481d0f1a012ed44e8b99eba8a28214fc"
+depends = []
 
 [[locked]]
 name = "zlib"

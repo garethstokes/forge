@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "evals-ui"]
 ghc = "9.12.2"
 
 [package]
@@ -22,6 +22,12 @@ source-dirs = ["app"]
 main = "Main.hs"
 ghc-options = ["-Wall", "-XOverloadedStrings", "-lpq"]
 depends = ["base", "text", "bytestring", "manifest", "manifest-evals"]
+
+[build.exe.evals-dashboard]
+source-dirs = ["app-dashboard"]
+main = "Main.hs"
+ghc-options = ["-Wall", "-XOverloadedStrings", "-threaded", "-lpq"]
+depends = ["base", "text", "bytestring", "wai", "warp", "http-types", "filepath", "directory"]
 
 [dependencies]
 
@@ -95,3 +101,39 @@ flags = { use-pkg-config = true }  # Simple pkgconfig provider (avoids build-typ
 
 [dependencies.profunctors]
 repo = "https://github.com/ekmett/profunctors.git"
+
+# --- evals-dashboard (warp static stub server) transitive stanzas ---
+
+[dependencies.network-control]
+repo = "https://github.com/kazu-yamamoto/network-control.git"
+
+[dependencies.bsb-http-chunked]
+# Newest release tag (v0.0.0.4, 2018) pins base <4.13; HEAD relaxes to base <5.
+# The repo is dormant (last commit 2022); its `_x` wildcard sig needs
+# -XPartialTypeSignatures on modern GHC (Hackage revisions fixed bounds only).
+rev = "c0ecd72fe2beb1cf7de9340cc8b4a31045460532"
+repo = "https://github.com/sjakobi/bsb-http-chunked.git"
+ghc-options = ["-XPartialTypeSignatures", "-Wno-partial-type-signatures"]
+
+# --- evals-ui (miso wasm32-wasi browser reactor, gating spike) ---
+
+[dependencies.miso]
+repo = "https://github.com/dmjio/miso.git"
+# master (1.11.0.0): GHC wasm backend support (ffi/wasm, -DWASM, TH-embedded
+# js/miso.js) and the hs_start reactor export pattern from sample-app.
+rev = "a0778e080a427a891acef81e660c99a2062fa5ba"
+
+[dependencies.warp]
+repo = "https://github.com/yesodweb/wai.git#warp"
+# allow-sendfilefd=false: warp's portable file-serving path. zinc's hsc-macro
+# synthesis can't see zinc-built deps' versions (network reads as 0.0.0), so
+# simple-sendfile's Linux.hsc preprocesses its network<3 branch and fails;
+# with this flag warp never calls simple-sendfile.
+flags = { allow-sendfilefd = false }
+
+[dependencies.simple-sendfile]
+tag = "*"
+repo = "https://github.com/kazu-yamamoto/simple-sendfile"
+# fallback=true swaps the Linux .hsc module for the pure-Haskell conduit
+# fallback, sidestepping the MIN_VERSION_network hsc gap described above.
+flags = { fallback = true }
