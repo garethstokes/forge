@@ -159,19 +159,19 @@ prompt sk inp =
       Respond ONLY with JSON matching this schema:
       ${schema}
       Your reply is parsed by a machine; any text outside the JSON is an error.|]
+    -- assembled by concatenation, not [text| |]: the slot blocks are
+    -- conditional, and interpolated trailing newlines are not preserved
+    -- reliably by the quasiquoter. Empty slots contribute nothing.
     userMsg i' =
-      let pre      = block sk.instruction.preamble
-          task'    = (sk.instruction.task) i'
-          rendered = jsonText (toJSONVia sk.input i')
-          cons     = block sk.instruction.constraints
-      in Message User [text|
-      ${pre}${task'}
-
-      <input>
-      ${rendered}
-      </input>
-
-      ${cons}Respond with JSON only; your reply is parsed by a machine.|]
+      Message User $ T.concat
+        [ block sk.instruction.preamble
+        , (sk.instruction.task) i'
+        , "\n\n<input>\n"
+        , jsonText (toJSONVia sk.input i')
+        , "\n</input>\n\n"
+        , block sk.instruction.constraints
+        , "Respond with JSON only; your reply is parsed by a machine."
+        ]
     block t = if T.null t then "" else t <> "\n\n"
     pair (ei, eo) = [userMsg ei, Message Assistant (jsonText (toJSONVia sk.output eo))]
 

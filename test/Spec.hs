@@ -1133,14 +1133,14 @@ main = runChecks
       True
       (case prompt (withPreamble "Be terse." (withConstraints "One word only." classifyFn)) "hi" of
          [_, Message User u] ->
-           T.isPrefixOf "Be terse.\nClassify the sentiment of: hi" u
-             && T.isInfixOf "</input>\n\nOne word only.\nRespond with JSON only" u
+           T.isPrefixOf "Be terse.\n\nClassify the sentiment of: hi" u
+             && T.isInfixOf "</input>\n\nOne word only.\n\nRespond with JSON only" u
          _ -> False)
   , check "skillWith: carries all three instruction parts"
       True
       (case prompt (skillWith "s" C.str C.str (Instruction "P" ("Task: " <>) "C")) "x" of
          [_, Message User u] ->
-           T.isPrefixOf "P\nTask: x" u && T.isInfixOf "\nC\nRespond with JSON only" u
+           T.isPrefixOf "P\n\nTask: x" u && T.isInfixOf "\nC\n\nRespond with JSON only" u
          _ -> False)
   , check "prompt: few-shot pairs inherit the tweaked template"
       True
