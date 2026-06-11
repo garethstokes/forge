@@ -10,6 +10,7 @@
 -- crucible's; this module only maps configuration and catches the typed error.
 module Evals.Execute.Anthropic
   ( cfgFrom
+  , cfgFromParams
   , liveAnthropicRunner
   ) where
 
@@ -28,24 +29,29 @@ import Manifest (Aeson (..))
 import Evals.Execute (ExecError (..), LlmRunner)
 import Evals.Schema
 
--- | 'defaultAnthropicConfig' + the target's @model@, with the known
--- @params@ jsonb knobs mapped on top: @max_tokens@ → 'maxTokens', @timeout@ →
--- 'timeoutSecs', @retries@ → 'maxRetries'. Unknown keys (e.g. @temperature@ —
--- crucible has no such knob) are ignored.
-cfgFrom :: Text -> TargetVersion -> AnthropicConfig
-cfgFrom key tv = base
+-- | Map the known LLM knobs of a params jsonb onto a config: optional model
+-- override plus max_tokens/timeout/retries. Shared by the target path
+-- ('cfgFrom') and the grader path ("Evals.Grade.Anthropic").
+cfgFromParams :: Text -> Maybe Text -> Value -> AnthropicConfig
+cfgFromParams key mModel paramsVal = base
   { maxTokens   = intParam "max_tokens" base.maxTokens
   , timeoutSecs = intParam "timeout"    base.timeoutSecs
   , maxRetries  = intParam "retries"    base.maxRetries
   }
   where
     base :: AnthropicConfig
-    base = (defaultAnthropicConfig key) { model = tv.model }
-    Aeson paramsVal = tv.params
+    base = case mModel of
+      Just m  -> (defaultAnthropicConfig key) { model = m }
+      Nothing -> defaultAnthropicConfig key
     intParam :: AT.Key -> Int -> Int
     intParam k dflt = case paramsVal of
       Object o -> maybe dflt id (AT.parseMaybe (AT..: k) o)
       _        -> dflt
+
+-- | 'cfgFromParams' with the target's mandatory model.
+cfgFrom :: Text -> TargetVersion -> AnthropicConfig
+cfgFrom key tv = cfgFromParams key (Just tv.model) paramsVal
+  where Aeson paramsVal = tv.params
 
 -- | The live backend: one @Anthropic.usage@-interpreted 'complete' per call;
 -- a thrown 'AnthropicError' (after crucible's own retries) becomes 'LlmError'.

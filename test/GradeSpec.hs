@@ -21,8 +21,10 @@ import Manifest
 import Manifest.Postgres (Pool)
 import Manifest.Testing (withEphemeralDb)
 
+import Crucible.LLM.Anthropic (AnthropicConfig (..), defaultAnthropicConfig)
 import Evals.Execute (ExecError (..))
 import Evals.Grade
+import Evals.Grade.Anthropic (gradeCfg)
 import Evals.Ids
 import Evals.Migrate (migrateAll)
 import Evals.Schema
@@ -39,6 +41,7 @@ near a b = abs (a - b) < 1e-9
 main :: IO ()
 main = do
   configSpec
+  gradeCfgSpec
   exactSpec
   withEphemeralDb $ \pool -> do
     _ <- withSession pool migrateAll
@@ -68,6 +71,15 @@ configSpec = do
        == Right [("cites a URL", 1), ("polite", 2.5)])
   expect "criteria missing is an error" (isLeft (criteriaFrom (object [])))
   expect "criteria empty is an error" (isLeft (criteriaFrom (object ["criteria" .= ([] :: [Value])])))
+
+gradeCfgSpec :: IO ()
+gradeCfgSpec = do
+  let dflt = defaultAnthropicConfig "k"
+      full = gradeCfg "k" (object ["model" .= ("claude-j" :: Text), "max_tokens" .= (7 :: Int)])
+      none = gradeCfg "k" (object [])
+  expect "gradeCfg: model from config" (full.model == "claude-j" && full.maxTokens == 7)
+  expect "gradeCfg: defaults without config keys"
+    (none.model == dflt.model && none.maxTokens == dflt.maxTokens)
 
 exactSpec :: IO ()
 exactSpec = do
