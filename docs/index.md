@@ -46,14 +46,19 @@ main = do
 ## What's in the box
 
 - **Effects**: `LLM` (`complete`), `Chat` (`converse`/`runToolAgent`), `Tools`,
-  and `Emit` (streaming deltas). `LLM` and `Chat` each come with scripted, live,
-  and cassette interpreters.
+  and `Emit` (streaming deltas). `LLM` and `Chat` each come with scripted, live
+  (Anthropic and OpenAI), and cassette interpreters.
 - **Typed skills**: declare a `Skill` with input/output codecs; the output
-  schema is injected into the prompt and the reply tolerantly decoded.
-- **Native tool-calling**: advertise tools and let the model drive a
-  request→run→result loop (`runToolAgent`), capped and self-correcting.
+  schema is injected into the prompt and the reply tolerantly decoded. Attach
+  test cases with `withTests` and run them with `testSkill`.
+- **Typed tool-calling**: declare a toolbox as a record of plain handlers;
+  field names become tool names, arguments are decoded and results encoded
+  through codecs, and the model drives a capped, self-correcting
+  request→run→result loop (`runToolAgent`).
 - **Streaming**: server-sent events surfaced as an `Emit` effect; print tokens
-  live while still getting the assembled result + token `Usage`.
+  live while still getting the assembled result + token `Usage`. For row-based
+  data, `Crucible.Rows` decodes JSONL output into typed rows as each line
+  completes.
 - **Usage & cost**: a `Usage` monoid summed across calls, plus a pure
   `estimateCost`.
 - **Cassettes**: record a live conversation and replay it deterministically, so
@@ -68,8 +73,8 @@ main = do
 - [Effects](effects.md): the capability effects and their interpreters.
 - [Typed functions](typed-functions.md): `skill`/`call`, codecs, schema
   injection, tolerant decode, retries.
-- [Tool calling](tool-calling.md): `runToolAgent`, the loop, the cap, tool
-  schemas.
+- [Tool calling](tool-calling.md): record toolboxes, `runToolAgent`, the loop,
+  the cap, tool schemas and errors.
 - [Streaming](streaming.md): the `Emit` effect and the streaming interpreters.
 - [Usage & cassettes](usage-and-cassettes.md): token accounting and
   record/replay.

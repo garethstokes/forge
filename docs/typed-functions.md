@@ -209,7 +209,8 @@ real regression signal.
 
 ## One codec, many uses
 
-A type defined once, as `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec`, can be used as a skill output and as a tool argument codec
-(via `schemaValue` → `schema`), all from the same single codec. See
-[Tool calling](tool-calling.md) for the tool schema path and
+A type defined once, as `data Sentiment … ; instance HasCodec Sentiment where codec = genericCodec`, can be used as a skill output and as a tool handler's
+argument or result: the toolbox derivation reads the same instance to build
+the tool's `input_schema` and to decode and encode at the boundary. See
+[Tool calling](tool-calling.md) for the toolbox path and
 [Getting started](getting-started.md) for the end-to-end wiring.
