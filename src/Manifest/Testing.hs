@@ -7,8 +7,8 @@ module Manifest.Testing
   ) where
 
 import Control.Exception (SomeException, finally, try)
-import qualified Data.ByteString.Char8 as BC
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BC
 import System.Directory (removeDirectoryRecursive)
 import System.Process (callProcess, readProcess)
 import Manifest.Postgres (Pool, closePool, newPool)

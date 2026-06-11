@@ -16,11 +16,11 @@ startListener :: ByteString -> [ByteString] -> IO (IORef [Change])
 startListener conninfo tables = do
   ref <- newIORef []
   _ <- forkIO $ do
-    r <- try (listenChanges conninfo tables (\c -> modifyIORef' ref (++ [c])))
+    r <- try (listenChanges conninfo tables (\c -> atomicModifyIORef' ref (\cs -> (cs ++ [c], ()))))
           :: IO (Either SomeException ())
     case r of
       Right () -> pure ()
-      Left e   -> modifyIORef' ref (++ [Change (BC8.pack "LISTENER-DIED") (Just (BC8.pack (show e)))])
+      Left e   -> atomicModifyIORef' ref (\cs -> (cs ++ [Change (BC8.pack "LISTENER-DIED") (Just (BC8.pack (show e)))], ()))
   pure ref
 
 -- | Poll every 10 ms, up to 5 s, until at least @n@ changes have arrived;
@@ -37,7 +37,9 @@ awaitChanges ref n = go (500 :: Int)
 
 -- | Wait for the LISTEN registration to be in place before the first real
 -- notify.  Sends 'manifest_pings' warmup pings and loops until one arrives,
--- up to ~100 × 50 ms = 5 s.
+-- then waits until the ref length is stable across two consecutive 50 ms ticks
+-- (no new warmup arrivals in flight) before returning.  Up to ~100 × 50 ms =
+-- 5 s overall.
 awaitWarmup :: Pool -> IORef [Change] -> IO ()
 awaitWarmup pool ref = go (100 :: Int)
   where
@@ -49,7 +51,16 @@ awaitWarmup pool ref = go (100 :: Int)
       cs <- readIORef ref
       if null cs
         then go (n - 1)
-        else pure ()
+        else stabilize (length cs)
+
+    -- Keep ticking until the ref length stops growing across two consecutive
+    -- 50 ms windows; this drains any straggler warmup notifications.
+    stabilize prev = do
+      threadDelay 50_000
+      cur <- length <$> readIORef ref
+      if cur == prev
+        then pure ()
+        else stabilize cur
 
 tests :: [Test]
 tests = group "Notify"

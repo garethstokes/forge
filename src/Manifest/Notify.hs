@@ -15,10 +15,12 @@ module Manifest.Notify
   ) where
 
 import Control.Concurrent (threadWaitRead)
-import Control.Exception (throwIO)
+import Control.Exception (bracket, throwIO)
 import Control.Monad (forever, unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
+import Data.Maybe (fromMaybe)
 import qualified Database.PostgreSQL.LibPQ as PQ
 import Manifest.Error (DbError (..), DbException (..))
 
@@ -35,39 +37,55 @@ data Change = Change
 -- @manifest_\<table\>@ channel, then block forever dispatching notifications
 -- to the callback. The callback runs on this thread: slow callbacks delay
 -- subsequent deliveries — hand off if you do real work. Throws 'DbException'
--- on connection loss; retry\/supervision is the caller's policy.
+-- on connection loss or callback exception (queued notifications are dropped).
+-- Retry\/supervision is the caller's policy.
+--
+-- Note: channel identifiers longer than 63 bytes are truncated by LISTEN while
+-- pg_notify errors — very long table names would silently never match.
 listenChanges :: ByteString -> [ByteString] -> (Change -> IO ()) -> IO ()
-listenChanges conninfo tables onChange = do
-  conn <- PQ.connectdb conninfo
-  st <- PQ.status conn
-  unless (st == PQ.ConnectionOk) (failWith conn)
-  mapM_ (\t -> run conn ("LISTEN \"manifest_" <> t <> "\"")) tables
-  drain conn
-  forever $ do
-    fd <- PQ.socket conn >>= maybe (failWith conn) pure
-    threadWaitRead fd
-    ok <- PQ.consumeInput conn
-    unless ok (failWith conn)
+listenChanges conninfo tables onChange =
+  bracket (PQ.connectdb conninfo) PQ.finish $ \conn -> do
+    st <- PQ.status conn
+    unless (st == PQ.ConnectionOk) (failWith conn)
+    mapM_ (\t -> run conn ("LISTEN \"manifest_" <> escapeIdent t <> "\"")) tables
     drain conn
+    forever $ do
+      fd <- PQ.socket conn >>= maybe (failWith conn) pure
+      threadWaitRead fd
+      ok <- PQ.consumeInput conn
+      unless ok (failWith conn)
+      drain conn
   where
+    -- Escape embedded double-quotes in the table name for use inside a
+    -- double-quoted identifier.
+    escapeIdent t = BS.intercalate "\"\"" (BS8.split '"' t)
+
     run conn sql = do
       mres <- PQ.exec conn sql
       case mres of
-        Nothing -> failWith conn
+        Nothing  -> failWith conn
         Just res -> do
           rst <- PQ.resultStatus res
-          unless (rst `elem` [PQ.CommandOk, PQ.TuplesOk]) (failWith conn)
+          unless (rst `elem` [PQ.CommandOk, PQ.TuplesOk]) $ do
+            mmsg <- PQ.resultErrorMessage res
+            let msg = case mmsg of
+                  Just m | not (BS.null m) -> m
+                  _                        -> "LISTEN failed"
+            throwIO (DbException (QueryError msg))
     drain conn =
       PQ.notifies conn >>= \case
         Nothing -> pure ()
         Just n -> do
           let chan    = PQ.notifyRelname n
-              t       = maybe chan id (BS.stripPrefix "manifest_" chan)
+              t       = fromMaybe chan (BS.stripPrefix "manifest_" chan)
               payload = PQ.notifyExtra n
           onChange (Change t (if BS.null payload then Nothing else Just payload))
           drain conn
 
 failWith :: PQ.Connection -> IO a
 failWith conn = do
-  msg <- maybe "connection lost" id <$> PQ.errorMessage conn
+  mmsg <- PQ.errorMessage conn
+  let msg = case mmsg of
+        Just m | not (BS.null m) -> m
+        _                        -> "connection lost"
   throwIO (DbException (QueryError msg))
