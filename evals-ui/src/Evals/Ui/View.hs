@@ -26,7 +26,9 @@ viewModel _ m =
     [ P.class_ "app" ]
     [ header_
         [ P.class_ "topbar" ]
-        [ h1_ [] [ a_ [ P.href_ runsHash ] [ text "manifest evals" ] ] ]
+        [ h1_ [] [ a_ [ P.href_ runsHash ] [ text "manifest evals" ] ]
+        , liveDot (_liveM m)
+        ]
     , main_ [ P.class_ "content" ] [ body ]
     ]
   where
@@ -34,6 +36,15 @@ viewModel _ m =
       RunsR -> runsView m
       RunR i -> detailView m i
       CompareR a b -> compareView m a b
+
+-- | SSE connection status dot in the header: green while the change feed is
+-- connected, gray while the EventSource is reconnecting.
+liveDot :: LiveStatus -> View Model Action
+liveDot st = span_ [ P.class_ ("live " <> cls), P.title_ ttl ] []
+  where
+    (cls, ttl) = case st of
+      LiveConnected -> ("on", "live")
+      LiveReconnecting -> ("off", "reconnecting…")
 
 -- | Loading / Failed / Got dispatch ('NotAsked' renders as loading: every
 -- route entry immediately kicks a fetch).

@@ -1,16 +1,26 @@
-{-# LANGUAGE CPP               #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings   #-}
 
 -- | The evals dashboard SPA: a miso 1.11 component compiled as a wasm32-wasi
 -- browser reactor (see evals-ui/zinc.toml wasm-exports). Routes live in the
--- location hash; each route entry kicks a same-origin JSON fetch.
+-- location hash; each route entry kicks a same-origin JSON fetch. An SSE
+-- change feed (@/api/events@) triggers debounced refetches of the current
+-- route, so the dashboard tracks the database live.
 module Main where
+
+import Control.Monad (when)
+import Data.Aeson (eitherDecodeStrictText)
+import Data.Text (Text)
 
 import Miso
 import Miso.Lens ((%=), (.=), use)
+import qualified Miso.EventSource as SSE
+import Miso.String (fromMisoString, ms)
 
-import Evals.Ui.Fetch (fetchJson, getHash, setHash)
+import Evals.Api (ChangeDto (..))
+import Evals.Ui.Fetch (fetchJson, getHash, setHash, setTimeout)
 import Evals.Ui.Model
 import Evals.Ui.View (viewModel)
 
@@ -27,28 +37,31 @@ app :: App Model Action
 app =
   (component emptyModel updateModel viewModel)
     { subs = [ windowSub "hashchange" emptyDecoder (\() -> HashChanged) ]
-      -- parse the initial hash (and load its data) once mounted
-    , mount = Just HashChanged
+      -- connect the SSE feed and parse the initial hash once mounted
+    , mount = Just Startup
     }
 
 updateModel :: Action -> Effect parent props Model Action
 updateModel = \case
+  Startup -> do
+    -- connect once; the browser EventSource auto-reconnects on failure, so
+    -- SseOpen/SseError only reflect status (no reconnect logic of our own)
+    SSE.connectText "/api/events" (const SseOpen) SseMessage (const SseError)
+    updateModel HashChanged
   HashChanged ->
     io (SetRoute . parseHash <$> getHash)
   SetRoute r -> do
     routeL .= r
     case r of
-      RunsR -> do
+      RunsR ->
         runsL .= Loading
-        fetchJson "/api/runs" GotRuns
-      RunR i -> do
+      RunR _ -> do
         detailL .= Loading
         expandedL .= []
-        fetchJson ("/api/runs/" <> msShow i) (GotDetail i)
-      CompareR a b -> do
+      CompareR _ _ -> do
         compareL .= Loading
         expandedL .= []
-        fetchJson ("/api/compare?a=" <> msShow a <> "&b=" <> msShow b) (GotCompare a b)
+    fetchRoute r
   Navigate h ->
     io_ (setHash h)
   ToggleSelect i ->
@@ -73,3 +86,37 @@ updateModel = \case
     case route of
       CompareR a b | a == ra, b == rb -> compareL .= fromEither e
       _ -> pure ()  -- response arrived after navigation away; drop it
+  SseOpen ->
+    liveL .= LiveConnected
+  SseError ->
+    liveL .= LiveReconnecting
+  SseMessage raw ->
+    -- aeson-decode the change-feed line; anything undecodable is ignored
+    case eitherDecodeStrictText (fromMisoString raw :: Text) of
+      Right c -> issue (GotChange c)
+      Left _ -> pure ()
+  GotChange c -> do
+    -- debounce: first relevant change schedules a refetch 300ms out; further
+    -- changes coalesce into it. Route changes do NOT clear the queue — an
+    -- in-flight debounce simply refetches the new route, which is harmless.
+    route <- use routeL
+    queued <- use refetchQueuedL
+    when (relevantTo route (ms c.table) && not queued) $ do
+      refetchQueuedL .= True
+      withSink $ \sink -> setTimeout 300 (sink DoRefetch)
+  DoRefetch -> do
+    refetchQueuedL .= False
+    -- silent background refresh: no Loading flash, no expanded reset; the
+    -- stale-response guards on GotDetail/GotCompare make races safe
+    fetchRoute =<< use routeL
+
+-- | The fetch a route's entry kicks — shared by 'SetRoute' (which also resets
+-- to Loading) and 'DoRefetch' (which refreshes silently in the background).
+fetchRoute :: Route -> Effect parent props Model Action
+fetchRoute = \case
+  RunsR ->
+    fetchJson "/api/runs" GotRuns
+  RunR i ->
+    fetchJson ("/api/runs/" <> msShow i) (GotDetail i)
+  CompareR a b ->
+    fetchJson ("/api/compare?a=" <> msShow a <> "&b=" <> msShow b) (GotCompare a b)

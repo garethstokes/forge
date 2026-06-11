@@ -8,6 +8,7 @@
 module Evals.Ui.Model
   ( Route (..)
   , RemoteData (..)
+  , LiveStatus (..)
   , Model (..)
   , Action (..)
   , emptyModel
@@ -18,6 +19,10 @@ module Evals.Ui.Model
   , compareL
   , selectedL
   , expandedL
+  , liveL
+  , refetchQueuedL
+    -- * Live updates (pure)
+  , relevantTo
     -- * Hash routing (pure)
   , parseHash
   , runsHash
@@ -54,6 +59,13 @@ data RemoteData a
   | Got a
   deriving (Show, Eq)
 
+-- | Status of the @/api/events@ SSE feed (the EventSource auto-reconnects on
+-- its own; we only reflect what it last told us).
+data LiveStatus
+  = LiveConnected
+  | LiveReconnecting
+  deriving (Show, Eq)
+
 data Model = Model
   { _routeM :: Route
   , _runsM :: RemoteData [RunSummaryDto]
@@ -63,13 +75,18 @@ data Model = Model
     -- ^ run ids ticked for comparison on the runs view (at most two)
   , _expandedM :: [MisoString]
     -- ^ output cells toggled to full text (keys are view-local)
+  , _liveM :: LiveStatus
+  , _refetchQueuedM :: Bool
+    -- ^ a debounced 'DoRefetch' is already scheduled; coalesce further changes
   } deriving (Show, Eq)
 
 emptyModel :: Model
-emptyModel = Model RunsR NotAsked NotAsked NotAsked [] []
+emptyModel = Model RunsR NotAsked NotAsked NotAsked [] [] LiveReconnecting False
 
 data Action
-  = HashChanged
+  = Startup
+  -- ^ mounted: connect the SSE change feed, then route the initial hash
+  | HashChanged
   -- ^ the location hash changed (popstate/hashchange or initial mount)
   | SetRoute Route
   | Navigate MisoString
@@ -83,6 +100,17 @@ data Action
   --   be dropped before touching the model
   | GotCompare Int Int (Either MisoString CompareDto)
   -- ^ carries the requested (a, b) ids for the same stale-response guard
+  | SseOpen
+  -- ^ the EventSource (re)connected
+  | SseError
+  -- ^ the EventSource dropped; it reconnects on its own, we just show status
+  | SseMessage MisoString
+  -- ^ a raw @/api/events@ line; aeson-decoded in update — decodable lines
+  --   become 'GotChange', anything else is ignored silently
+  | GotChange ChangeDto
+  -- ^ a decoded change-feed hint: something in @table@ moved
+  | DoRefetch
+  -- ^ the 300ms debounce fired: refetch whatever the current route shows
   deriving (Show, Eq)
 
 -- Lenses --------------------------------------------------------------------
@@ -104,6 +132,26 @@ selectedL = lens _selectedM $ \r x -> r { _selectedM = x }
 
 expandedL :: Lens Model [MisoString]
 expandedL = lens _expandedM $ \r x -> r { _expandedM = x }
+
+liveL :: Lens Model LiveStatus
+liveL = lens _liveM $ \r x -> r { _liveM = x }
+
+refetchQueuedL :: Lens Model Bool
+refetchQueuedL = lens _refetchQueuedM $ \r x -> r { _refetchQueuedM = x }
+
+-- Live updates ----------------------------------------------------------------
+
+-- | Does a change in @table@ affect what the given route is showing?
+-- NOTE: deleting a run only emits @runs@ — the cascade-deleted children
+-- (outputs, scores, …) are silent — hence @runs@ is relevant everywhere.
+relevantTo :: Route -> MisoString -> Bool
+relevantTo route table =
+  case route of
+    RunsR -> table `elem` ["runs", "run_metrics"]
+    RunR _ -> table `elem` detailTables
+    CompareR _ _ -> table `elem` detailTables
+  where
+    detailTables = ["runs", "outputs", "scores", "run_metrics"]
 
 -- Hash routing --------------------------------------------------------------
 

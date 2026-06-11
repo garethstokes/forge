@@ -11,12 +11,13 @@
 module Evals.Ui.Fetch
   ( getHash
   , setHash
+  , setTimeout
   , fetchJson
   ) where
 
 import Data.Aeson (FromJSON, eitherDecodeStrictText)
 import Data.Text (Text)
-import Miso.DSL (JSVal, fromJSValUnchecked, jsg, setField, (!))
+import Miso.DSL (JSVal, asyncCallback, fromJSValUnchecked, jsg, setField, (!), (#))
 import Miso.Effect (Effect)
 import Miso.Fetch (Response (..), getText)
 import Miso.String (MisoString, fromMisoString, ms)
@@ -31,6 +32,15 @@ setHash :: MisoString -> IO ()
 setHash h = do
   loc <- jsg "window" ! "location"
   setField loc "hash" h
+
+-- | Run an action after @delayMs@ milliseconds via @window.setTimeout@.
+-- NOT 'Control.Concurrent.threadDelay': on the wasm reactor that would park
+-- the JS event loop; setTimeout schedules on it instead.
+setTimeout :: Int -> IO () -> IO ()
+setTimeout delayMs action = do
+  cb <- asyncCallback action
+  _ <- jsg "window" # "setTimeout" $ (cb, delayMs)
+  pure ()
 
 -- | GET @url@ and aeson-decode the response body, delivering the result
 -- (or a human-readable error) as a single action.
