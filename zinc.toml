@@ -27,7 +27,8 @@ depends = ["base", "text", "bytestring", "manifest", "manifest-evals"]
 
 [dependencies.manifest]
 repo = "https://github.com/garethstokes/manifest.git"
-rev = "7942161c263b399f2a123bdcb6b348020fbec19c"
+# Includes recursive cascade deletes (manifest-va2).
+rev = "e69621bca468bb7ec1028eb58a5cfcb8a4d4d20f"
 
 [dependencies.crucible]
 repo = "https://github.com/garethstokes/crucible.git"

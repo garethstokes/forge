@@ -39,14 +39,13 @@ main = withEphemeralDb $ \pool -> do
   expect "dataset round-trips by typed Key" (fst result == Just "demo")
   expect "dataset version is 1" (snd result == 1)
 
-  -- Scenario A: cascade deletes. Manifest cascades are single-level (each parent's
-  -- delete issues one DELETE per child rule; they do NOT recurse), so we exercise
-  -- both edges: deleting a Run removes its Outputs (Run->Output Cascade), and
-  -- deleting an Output removes its Scores (Output->Score Cascade). Rows not owned by
-  -- the deleted Run (Example, DatasetVersion) survive.
+  -- Scenario A: cascade deletes. Manifest cascades walk the whole rule tree
+  -- (since manifest-va2), so ONE Run delete removes its Outputs (Run->Output
+  -- Cascade) AND, transitively, the Scores under them (Output->Score Cascade).
+  -- Rows not owned by the deleted Run (Example, DatasetVersion) survive.
   cascade' <- expectCascade pool now
-  expect "cascade: run's outputs are gone"          (cOutputsGone cascade')
-  expect "cascade: output's scores are gone"        (cScoresGone cascade')
+  expect "cascade: run's outputs are gone"                 (cOutputsGone cascade')
+  expect "cascade: scores are gone transitively"           (cScoresGone cascade')
   expect "cascade: example survives the run delete"  (cExampleKept cascade')
   expect "cascade: dataset version survives"         (cVersionKept cascade')
 
@@ -93,19 +92,16 @@ expectCascade pool now = withSession pool $ do
   gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  -- Output o1 carries a Score and is deleted DIRECTLY (exercises Output->Score).
+  -- Output o1 carries a Score; o2 doesn't. ONE Run delete must remove both
+  -- outputs (Run->Output Cascade) and o1's score transitively (Output->Score).
   o1 <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "scored"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
   _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = 1.0, passed = Just True
                    , detail = Nothing, createdAt = now } :: Score)
-  -- Output o2 is removed by the Run delete (exercises Run->Output).
   _  <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "byrun"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  -- Edge 1: Output -> Score cascade (delete the output directly).
-  withTransaction $ delete o1
-  scores <- selectWhere [ #output ==. o1.id ]
-  -- Edge 2: Run -> Output cascade (delete the run; its remaining output goes).
   withTransaction $ delete r
+  scores <- selectWhere [ #output ==. o1.id ]
   outs   <- selectWhere [ #run ==. r.id ]
   exs    <- selectWhere [ #datasetVersion ==. v.id ]
   vers   <- get @DatasetVersion (Key v.id)
