@@ -35,6 +35,7 @@ import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport)
 import Crucible.Eval.Judge (Verdict(..), verdictCodec)
+import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
@@ -965,4 +966,25 @@ main = runChecks
            r = renderReport rep
        in ( T.isInfixOf "[judge uncertain 2-1: review by hand]" r
           , T.isInfixOf "[judge error]" r ))
+  -- eval rubric upgrades: calibration
+  , check "calibrate: agreement/kappa/fail metrics on scripted verdicts"
+      (CalibrationReport 0.75 0.5 1.0 0.5 [] [])
+      (runPureEff (runLLMScripted
+         [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}"
+         , "{\"why\":\"\",\"pass\":false}", "{\"why\":\"\",\"pass\":true}" ]
+         (calibrate 1 id "r"
+            [ ("c1", "o" :: Text, True), ("c2", "o", True)
+            , ("c3", "o", False), ("c4", "o", False) ])))
+  , check "calibrate: degenerate denominators are defined"
+      (CalibrationReport 1.0 0 1.0 1.0 [] [])
+      (runPureEff (runLLMScripted
+         [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}" ]
+         (calibrate 1 id "r" [("c1", "o" :: Text, True), ("c2", "o", True)])))
+  , check "calibrate: contested and judge-error cases listed; errors excluded from stats"
+      (["split"], ["broken"], 1.0)
+      (let r = runPureEff (runLLMScripted
+                 [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":false}", "{\"why\":\"\",\"pass\":true}"
+                 , "j1", "j2", "j3", "j4", "j5", "j6" ]
+                 (calibrate 3 id "r" [("split", "o" :: Text, True), ("broken", "o", True)]))
+       in (r.contested, r.judgeErrors, r.agreement))
   ]
