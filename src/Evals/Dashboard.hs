@@ -28,12 +28,13 @@ import Manifest (Aeson (..), Cond, Db, get, selectWhere, withSession, Key (..), 
 import Manifest.Postgres (Pool)
 
 import Evals.Api
+import Evals.Dashboard.Events (EventHub, sseResponse)
 import Evals.Ids
 import Evals.Schema
 
 -- | The WAI application: routes API calls and serves static files.
-dashboardApp :: Pool -> FilePath -> Application
-dashboardApp pool staticDir req respond =
+dashboardApp :: Pool -> FilePath -> EventHub -> Application
+dashboardApp pool staticDir hub req respond =
   case pathInfo req of
     ["api", "datasets"]     -> apiWith (datasetsHandler pool respond)
     ["api", "runs"]         -> apiWith (runsHandler pool (queryParam "datasetVersion" req) respond)
@@ -42,6 +43,7 @@ dashboardApp pool staticDir req respond =
         Nothing  -> respond (badRequest "invalid run id")
         Just n   -> apiWith (runDetailHandler pool (RunId n) respond)
     ["api", "compare"]      -> apiWith (compareHandler pool req respond)
+    ["api", "events"]       -> respond (sseResponse hub)
     ("api" : _)             -> respond notFound
     segments                -> staticHandler staticDir (normalise segments) respond
   where

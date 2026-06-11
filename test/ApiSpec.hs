@@ -5,24 +5,31 @@
 {-# LANGUAGE TypeApplications #-}
 module ApiSpec (main) where
 
+import Control.Concurrent (forkIO)
 import Control.Monad (unless)
-import Data.Aeson (FromJSON, ToJSON, Value, decode, encode, object, (.=))
+import Data.Aeson (FromJSON, ToJSON, Value (..), decode, encode, object, (.=))
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString.Lazy as LBS
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Time (UTCTime (..), fromGregorian, getCurrentTime)
 import Evals.Api
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Timeout (timeout)
 
 -- server spec imports
-import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseHeaders, responseStatus)
+import Network.HTTP.Client (BodyReader, brRead, defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseHeaders, responseStatus, responseTimeout, responseTimeoutNone, withResponse)
 import Network.HTTP.Types (hContentType)
 import Network.HTTP.Types.Status (statusCode)
 import Network.Wai.Handler.Warp (testWithApplication)
 
 import Manifest (Aeson (..), add, withSession)
 import Manifest.Postgres (Pool)
-import Manifest.Testing (withEphemeralDb)
+import Manifest.Testing (withEphemeralDb, withEphemeralDb')
 
 import Evals.Dashboard (dashboardApp)
+import Evals.Dashboard.Events (EventHub, newEventHub, runListener)
 import Evals.Ids
 import Evals.Migrate (migrateAll)
 import Evals.Schema
@@ -241,6 +248,9 @@ main = do
   expect "ChangeDto wire keys"
     ((decode (encode (ChangeDto "runs" (Just "7"))) :: Maybe Value)
        == Just (object ["table" .= ("runs" :: Text), "key" .= ("7" :: Text)]))
+  expect "ChangeDto pk-less wire shape"
+    ((decode (encode (ChangeDto "scores" Nothing)) :: Maybe Value)
+       == Just (object ["table" .= ("scores" :: Text), "key" .= Null]))
   -- Golden wire assertions: pin the exact JSON shape, not just the round-trip.
   expect "ApiError wire shape" $
     (decode (encode (ApiError "x")) :: Maybe Value)
@@ -269,6 +279,7 @@ main = do
         )
   serverSpec
   compareSpec
+  sseSpec
   putStrLn "manifest-evals ApiSpec: dto round-trips + api + compare OK"
 
 serverSpec :: IO ()
@@ -304,7 +315,8 @@ serverSpec = withEphemeralDb $ \pool -> do
     _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now } :: RunMetric)
     pure (r.id, v.id)
   mgr <- newManager defaultManagerSettings
-  testWithApplication (pure (dashboardApp pool staticDir)) $ \port -> do
+  hub <- newEventHub
+  testWithApplication (pure (dashboardApp pool staticDir hub)) $ \port -> do
     let getReq path = parseRequest ("http://localhost:" <> show port <> path) >>= flip httpLbs mgr
     -- /api/datasets: 2 datasets, returned in name order (demo < zeta)
     r1 <- getReq "/api/datasets"
@@ -424,7 +436,8 @@ compareSpec = withEphemeralDb $ \pool -> do
     _  <- add (Output { id = OutputId 0, run = rC.id, example = cx.id, response = Nothing, text = Just "cx1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
     pure (rA.id, rB.id, rC.id)
   mgr <- newManager defaultManagerSettings
-  testWithApplication (pure (dashboardApp pool "test-static")) $ \port -> do
+  hub <- newEventHub
+  testWithApplication (pure (dashboardApp pool "test-static" hub)) $ \port -> do
     let getReq path = parseRequest ("http://localhost:" <> show port <> path) >>= flip httpLbs mgr
         RunId aInt = runAId
         RunId bInt = runBId
@@ -492,3 +505,61 @@ compareSpec = withEphemeralDb $ \pool -> do
     -- Unknown id -> 404
     rUnk <- getReq ("/api/compare?a=999999&b=" <> show bInt)
     expect "compare unknown id 404" (statusCode (responseStatus rUnk) == 404)
+
+sseSpec :: IO ()
+sseSpec = withEphemeralDb' $ \conninfo pool -> do
+  _ <- withSession pool migrateAll
+  now <- getCurrentTime
+  hub <- newEventHub
+  _ <- forkIO (runListener conninfo hub)
+  mgr <- newManager defaultManagerSettings
+  testWithApplication (pure (dashboardApp pool "static" hub)) $ \port -> do
+    req0 <- parseRequest ("http://localhost:" <> show port <> "/api/events")
+    let req = req0 { responseTimeout = responseTimeoutNone }
+    withResponse req mgr $ \resp -> do
+      expect "sse content type"
+        (lookup "Content-Type" (responseHeaders resp) == Just "text/event-stream")
+      body <- seedUntilData pool now (responseBody resp)
+      expect "a data: line decodes to a runs ChangeDto"
+        (case extractData body of
+           Just json -> case decode json :: Maybe ChangeDto of
+             Just c -> c.table == "runs" && c.key /= Nothing
+             Nothing -> False
+           Nothing -> False)
+
+-- | Seed the database until we get a 'data: ' line from the SSE stream.
+-- Creates dataset/version/target/tv once, then per iteration inserts one Run
+-- and reads with a 200ms budget. Returns the accumulated ByteString once it
+-- contains "data: ", or errors after 50 iterations.
+seedUntilData :: Pool -> UTCTime -> BodyReader -> IO BS.ByteString
+seedUntilData pool now body = do
+  -- Create shared entities once outside the loop.
+  (dvId, tvId) <- withSession pool $ do
+    d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "sse-ds", slug = "sse-ds", createdAt = now } :: Dataset)
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "sse-tgt", createdAt = now } :: Target)
+    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p", params = Aeson (object []), createdAt = now } :: TargetVersion)
+    pure (v.id, tv.id)
+  accRef <- newIORef BS.empty
+  go accRef dvId tvId (50 :: Int)
+  where
+    go _ _ _ 0 = ioError (userError "seedUntilData: no SSE data received after 50 iterations")
+    go accRef dvId tvId n = do
+      _ <- withSession pool $
+        add (Run { id = RunId 0, org = OrgId 1, datasetVersion = dvId, targetVersion = tvId, status = "seed", startedAt = Nothing, finishedAt = Nothing, meta = Nothing, createdAt = now } :: Run)
+      mChunk <- timeout 200000 (brRead body)
+      case mChunk of
+        Just chunk | not (BS.null chunk) -> modifyIORef' accRef (<> chunk)
+        _ -> pure ()
+      acc <- readIORef accRef
+      if BC.isInfixOf "data: " acc
+        then pure acc
+        else go accRef dvId tvId (n - 1)
+
+-- | Extract the first SSE 'data: ' line, stripping the prefix, as lazy bytes
+-- for use with 'decode'.
+extractData :: BS.ByteString -> Maybe LBS.ByteString
+extractData bs =
+  case filter (BC.isPrefixOf "data: ") (BC.lines bs) of
+    []      -> Nothing
+    (l : _) -> Just (LBS.fromStrict (BC.drop 6 l))
