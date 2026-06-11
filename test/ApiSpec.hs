@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeApplications #-}
 module ApiSpec (main) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, killThread)
 import Control.Monad (unless)
 import Data.Aeson (FromJSON, ToJSON, Value (..), decode, encode, object, (.=))
 import qualified Data.ByteString as BS
@@ -511,7 +511,7 @@ sseSpec = withEphemeralDb' $ \conninfo pool -> do
   _ <- withSession pool migrateAll
   now <- getCurrentTime
   hub <- newEventHub
-  _ <- forkIO (runListener conninfo hub)
+  tid <- forkIO (runListener conninfo hub)
   mgr <- newManager defaultManagerSettings
   testWithApplication (pure (dashboardApp pool "static" hub)) $ \port -> do
     req0 <- parseRequest ("http://localhost:" <> show port <> "/api/events")
@@ -526,11 +526,13 @@ sseSpec = withEphemeralDb' $ \conninfo pool -> do
              Just c -> c.table == "runs" && c.key /= Nothing
              Nothing -> False
            Nothing -> False)
+  killThread tid
 
--- | Seed the database until we get a 'data: ' line from the SSE stream.
+-- | Seed the database until we get a complete, aeson-decodable SSE event.
 -- Creates dataset/version/target/tv once, then per iteration inserts one Run
--- and reads with a 200ms budget. Returns the accumulated ByteString once it
--- contains "data: ", or errors after 50 iterations.
+-- and reads with a 200ms budget. Returns the accumulated ByteString once
+-- 'extractData' yields a line that decodes to a 'ChangeDto', or errors after
+-- 50 iterations.
 seedUntilData :: Pool -> UTCTime -> BodyReader -> IO BS.ByteString
 seedUntilData pool now body = do
   -- Create shared entities once outside the loop.
@@ -552,9 +554,9 @@ seedUntilData pool now body = do
         Just chunk | not (BS.null chunk) -> modifyIORef' accRef (<> chunk)
         _ -> pure ()
       acc <- readIORef accRef
-      if BC.isInfixOf "data: " acc
-        then pure acc
-        else go accRef dvId tvId (n - 1)
+      case extractData acc >>= \json -> decode json :: Maybe ChangeDto of
+        Just _  -> pure acc
+        Nothing -> go accRef dvId tvId (n - 1)
 
 -- | Extract the first SSE 'data: ' line, stripping the prefix, as lazy bytes
 -- for use with 'decode'.

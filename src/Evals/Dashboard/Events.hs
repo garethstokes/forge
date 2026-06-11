@@ -14,7 +14,7 @@ module Evals.Dashboard.Events
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (TChan, atomically, dupTChan, newBroadcastTChanIO, readTChan, writeTChan)
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Control.Monad (forever)
 import Data.Aeson (encode)
 import Data.ByteString (ByteString)
@@ -43,13 +43,17 @@ watchedTables = ["runs", "outputs", "scores", "run_metrics"]
 
 -- | The listener supervisor: 'Manifest.Notify.listenChanges' throws on
 -- connection loss by contract (the caller owns retry) — this is that caller.
--- Log and reconnect with a 1s backoff, forever. Run on its own thread.
+-- Async exceptions (killThread) propagate; everything else is logged and retried
+-- with a 1s backoff. Run on its own thread.
 runListener :: ByteString -> EventHub -> IO ()
 runListener conninfo hub = forever $ do
   r <- try (Notify.listenChanges conninfo watchedTables (publish hub . toDto))
   case r of
     Left (e :: SomeException) ->
-      hPutStrLn stderr ("evals-dashboard: change-feed listener died: " <> show e <> "; reconnecting in 1s")
+      case fromException e :: Maybe SomeAsyncException of
+        Just _  -> throwIO e
+        Nothing ->
+          hPutStrLn stderr ("evals-dashboard: change-feed listener died: " <> show e <> "; reconnecting in 1s")
     Right () -> pure ()
   threadDelay 1000000
   where
@@ -61,6 +65,8 @@ runListener conninfo hub = forever $ do
 -- | The SSE stream for one client: a fresh dup of the hub, then alternate
 -- between forwarding events and 25s keepalive comments (which also surface
 -- dead clients as write failures, ending this handler's thread).
+-- Note: dead-client detection is bounded by the keepalive cadence (~25-50s
+-- worst case), during which a dead dup buffers events.
 sseResponse :: EventHub -> Response
 sseResponse (EventHub ch) =
   responseStream status200

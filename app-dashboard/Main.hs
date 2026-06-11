@@ -5,7 +5,6 @@
 module Main (main) where
 
 import Control.Concurrent (forkIO)
-import qualified Data.ByteString.Char8 as BC
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import System.Environment (lookupEnv)
@@ -22,9 +21,10 @@ main = do
   port      <- maybe 8787 read <$> lookupEnv "EVALS_HTTP_PORT"
   staticDir <- maybe "static" id <$> lookupEnv "EVALS_STATIC_DIR"
   dbUrl     <- requireEnv "MANIFEST_DATABASE_URL"
-  pool      <- newPool (TE.encodeUtf8 (T.pack dbUrl)) 8
+  let dbUrlBs = TE.encodeUtf8 (T.pack dbUrl)
+  pool      <- newPool dbUrlBs 8
   hub       <- newEventHub
-  _         <- forkIO (runListener (BC.pack dbUrl) hub)
+  _         <- forkIO (runListener dbUrlBs hub)
   putStrLn ("evals-dashboard: serving " <> staticDir <> " on http://localhost:" <> show port)
   Warp.run port (dashboardApp pool staticDir hub)
 
