@@ -11,6 +11,28 @@ as a small set of capabilities (talking to a model, calling tools, streaming,
 recording), each a dynamic effect you discharge with an interpreter you choose:
 scripted for tests, live for production, a cassette for hermetic replay.
 
+## Why
+
+Code that talks to a language model tends to accumulate the same problems.
+The model returns text, so every call site grows its own parsing: strip the
+markdown fence, find the JSON, hope the keys match, and handle the day the
+model phrases its reply differently. The schema described in the prompt, the
+parser, and the application type are three separate artifacts that drift
+apart silently. Tool handlers re-implement argument validation by hand and
+smuggle errors back as strings. And because every test needs a live API key,
+the test suite is slow, costly, and nondeterministic, so the agent logic
+mostly goes untested.
+
+crucible's answer is one codec per type and an interpreter per environment.
+A single `HasCodec` instance drives the schema the model is shown, the
+decoder its reply goes through, and a tool's argument and result handling,
+so the three artifacts cannot drift. Replies that fail to decode are re-asked
+with the parse error, and tool mistakes are fed back with the expected
+schema, so the model corrects itself instead of crashing your program. The
+same agent code runs against a scripted interpreter in CI, a recorded
+cassette for regression tests, or a live provider (Anthropic or OpenAI) in
+production; switching is one line at the program's edge, not a rewrite.
+
 Declare a skill once: a typed input, a typed output, a prompt template. The
 output type's JSON schema rides the prompt; the reply is decoded back into your
 type, with bad replies re-asked automatically.
