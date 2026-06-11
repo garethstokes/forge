@@ -246,3 +246,54 @@ confused, and `calibrate` excludes judge-error cases from all four rates,
 listing their names in `judgeErrors` instead. If judge errors recur, the fix
 is usually in the rubric text (something in it is steering the judge away
 from the required JSON shape), not in the system under test.
+
+## Rubric rules at a glance
+
+The whole page as a checklist. Each rule links back to the section that
+explains it.
+
+Writing criteria:
+
+1. One observable fact per criterion; checkable from the output alone.
+   ([Writing observable criteria](#writing-observable-criteria))
+2. Binary, never scaled. Granularity comes from more criteria, not a wider
+   scale. ([The grading ladder](#the-grading-ladder))
+3. Phrase so "yes" is unambiguously the good outcome.
+   ([Lint your rubric](#lint-your-rubric))
+4. Negative criteria ("does not...") are first-class; state prohibitions
+   explicitly. ([Writing observable criteria](#writing-observable-criteria))
+5. One thing per criterion; split anything joined by "and".
+   ([Lint your rubric](#lint-your-rubric))
+
+Structuring the rubric:
+
+6. Derive criteria from failures you have actually observed, not from
+   imagining what quality means. ([Lint your rubric](#lint-your-rubric))
+7. Cap a checklist at roughly 5 to 7 criteria; split beyond that.
+   ([When to split a rubric](#when-to-split-a-rubric))
+8. Hard gates (safety, format) get their own `Checklist` case, never a
+   weight. ([When to split a rubric](#when-to-split-a-rubric))
+9. Merge near-duplicate criteria; they double-count under weights.
+   ([Lint your rubric](#lint-your-rubric))
+10. After writing, walk your failure list: every failure mode you care about
+    maps to some criterion. ([Lint your rubric](#lint-your-rubric))
+
+Setting up the judging:
+
+11. Deterministic graders first: if `Exactly` or `Predicate` can check it,
+    no judge call. ([The grading ladder](#the-grading-ladder))
+12. Where possible, judge with a different model family than the system
+    under test; judges measurably prefer outputs from their own family. With
+    both providers wired in, a skill run on one can be judged through the
+    other.
+13. Vote (`runEvalN 3`) on contested or high-stakes cases; the `2-1` flag is
+    a free uncertainty signal. ([Voting and uncertainty](#voting-and-uncertainty))
+
+Trusting the numbers:
+
+14. Calibrate before believing: ~30 hand labels, iterate wording until kappa
+    clears 0.6. ([Calibrating the judge](#calibrating-the-judge))
+15. Spend new labels on the `contested` list; that is where a label buys the
+    most. ([Calibrating the judge](#calibrating-the-judge))
+16. Every triaged production failure becomes a regression case; the eval set
+    grows from real failures, not invented ones.
