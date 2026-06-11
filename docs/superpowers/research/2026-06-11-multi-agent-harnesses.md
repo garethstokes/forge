@@ -13,7 +13,8 @@ parallel over tmux, with seven fixed roles, git-worktree-backed work state,
 and the beads (bd) issue tracker as the persistent ledger. It works, at high
 cost and with quality losses its own author documents. Across Gas Town,
 Anthropic's research system, Claude Code subagents, LangGraph, CrewAI, the
-OpenAI Agents SDK, and the AutoGen succession, the design that survived
+OpenAI Agents SDK, the AutoGen succession, and the personal-assistant
+harnesses OpenClaw and Hermes Agent, the design that survived
 practice is orchestrator-worker with isolated child contexts and typed,
 result-only handoffs. Free-form group chat and closed-loop debate did not
 survive (AutoGen's own migration guide retreats to typed graphs; the
@@ -225,6 +226,115 @@ self-published and its design (shared memory, many roles, neural
 terminology) runs opposite to the isolation-and-typed-handoff consensus of
 the systems above. Treat as a popularity data point, not a design source.
 
+### OpenClaw
+
+OpenClaw is Peter Steinberger's self-hosted personal assistant: one
+long-running Gateway process bridging messaging channels (WhatsApp,
+Telegram, Slack, Discord, Signal, iMessage, twenty-plus adapters) to an
+embedded coding-agent runtime (https://github.com/openclaw/openclaw,
+https://docs.openclaw.ai/concepts/agent). First published November 24 2025
+as Warelay, renamed to Clawdbot, then to Moltbot after Anthropic trademark
+complaints, then to OpenClaw on January 30 2026. Adoption was the fastest
+in this survey: past 247k GitHub stars by March 2026; Steinberger joined
+OpenAI in February 2026 and an OpenClaw Foundation took stewardship
+(https://en.wikipedia.org/wiki/OpenClaw).
+
+The inner loop is not its own. OpenClaw embeds pi, Mario Zechner's minimal
+terminal coding agent (four core tools: read, write, edit, bash; a system
+prompt under 1k tokens), driven in RPC mode over JSONL framing
+(https://lucumr.pocoo.org/2026/1/31/pi/, https://pi.dev/). The viral
+assistant is therefore a Claude-Code-style tool loop wrapped in a channel
+gateway; the differentiating engineering is ingress and routing, not agent
+coordination.
+
+Control flow: a single embedded agent per Gateway by default, with its own
+workspace, bootstrap files, and session store; messages arriving mid-run
+are steered into the active run and delivered after the current turn
+finishes (https://docs.openclaw.ai/concepts/agent). Multi-agent routing
+exists but means multiple isolated assistants, not a team: each agent is a
+fully scoped identity with its own workspace, state directory, auth
+profiles, and session store, and deterministic bindings map channel,
+account, and peer to an agent with most-specific-wins precedence
+(https://docs.openclaw.ai/concepts/multi-agent). There is no agent-to-agent
+coordination layer; concurrency is many sessions of one assistant, not
+many collaborators. State: session transcripts as JSONL per agent; memory
+is markdown in the workspace (AGENTS.md operating instructions, SOUL.md
+persona) injected into the system prompt on the first turn.
+
+Human gates and security: core tools are subject to a per-agent tool
+policy (https://docs.openclaw.ai/gateway/security), but deployed practice
+was permissive, and OpenClaw has the worst security record in this survey:
+CVE-2026-25253 (CVSS 8.8) patched January 30 2026; indirect prompt
+injection through message link previews used for data exfiltration; shared
+DM contexts leaking one user's secrets to another; and tens of thousands
+of misconfigured gateways exposed to the public internet
+(https://thehackernews.com/2026/03/openclaw-ai-agent-flaws-could-enable.html,
+https://www.giskard.ai/knowledge/openclaw-security-vulnerabilities-include-data-leakage-and-prompt-injection-risks,
+https://www.bitsight.com/blog/openclaw-ai-security-risks-exposed-instances).
+Chinese authorities restricted government use in March 2026
+(https://en.wikipedia.org/wiki/OpenClaw). The failure is structural, not
+incidental: an always-on process with shell authority reading untrusted
+input from public channels erases the line between operator and attacker.
+The design lessons for this note: the field's inner loop is now a
+commodity (OpenClaw simply imported pi) while the gateway and
+session-binding layer is where both the product value and the risk
+concentrate; and tool authority must be scoped per deployment surface,
+not granted harness-wide.
+
+### Hermes Agent (Nous Research)
+
+Disambiguation: Hermes is also Nous Research's open-weight model family,
+and "Hermes agentic" search results mix the two. The artifact relevant
+here is Hermes Agent, the open-source harness Nous Research shipped in
+February 2026 (https://github.com/NousResearch/hermes-agent), chosen over
+the model family because it is the thing that competes in the harness
+landscape; despite the brand it is model-agnostic, with provider runtime
+resolution across 18+ providers and three API modes (chat_completions,
+codex_responses, anthropic)
+(https://hermes-agent.nousresearch.com/docs/developer-guide/architecture).
+It is the fastest-growing harness of 2026: about 175k GitHub stars by June
+2026, v0.9.0 shipped April 13 2026, and in May it passed OpenClaw on
+OpenRouter's daily inference rankings
+(https://composio.dev/content/openclaw-vs-hermes-agent).
+
+Control flow: a synchronous AIAgent loop (provider selection, prompt
+construction, tool dispatch, retries, fallback, context compression,
+persistence) fronted by a GatewayRunner with about twenty platform
+adapters, allowlists and DM pairing for authorization, and a cron
+scheduler whose jobs create fresh agent instances with no conversation
+history. Structurally the same shape as OpenClaw, a channel gateway around
+one tool-loop agent, arrived at independently. Communication and
+delegation: delegate_task spawns sub-agents that are fully isolated by
+design, each with its own conversation and terminal, unable to see each
+other's work or the parent's memory; the parent consumes only the result
+(https://github.com/NousResearch/hermes-agent/issues/377). That is another
+independent convergence on result-only handoff. Open feature requests push
+toward shared memory pools and role archetypes (Coordinator, Researcher,
+Reviewer, Synthesizer)
+(https://github.com/NousResearch/hermes-agent/issues/344), which is
+community pressure toward exactly the shared-memory and role-catalog
+patterns the rest of this note records as retired.
+
+State: SQLite sessions with FTS5 search and lineage tracking across
+compressions; single-select pluggable memory providers and context engines
+(default is lossy summarization past a threshold); skills injected into
+the system prompt. The product pitch is the learning loop: memory and
+skills accumulate across sessions, so the agent improves the longer it
+runs. Human gates and observability are first-class: a built-in approval
+layer with dangerous-command detection and configurable callbacks for
+clarification, sudo elevation, and explicit approval, and every tool call
+surfaced to the user via callbacks with progress shown as chat messages.
+Tool execution spans 70+ tools across roughly 28 toolsets, with terminal
+backends for local, Docker, SSH, Daytona, Modal, and Singularity, so
+sandboxing is a configuration choice rather than a default
+(https://hermes-agent.nousresearch.com/docs/developer-guide/architecture).
+
+The lesson: a second mass-adopted harness independently chose isolated
+result-only sub-agents plus an action-approval gate, which strengthens the
+consensus this note already documents, and its issue tracker shows how
+hard users will push a single-agent harness back toward shared memory and
+role catalogs.
+
 ## The older papers, and what survived
 
 - CAMEL (https://arxiv.org/abs/2303.17760): two role-playing agents driven
@@ -283,13 +393,26 @@ Every surveyed harness reassembles roughly the same parts:
    filesystem analogue).
 9. Observability (tracing in every SDK; its weakness is the top complaint
    about Gas Town).
+10. Tool policy and action approval (OpenClaw per-agent tool policy,
+    Hermes dangerous-command detection with approval callbacks). Distinct
+    from reviewer gates: a reviewer gate judges a finished artifact, an
+    approval gate intercepts an individual dangerous action before it
+    runs. OpenClaw's exploit record shows what its absence costs once a
+    harness has shell authority and untrusted input.
+
+The personal-assistant harnesses also share an ingress layer the coding
+harnesses lack: a channel gateway with deterministic session binding
+(OpenClaw bindings, Hermes GatewayRunner). It is a recurring part, but an
+application part, and OpenClaw shows it is also where the security risk
+concentrates.
 
 Which are library concerns for crucible? The ones that are about typed
 boundaries and control flow: handoff typing, spawn/collect control, judge
 gates, budgets, ledger and observability as effect interfaces with swappable
 interpreters. Which are application concerns: role prompt content, process
-and worktree management, mail transports, merge queues, daemons and
-nudging, human approval UI, scheduling. Gas City's own evolution confirms
+and worktree management, mail transports, channel gateways and session
+binding, merge queues, daemons and nudging, human approval UI, scheduling.
+Gas City's own evolution confirms
 the split: Yegge ended up extracting an SDK (identity, messaging, state,
 work-as-data) from the application (towns, patrols, tmux).
 
@@ -365,6 +488,13 @@ What crucible should NOT try to be:
   shipping opinions that expire.
 - Not a merge queue or VCS layer. The Refinery solves a git problem, not
   an LLM problem.
+- Not a channel gateway. Messaging adapters, session bindings, and
+  always-on processes are OpenClaw's and Hermes Agent's domain, and
+  OpenClaw's exposure record shows that layer is a security surface a
+  library should not implicitly own. The transferable lesson crucible can
+  honor in-process is least authority: a toolbox is already an explicit
+  allowlist, so interpreters should keep it that way per agent rather
+  than sharing one broad toolbox across every spawn.
 - No group chat, blackboard, or debate combinators. Free-form group chat
   was retired by its own inventors; shared mutable memory invites the
   conflicting-implicit-decisions failure; closed-loop debate is ruled out
@@ -406,6 +536,21 @@ Nobody in the surveyed field has the typed boundary; everybody needs it.
 - https://openai.github.io/openai-agents-python/
 - https://developers.openai.com/api/docs/guides/agents
 - https://github.com/ruvnet/ruflo
+- https://github.com/openclaw/openclaw
+- https://docs.openclaw.ai/concepts/agent
+- https://docs.openclaw.ai/concepts/multi-agent
+- https://docs.openclaw.ai/gateway/security
+- https://en.wikipedia.org/wiki/OpenClaw
+- https://lucumr.pocoo.org/2026/1/31/pi/ (pi, the agent loop inside OpenClaw)
+- https://pi.dev/
+- https://thehackernews.com/2026/03/openclaw-ai-agent-flaws-could-enable.html
+- https://www.giskard.ai/knowledge/openclaw-security-vulnerabilities-include-data-leakage-and-prompt-injection-risks
+- https://www.bitsight.com/blog/openclaw-ai-security-risks-exposed-instances
+- https://github.com/NousResearch/hermes-agent
+- https://hermes-agent.nousresearch.com/docs/developer-guide/architecture
+- https://github.com/NousResearch/hermes-agent/issues/344 (role archetypes request)
+- https://github.com/NousResearch/hermes-agent/issues/377 (shared memory pools request)
+- https://composio.dev/content/openclaw-vs-hermes-agent
 - https://arxiv.org/abs/2303.17760 (CAMEL)
 - https://arxiv.org/abs/2305.14325 (multi-agent debate)
 - https://arxiv.org/abs/2308.08155 (AutoGen)

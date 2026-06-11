@@ -176,6 +176,119 @@ episodic/semantic/procedural split also got procedural-specific work:
 ProcMEM learns reusable procedures from experience
 ([arXiv 2602.01869](https://arxiv.org/abs/2602.01869)).
 
+## Memory shapes: linear, star, tree, graph
+
+The architectures above differ less in their policies than in the shape
+of the store those policies operate on. The literature does draw this
+line, though not always with these names. The graph-memory survey
+([arXiv 2602.05665](https://arxiv.org/abs/2602.05665)) splits memory
+into non-structural ("linear or buffer-based memory, such as fixed-length
+token windows or conversation histories, which maintain recent
+interactions but suffer from information loss and lack relational
+context") and structural (trees, knowledge graphs, temporal graphs,
+hypergraphs, hybrids). A unified benchmark
+([arXiv 2604.01707](https://arxiv.org/abs/2604.01707)) compares flat,
+hierarchical, vector, and graph storage head to head. The star shape is
+the one the papers do not name; the closest published concept is the
+profile versus collection distinction in LangMem
+([conceptual guide](https://langchain-ai.github.io/langmem/concepts/conceptual_guide/))
+and entity-centric user-model work
+([arXiv 2510.07925](https://arxiv.org/abs/2510.07925)). The lens earns
+its keep because each shape makes a different set of operations cheap,
+and most memory-system pathology is a shape mismatch.
+
+**Linear: an ordered, append-only sequence.** Transcripts, episodic
+streams, event logs. Generative Agents' memory stream is the canonical
+example; MemGPT's recall storage is a searchable linear log. Cheap:
+append (constant time, no reconciliation), replay, recency windows, and
+compaction by summarizing a prefix. Expensive: cross-cutting recall
+("everything we know about X") needs a scan or an external index, and
+multi-hop relational questions fail outright; the unified benchmark
+finds systems without connection mechanisms (MemoryBank, MemGPT) do
+poorly on exactly those tasks. Linear is also the only shape that
+preserves full ordering and provenance for free, which is why every
+other shape is derived from a linear substrate rather than replacing it.
+In crucible: a Skill call's message transcript is a linear memory, a
+cassette is a linear memory persisted to disk (an ordered recording you
+replay), and `AgentState` is literally
+`newtype AgentState = AgentState { transcript :: [Message] }`.
+
+**Star: one hub entity with typed spokes.** A profile: a single record
+about a known subject (the user, the project, the deployment) whose
+fields are slots filled and overwritten in place. LangMem's profile is
+the explicit version: a schema-bound document representing current
+state, where "when new information arrives, it updates the existing
+document rather than creating a new one," versus a collection, which
+must reconcile each insert against prior beliefs. ChatGPT's pre-Dreaming
+saved-memories list and classic slot-filling user models are stars.
+Cheap: retrieval is a constant-time lookup of the whole record, it
+always fits a known token budget, and humans can read and edit it.
+Expensive: the write side, because every update is read-modify-write
+with conflict resolution at write time; anything outside the schema is
+dropped or shoehorned; history is lost unless versions are kept; and
+queries across many entities are unsupported (many stars do not make a
+graph until you link them). Star is the natural consolidation target
+for personalization: Dreaming-style pipelines read linear transcripts
+and emit star-shaped state.
+
+**Tree: hierarchy of summaries.** Leaves hold raw items, internal nodes
+hold summaries of their children, so the same store answers at any
+granularity. MemTree ([arXiv 2410.14052](https://arxiv.org/abs/2410.14052))
+routes each new item from the root toward semantically similar leaves
+and recursively updates ancestor summaries; MemForest adds hierarchical
+temporal indexing ([arXiv 2605.23986](https://arxiv.org/abs/2605.23986)).
+Cheap: budget-bounded recall (take a shallow summary or descend for
+detail) and built-in consolidation, since compaction is the structure.
+Expensive: write amplification (every insert touches its ancestors'
+summaries) and repair when early clustering was wrong. Empirically
+trees are the strongest single shape on long-conversation benchmarks:
+the unified benchmark has MemTree topping LongMemEval F1 at the 7B
+scale, with the caveat that accuracy correlated with token spend and
+rule-based hierarchical systems degraded more gracefully at scale.
+
+**Graph: arbitrary nodes and links.** A-MEM's Zettelkasten notes,
+Zep/Graphiti's bi-temporal knowledge graph, HippoRAG's hippocampal
+index, Mem0g's entity-relation store. Cheap at read time: multi-hop and
+relational recall, entity-centric queries, per-edge temporal validity.
+Expensive at write time: each insert is extraction plus linking plus
+conflict resolution, typically one or more LLM calls, and retrieval
+pays traversal latency. The costs are measurable: Mem0's own evaluation
+([arXiv 2504.19413](https://arxiv.org/abs/2504.19413)) has the graph
+variant Mem0g buying about 1.5 points of LoCoMo judge score over flat
+Mem0 at roughly half again the search latency, which is why their
+production guidance keeps the graph as an augmentation, not the base
+([Mem0 graph-memory comparison](https://mem0.ai/blog/graph-memory-solutions-ai-agents)).
+
+**When does which shape win?** The graph survey's own verdict is "there
+is no single paradigm that fits all scenarios." Linear wins when order
+and completeness matter (debugging, audit, replay, short tasks) and
+when write cost must be near zero. Star wins when there is one obvious
+subject, a stable schema, and a hard recall budget. Tree wins on long
+single-stream histories needing recall at mixed granularity. Graph wins
+when questions are relational and multi-hop across many entities, or
+when fact validity changes over time. Two recent results push back on
+reaching for structure early: SimpleMem
+([arXiv 2601.02553](https://arxiv.org/abs/2601.02553)) gets a 26.4%
+average F1 gain on LoCoMo with up to 30x fewer inference tokens from
+aggressive semantic compression over a flat store, arguing density beats
+topology; and FluxMem ([arXiv 2602.14038](https://arxiv.org/abs/2602.14038))
+treats the shape itself as a learned per-interaction choice among
+complementary structures, which only makes sense if no fixed shape
+dominates.
+
+**Consolidation is a shape change.** Read the three-policy summary
+through this lens and consolidation is the pump that moves information
+from linear toward star and graph: Mem0's extract-and-update reads a
+rolling linear transcript and maintains a star-ish fact store, A-MEM
+turns linear arrivals into graph notes and links, Dreaming reads years
+of linear history and rewrites star-shaped user state, MemTree folds a
+linear stream into a tree as it arrives. The linear layer is where
+truth enters; the structured layers are derived views bought with
+consolidation compute. In crucible's terms: skills and cassettes stay
+linear, a profile record with a `HasCodec` instance is the star, a wiki
+of linked pages is the graph, and a consolidation Skill is the thing
+that moves content across shapes.
+
 ## Failure modes and disciplines
 
 **Memory poisoning.** Persistent memory turns prompt injection into a
@@ -252,6 +365,18 @@ machinery for (Codec, Skill, Eval). Concretely:
    result budget (`maxItems`). The budget lives in the type so retrieval
    drowning is a caller decision, not an accident.
 
+   Name the shape in the design instead of implying it. The operations
+   above are shape-agnostic, but the shipped story should be linear
+   plus star: the store itself is a linear append-ordered log (which is
+   what a JSONL file interpreter is anyway, and what crucible's
+   cassettes already are), and the one structured view is the star, a
+   typed profile record recalled whole (point 3 below). Tree and graph
+   stay interpreter territory: `Recall` by tags and needle works
+   unchanged against a MemTree- or Graphiti-backed interpreter, and the
+   comparative evidence (SimpleMem, the Mem0 versus Mem0g gap) says
+   relational structure should be bought when multi-hop recall
+   demonstrably needs it, not by default.
+
 2. **Interpreters in the existing three flavors.**
    `runMemoryScripted` (canned recalls, for tests, mirroring
    `runLLMScripted`), `runMemoryPure` (a `Map` in local `State`, for
@@ -269,7 +394,10 @@ machinery for (Codec, Skill, Eval). Concretely:
    `Crucible.Decode` path. This is the one thing crucible can do that no
    Python memory library does: a recalled memory that fails to decode
    against today's schema is automatically stale, which turns schema
-   evolution into a forgetting policy for free.
+   evolution into a forgetting policy for free. It is also the star
+   shape made concrete: a `HasCodec` profile record is a hub entity
+   with typed spokes, recalled whole under a known budget, the LangMem
+   profile pattern with a compiler behind it.
 
 4. **Consolidation as an offline Skill, not a daemon.** Define a
    `Skill [MemoryItem] ConsolidationPlan` where the plan is keep, merge
@@ -280,7 +408,11 @@ machinery for (Codec, Skill, Eval). Concretely:
    bd session-close protocol) is the host application's business.
    Because it is just a Skill, it runs under scripted and cassette
    interpreters, and its prompt can be iterated with `testSkill` like
-   any other.
+   any other. In shape terms this Skill is the pump from linear to
+   star: transcript-derived items in, an updated profile and a pruned
+   log out. Graph-building consolidation is the same signature with a
+   different output type, which is another reason to keep it a Skill
+   rather than a baked-in pipeline.
 
 5. **Eval hooks: memories must pay rent.** The cheapest honest measure
    of a memory is ablation: run a skill's attached cases with and
@@ -348,3 +480,12 @@ machinery for (Codec, Skill, Eval). Concretely:
 - Memory security survey: https://arxiv.org/html/2604.16548v1
 - Context rot overview: https://www.techaheadcorp.com/blog/context-rot-problem/
 - LangMem: https://langchain-ai.github.io/langmem/
+- Graph-based agent memory taxonomy: https://arxiv.org/abs/2602.05665
+- Memory in the LLM era (unified benchmark): https://arxiv.org/abs/2604.01707
+- MemTree: https://arxiv.org/abs/2410.14052
+- MemForest: https://arxiv.org/abs/2605.23986
+- FluxMem (adaptive memory structures): https://arxiv.org/abs/2602.14038
+- SimpleMem: https://arxiv.org/abs/2601.02553
+- LangMem profiles vs collections: https://langchain-ai.github.io/langmem/concepts/conceptual_guide/
+- Persistent memory and user profiles: https://arxiv.org/abs/2510.07925
+- Mem0 graph memory comparison: https://mem0.ai/blog/graph-memory-solutions-ai-agents
