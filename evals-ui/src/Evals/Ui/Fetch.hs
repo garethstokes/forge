@@ -47,6 +47,9 @@ fetchJson url k = getText url [] ok err
       case eitherDecodeStrictText (fromMisoString resp.body :: Text) of
         Left e -> k (Left (url <> ": decode error: " <> ms e))
         Right a -> k (Right a)
+    -- miso 1.11 fetchCore nulls errorMessage on async failures and throws
+    -- before reading the response body, so the server's ApiError JSON on 4xx
+    -- is unreachable here — the HTTP status line is all we get.
     -- non-2xx and network failures land here; the body is a JS Error, so
     -- report the status code rather than poking at it
     err :: Response JSVal -> action

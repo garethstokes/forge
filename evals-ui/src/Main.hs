@@ -8,7 +8,7 @@
 module Main where
 
 import Miso
-import Miso.Lens ((%=), (.=))
+import Miso.Lens ((%=), (.=), use)
 
 import Evals.Ui.Fetch (fetchJson, getHash, setHash)
 import Evals.Ui.Model
@@ -44,20 +44,32 @@ updateModel = \case
       RunR i -> do
         detailL .= Loading
         expandedL .= []
-        fetchJson ("/api/runs/" <> msShow i) GotDetail
+        fetchJson ("/api/runs/" <> msShow i) (GotDetail i)
       CompareR a b -> do
         compareL .= Loading
         expandedL .= []
-        fetchJson ("/api/compare?a=" <> msShow a <> "&b=" <> msShow b) GotCompare
+        fetchJson ("/api/compare?a=" <> msShow a <> "&b=" <> msShow b) (GotCompare a b)
   Navigate h ->
     io_ (setHash h)
   ToggleSelect i ->
     selectedL %= toggleSelect i
   ToggleExpand k ->
     expandedL %= toggleElem k
-  GotRuns e ->
+  GotRuns e -> do
     runsL .= fromEither e
-  GotDetail e ->
-    detailL .= fromEither e
-  GotCompare e ->
-    compareL .= fromEither e
+    -- prune ghost selections: drop ids no longer present in the fetched list
+    case e of
+      Right rs -> selectedL %= pruneSelection rs
+      Left _ -> pure ()
+  GotDetail rid e -> do
+    -- stale-response guard: commit only when the response matches the current route
+    route <- use routeL
+    case route of
+      RunR i | i == rid -> detailL .= fromEither e
+      _ -> pure ()  -- response arrived after navigation away; drop it
+  GotCompare ra rb e -> do
+    -- stale-response guard: commit only when both ids match the current route
+    route <- use routeL
+    case route of
+      CompareR a b | a == ra, b == rb -> compareL .= fromEither e
+      _ -> pure ()  -- response arrived after navigation away; drop it

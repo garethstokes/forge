@@ -29,6 +29,12 @@ cd "$(dirname "$0")/.."
 DB="${EVALS_DEMO_DB:-evals_demo}"
 URL="postgresql:///$DB"
 
+# Safety guard: refuse to drop any database whose name doesn't contain "demo"
+case "$DB" in
+  *demo*) ;;
+  *) echo "refusing: \$EVALS_DEMO_DB must contain 'demo' (got: $DB)"; exit 1;;
+esac
+
 dropdb --if-exists "$DB"
 createdb "$DB"
 MANIFEST_DATABASE_URL="$URL" ./.zinc/build/manifest-evals migrate

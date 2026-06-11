@@ -99,7 +99,10 @@ runRow m r =
 compareBar :: Model -> [RunSummaryDto] -> View Model Action
 compareBar m rs =
   div_ [ P.class_ "comparebar" ] $
-    case _selectedM m of
+    -- filter to ids that are actually present in the current run list; a
+    -- ghost id (not in rs) is treated as not-selected rather than showing a
+    -- misleading version-mismatch hint
+    case filter (\i -> any (\r -> r.runId == i) rs) (_selectedM m) of
       [a, b]
         | sameVersion a b ->
             [ hint "2 runs selected"

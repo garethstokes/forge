@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings   #-}
 
 -- | The dashboard SPA's pure core: the hash 'Route', 'RemoteData' wrappers
 -- for each fetched resource, the 'Model' + lenses, the 'Action' sum, and the
@@ -26,6 +27,7 @@ module Evals.Ui.Model
   , fromEither
   , toggleSelect
   , toggleElem
+  , pruneSelection
   , msShow
   ) where
 
@@ -76,8 +78,11 @@ data Action
   | ToggleSelect Int
   | ToggleExpand MisoString
   | GotRuns (Either MisoString [RunSummaryDto])
-  | GotDetail (Either MisoString RunDetailDto)
-  | GotCompare (Either MisoString CompareDto)
+  | GotDetail Int (Either MisoString RunDetailDto)
+  -- ^ carries the requested run id so stale responses for a different run can
+  --   be dropped before touching the model
+  | GotCompare Int Int (Either MisoString CompareDto)
+  -- ^ carries the requested (a, b) ids for the same stale-response guard
   deriving (Show, Eq)
 
 -- Lenses --------------------------------------------------------------------
@@ -140,6 +145,10 @@ toggleElem :: MisoString -> [MisoString] -> [MisoString]
 toggleElem k xs
   | k `elem` xs = filter (/= k) xs
   | otherwise = k : xs
+
+-- | Drop selected run ids that are no longer present in the fetched run list.
+pruneSelection :: [RunSummaryDto] -> [Int] -> [Int]
+pruneSelection rs = filter (\i -> any (\r -> r.runId == i) rs)
 
 msShow :: Show a => a -> MisoString
 msShow = ms . show
