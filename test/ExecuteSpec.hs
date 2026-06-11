@@ -19,7 +19,7 @@ import Data.Time (UTCTime, getCurrentTime)
 import Crucible.LLM (Message (..), Role (..))
 import Crucible.LLM.Anthropic (AnthropicConfig (..), defaultAnthropicConfig)
 import Crucible.Usage (Usage (..))
-import Manifest hiding (Target)
+import Manifest
 import Manifest.Postgres (Pool)
 import Manifest.Testing (withEphemeralDb)
 

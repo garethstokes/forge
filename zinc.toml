@@ -27,8 +27,9 @@ depends = ["base", "text", "bytestring", "manifest", "manifest-evals"]
 
 [dependencies.manifest]
 repo = "https://github.com/garethstokes/manifest.git"
-# Includes recursive cascade deletes (manifest-va2).
-rev = "e69621bca468bb7ec1028eb58a5cfcb8a4d4d20f"
+# Includes recursive cascade deletes (manifest-va2) and the
+# HasRelation.Target -> Related family rename (manifest-jkq).
+rev = "f59be95b09382a2547e60463446207697e716acb"
 
 [dependencies.crucible]
 repo = "https://github.com/garethstokes/crucible.git"

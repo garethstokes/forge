@@ -36,7 +36,7 @@ import Data.Time (diffUTCTime, getCurrentTime)
 
 import Crucible.LLM (Message (..), Role (..))
 import Crucible.Usage (Usage (..))
-import Manifest hiding (Target)
+import Manifest
 import Manifest.Postgres (Pool)
 
 import Evals.Ids

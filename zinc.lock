@@ -338,8 +338,8 @@ depends = ["appar", "byteorder", "network"]
 [[locked]]
 name = "manifest"
 repo = "https://github.com/garethstokes/manifest.git"
-rev = "e69621bca468bb7ec1028eb58a5cfcb8a4d4d20f"
-sha256 = "sha256:5258814cc10ea8782f809cdf897253b3351fd0fa0be2fd2effb876af70f636b0"
+rev = "f59be95b09382a2547e60463446207697e716acb"
+sha256 = "sha256:e628d09402d18775b4bce89c690b155dd6a54b43fab6ce6ee444c58e0f3ffde5"
 depends = ["autodocodec", "postgresql-libpq", "profunctors"]
 
 [[locked]]

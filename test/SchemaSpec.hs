@@ -11,7 +11,7 @@ import Control.Monad (unless)
 import Data.Aeson (Value, object, (.=))
 import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
-import Manifest hiding (Target)
+import Manifest
 import Manifest.Postgres (Pool)
 import Manifest.Testing (withEphemeralDb)
 import Evals.Schema
