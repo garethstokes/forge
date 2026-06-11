@@ -176,6 +176,15 @@ addition once Checklist exists.
    sample label.
 3. Grounding criteria as a standard rubric ingredient now, SFS-style derived
    checklist as a roadmap item?
+   **Decision (2026-06-11): both.** (a) Manual guidance now: skills that
+   receive context get grounding criteria in their rubric ("every claim
+   supported by provided context", "quotes the source span", negative form
+   "no facts absent from context"); skills without context skip them.
+   (b) `groundingCheck` (decompose output into atomic claims, verify each
+   against evidence, score = supported/total) as a roadmap item blocked on
+   Checklist. Decomposer choice is low-risk (paper: rankings invariant,
+   rho = 1.0); open design questions are claim granularity, all-claims-pass
+   default, and constructor-vs-function shape.
 4. Any planned Likert-style "rate the reasoning" human labels to kill?
    (Calibration should stay binary and task-level.)
 
