@@ -15,7 +15,7 @@ depends = ["base", "text", "time", "bytestring", "aeson", "manifest", "crucible"
 source-dirs = ["test"]
 main = "Spec.hs"
 ghc-options = ["-XOverloadedStrings", "-lpq", "-threaded"]
-depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals", "evals-api", "wai", "warp", "http-client", "http-types"]
+depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals", "evals-api", "wai", "warp", "http-client", "http-types", "directory"]
 
 [build.exe.manifest-evals]
 source-dirs = ["app"]

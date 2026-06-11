@@ -1,5 +1,4 @@
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -10,15 +9,15 @@
 -- and run detail, plus a static file fallback for the WASM UI.
 module Evals.Dashboard (dashboardApp) where
 
+import Control.Exception (SomeException, handle)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (sortBy, sortOn)
-import Data.Maybe (mapMaybe)
 import Data.Ord (comparing)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Network.HTTP.Types (Status, status200, status400, status404)
+import Network.HTTP.Types (Status, status200, status400, status404, status500)
 import Network.Wai (Application, Request, Response, pathInfo, queryString, responseLBS, responseFile)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>), takeExtension)
@@ -35,14 +34,19 @@ import Evals.Schema
 dashboardApp :: Pool -> FilePath -> Application
 dashboardApp pool staticDir req respond =
   case pathInfo req of
-    ["api", "datasets"]     -> datasetsHandler pool respond
-    ["api", "runs"]         -> runsHandler pool (queryParam "datasetVersion" req) respond
+    ["api", "datasets"]     -> apiWith (datasetsHandler pool respond)
+    ["api", "runs"]         -> apiWith (runsHandler pool (queryParam "datasetVersion" req) respond)
     ["api", "runs", nTxt]   ->
       case readMaybe (T.unpack nTxt) :: Maybe Int of
         Nothing  -> respond (badRequest "invalid run id")
-        Just n   -> runDetailHandler pool (RunId n) respond
+        Just n   -> apiWith (runDetailHandler pool (RunId n) respond)
     ("api" : _)             -> respond notFound
     segments                -> staticHandler staticDir (normalise segments) respond
+  where
+    apiWith action = handle
+      (\(e :: SomeException) ->
+        respond (json status500 (ApiError { error = "internal error: " <> T.pack (show e) })))
+      action
 
 -- | Serve a static file.
 staticHandler :: FilePath -> [T.Text] -> (Response -> IO a) -> IO a
@@ -77,7 +81,7 @@ contentType path = case takeExtension path of
 queryParam :: BS8.ByteString -> Request -> Maybe T.Text
 queryParam key req =
   case lookup key (queryString req) of
-    Just (Just v) -> Just (TE.decodeUtf8 v)
+    Just (Just v) -> Just (TE.decodeUtf8Lenient v)
     _             -> Nothing
 
 -- ---------------------------------------------------------------------------
@@ -119,6 +123,7 @@ datasetDto d = do
 
 versionDto :: DatasetVersion -> Db DatasetVersionDto
 versionDto v = do
+  -- TODO: project a COUNT when datasets grow (this pulls full jsonb rows)
   examples <- selectWhere [ #datasetVersion ==. v.id ] :: Db [Example]
   let DatasetVersionId vid = v.id
   pure DatasetVersionDto
@@ -188,7 +193,6 @@ metricDto rm = do
   mgv <- get @GraderVersion (Key rm.graderVersion)
   mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
   let gName    = maybe "?" (.name) mg
-      GraderVersionId gvid = rm.graderVersion
       gVersion = maybe 0 (.version) mgv
   pure MetricDto
     { graderName    = gName
@@ -203,18 +207,20 @@ metricDto rm = do
 
 runDetailHandler :: Pool -> RunId -> (Response -> IO a) -> IO a
 runDetailHandler pool rid respond = do
-  mRun <- withSession pool (get @Run (Key rid))
-  case mRun of
-    Nothing  -> respond notFound
-    Just run -> do
-      dto <- withSession pool $ do
+  mDto <- withSession pool $ do
+    mRun <- get @Run (Key rid)
+    case mRun of
+      Nothing  -> pure Nothing
+      Just run -> do
         summary <- runSummary run
         outputs <- selectWhere [ #run ==. rid ] :: Db [Output]
         -- build OutputRowDto per output, ordering by example key
         rows <- mapM (outputRowDto rid) outputs
         let sortedRows = sortOn (\r -> r.exampleKey) rows
-        pure RunDetailDto { run = summary, outputs = sortedRows }
-      respond (json status200 dto)
+        pure (Just RunDetailDto { run = summary, outputs = sortedRows })
+  case mDto of
+    Nothing  -> respond notFound
+    Just dto -> respond (json status200 dto)
 
 outputRowDto :: RunId -> Output -> Db OutputRowDto
 outputRowDto _rid o = do
@@ -238,7 +244,6 @@ scoreDto s = do
   mgv <- get @GraderVersion (Key s.graderVersion)
   mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
   let gName    = maybe "?" (.name) mg
-      GraderVersionId gvid = s.graderVersion
       gVersion = maybe 0 (.version) mgv
       rationale = s.detail >>= \(Aeson v) ->
         AT.parseMaybe (Aeson.withObject "d" (Aeson..: "rationale")) v

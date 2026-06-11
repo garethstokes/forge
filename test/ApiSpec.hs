@@ -10,9 +10,11 @@ import Data.Aeson (FromJSON, ToJSON, Value, decode, encode, object, (.=))
 import Data.Text (Text)
 import Data.Time (UTCTime (..), fromGregorian, getCurrentTime)
 import Evals.Api
+import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 
 -- server spec imports
-import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
+import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseHeaders, responseStatus)
+import Network.HTTP.Types (hContentType)
 import Network.HTTP.Types.Status (statusCode)
 import Network.Wai.Handler.Warp (testWithApplication)
 
@@ -267,17 +269,28 @@ serverSpec :: IO ()
 serverSpec = withEphemeralDb $ \pool -> do
   _ <- withSession pool migrateAll
   now <- getCurrentTime
-  -- Seed the database
+  -- Set up temp static directory for static-route coverage tests
+  let staticDir = "test-static"
+  createDirectoryIfMissing True staticDir
+  writeFile (staticDir <> "/probe.css") "body { color: red; }"
+  -- Seed the database: insert e2 BEFORE e1 so heap order != key order,
+  -- ensuring the sort-by-key in the handler is actually exercised.
   (runId_, dvId) <- withSession pool $ do
+    -- Seed "zeta" dataset FIRST (alphabetically after "demo") to verify
+    -- /api/datasets returns results in name order, not insertion order.
+    dz <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "zeta", slug = "zeta", createdAt = now } :: Dataset)
+    _  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = dz.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "demo", slug = "demo", createdAt = now } :: Dataset)
     v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-    e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1", input = Aeson (object ["q" .= ("1" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
+    -- Insert e2 first so DB heap order is e2, e1 — the handler must sort by key.
     e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e2", input = Aeson (object ["q" .= ("2" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
+    e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1", input = Aeson (object ["q" .= ("1" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "tgt", createdAt = now } :: Target)
     tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "claude-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
     r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    -- Insert o2 first (matching e2 which was inserted first).
+    _  <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Nothing, error = Just "llm: boom", latencyMs = Nothing, tokens = Nothing } :: Output)
     o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "hello", error = Nothing, latencyMs = Just 42, tokens = Nothing } :: Output)
-    o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Nothing, error = Just "llm: boom", latencyMs = Nothing, tokens = Nothing } :: Output)
     g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "exactness", kind = "exact", createdAt = now } :: Grader)
     gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
     _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True, detail = Just (Aeson (object ["rationale" .= ("exact match" :: Text)])), error = Nothing, createdAt = now } :: Score)
@@ -285,14 +298,16 @@ serverSpec = withEphemeralDb $ \pool -> do
     _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now } :: RunMetric)
     pure (r.id, v.id)
   mgr <- newManager defaultManagerSettings
-  testWithApplication (pure (dashboardApp pool "static")) $ \port -> do
+  testWithApplication (pure (dashboardApp pool staticDir)) $ \port -> do
     let getReq path = parseRequest ("http://localhost:" <> show port <> path) >>= flip httpLbs mgr
-    -- /api/datasets
+    -- /api/datasets: 2 datasets, returned in name order (demo < zeta)
     r1 <- getReq "/api/datasets"
     expect "datasets 200" (statusCode (responseStatus r1) == 200)
     expect "datasets shape" (case decode (responseBody r1) :: Maybe [DatasetDto] of
-      Just [d] -> d.name == "demo" && length d.versions == 1
-                    && (head d.versions).exampleCount == 2
+      Just [d1, d2] -> d1.name == "demo"
+                         && length d1.versions == 1
+                         && (head d1.versions).exampleCount == 2
+                         && d2.name == "zeta"
       _ -> False)
     -- /api/runs
     r2 <- getReq "/api/runs"
@@ -304,7 +319,8 @@ serverSpec = withEphemeralDb $ \pool -> do
     -- filter by datasetVersion: bogus id yields []
     r2b <- getReq "/api/runs?datasetVersion=999999"
     expect "runs filter" (decode (responseBody r2b) == Just ([] :: [RunSummaryDto]))
-    -- run detail
+    -- run detail: outputs must be ordered by key (e1 < e2) even though
+    -- they were inserted in reverse order (e2 first).
     let RunId runIdInt = runId_
     r3 <- getReq ("/api/runs/" <> show runIdInt)
     expect "detail 200" (statusCode (responseStatus r3) == 200)
@@ -337,3 +353,14 @@ serverSpec = withEphemeralDb $ \pool -> do
     expect "runs filter real dvId" (case decode (responseBody r6) :: Maybe [RunSummaryDto] of
       Just [_] -> True
       _ -> False)
+    -- static file: known file -> 200 text/css with correct body
+    r7 <- getReq "/probe.css"
+    expect "static probe.css 200" (statusCode (responseStatus r7) == 200)
+    expect "static probe.css content-type" $
+      lookup hContentType (responseHeaders r7) == Just "text/css"
+    expect "static probe.css body" (responseBody r7 == "body { color: red; }")
+    -- static file: missing file -> 404
+    r8 <- getReq "/missing.css"
+    expect "static missing.css 404" (statusCode (responseStatus r8) == 404)
+  -- Clean up temp static directory
+  removeDirectoryRecursive staticDir
