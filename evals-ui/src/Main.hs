@@ -69,7 +69,7 @@ updateModel = \case
   ToggleExpand k ->
     expandedL %= toggleElem k
   GotRuns e -> do
-    runsL .= fromEither e
+    runsL %= \old -> keepStale old (fromEither e)
     -- prune ghost selections: drop ids no longer present in the fetched list
     case e of
       Right rs -> selectedL %= pruneSelection rs
@@ -78,16 +78,23 @@ updateModel = \case
     -- stale-response guard: commit only when the response matches the current route
     route <- use routeL
     case route of
-      RunR i | i == rid -> detailL .= fromEither e
+      RunR i | i == rid -> detailL %= \old -> keepStale old (fromEither e)
       _ -> pure ()  -- response arrived after navigation away; drop it
   GotCompare ra rb e -> do
     -- stale-response guard: commit only when both ids match the current route
     route <- use routeL
     case route of
-      CompareR a b | a == ra, b == rb -> compareL .= fromEither e
+      CompareR a b | a == ra, b == rb -> compareL %= \old -> keepStale old (fromEither e)
       _ -> pure ()  -- response arrived after navigation away; drop it
-  SseOpen ->
+  SseOpen -> do
+    prev <- use liveL
     liveL .= LiveConnected
+    -- SSE spec scopes replay out; on reconnect we may have missed change events.
+    -- Cheap best-effort healing: refetch when we had data before and lost the
+    -- feed. At startup, _liveM is already LiveReconnecting and runs==NotAsked,
+    -- so the guard below skips the duplicate fetch that SetRoute already issued.
+    runs <- use runsL
+    when (prev == LiveReconnecting && runs /= NotAsked) (issue DoRefetch)
   SseError ->
     liveL .= LiveReconnecting
   SseMessage raw ->

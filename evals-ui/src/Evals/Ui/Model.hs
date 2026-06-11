@@ -30,6 +30,7 @@ module Evals.Ui.Model
   , compareHash
     -- * Small helpers
   , fromEither
+  , keepStale
   , toggleSelect
   , toggleElem
   , pruneSelection
@@ -181,6 +182,12 @@ compareHash a b = "#/compare/" <> msShow a <> "/" <> msShow b
 
 fromEither :: Either MisoString a -> RemoteData a
 fromEither = either Failed Got
+
+-- | A background refresh must not replace good data with an error box; manual
+-- navigation resets to Loading first, so user-initiated errors still surface.
+keepStale :: RemoteData a -> RemoteData a -> RemoteData a
+keepStale old@(Got _) (Failed _) = old
+keepStale _           new        = new
 
 -- | Tick/untick a run for comparison; a third tick is ignored.
 toggleSelect :: Int -> [Int] -> [Int]
