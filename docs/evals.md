@@ -389,12 +389,23 @@ the examples line appears only when `exampleCount > 0`:
 
 ```
 agreement:      0.9
-kappa:          0.74
+kappa:          0.74  [95% CI 0.41, 0.88]
 fail precision: 1.0
 fail recall:    0.75
 contested (label these next): edge-case-7, sarcastic-review
 examples fed: 6  measured on: 24
 ```
+
+The interval is a 95% bootstrap over the judged holdout cases: the same pairs
+are resampled with replacement 1000 times, kappa is recomputed per resample,
+and the 2.5th and 97.5th percentile values form the bounds. Act on the lower
+bound, not the point estimate: if the lower bound already clears 0.6, the
+judge is calibrated; if it does not, label more cases before trusting the
+numbers. A wide interval is itself the signal -- four perfectly agreeing labels
+still bootstrap to a lower bound near zero, because small resamples can draw a
+single class where kappa is undefined and defaults to zero. That is not a
+quirk to suppress; it reflects that four labels genuinely prove little about
+agreement.
 
 Low fail recall means the judge waves through outputs a human would reject:
 tighten the rubric. Low fail precision means it fails good outputs: the
