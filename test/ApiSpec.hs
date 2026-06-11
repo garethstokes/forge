@@ -371,28 +371,43 @@ compareSpec = withEphemeralDb $ \pool -> do
   _ <- withSession pool migrateAll
   now <- getCurrentTime
   -- Seed entities for the compare endpoint tests.
-  -- dataset "cmp" version 1, two examples (c2 inserted FIRST to test sort order).
+  -- dataset "cmp" version 1, four examples: c0 (no output in either run),
+  -- c1, c2, c3 (c3 has output only in run A).
+  -- c2 inserted FIRST to test sort order.
   (runAId, runBId, runCId) <- withSession pool $ do
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "cmp", slug = "cmp", createdAt = now } :: Dataset)
     v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     -- Insert c2 first — heap order != key order, so sort must be exercised.
     c2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c2", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
     c1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    -- c3: between c2 and c1 in insertion order; has output only in run A.
+    c3 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c3", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    -- c0: no output in either run (tests example-driven alignment).
+    _  <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c0", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "tgt-cmp", createdAt = now } :: Target)
     tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "model-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
+    -- Grader "g" (scores both runs) — must be chosen over "h".
     g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
     gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    -- Grader "h" (scores only run A's c1 output) — must NOT be chosen.
+    h  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "h", kind = "exact", createdAt = now } :: Grader)
+    hv <- add (GraderVersion { id = GraderVersionId 0, grader = h.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
     -- Run A
-    rA <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    rA  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
     oA1 <- add (Output { id = OutputId 0, run = rA.id, example = c1.id, response = Nothing, text = Just "a1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
     oA2 <- add (Output { id = OutputId 0, run = rA.id, example = c2.id, response = Nothing, text = Just "a2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    _   <- add (Output { id = OutputId 0, run = rA.id, example = c3.id, response = Nothing, text = Just "a3", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    -- c0 intentionally has NO output in run A.
     _   <- add (Score { id = ScoreId 0, output = oA1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
     _   <- add (Score { id = ScoreId 0, output = oA2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    -- h scores ONLY oA1 (run A, c1); must not affect grader choice.
+    _   <- add (Score { id = ScoreId 0, output = oA1.id, graderVersion = hv.id, value = Just 0.25, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
     _   <- add (RunMetric { id = RunMetricId 0, run = rA.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now } :: RunMetric)
-    -- Run B (same dataset version, reversed scores)
-    rB <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    -- Run B (same dataset version, reversed scores; c3 and c0 have no output)
+    rB  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
     oB1 <- add (Output { id = OutputId 0, run = rB.id, example = c1.id, response = Nothing, text = Just "b1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
     oB2 <- add (Output { id = OutputId 0, run = rB.id, example = c2.id, response = Nothing, text = Just "b2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    -- c3 and c0 intentionally have NO output in run B.
     _   <- add (Score { id = ScoreId 0, output = oB1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
     _   <- add (Score { id = ScoreId 0, output = oB2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
     _   <- add (RunMetric { id = RunMetricId 0, run = rB.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now } :: RunMetric)
@@ -419,27 +434,46 @@ compareSpec = withEphemeralDb $ \pool -> do
         && dto.runB.runId == bInt
         && not (null dto.runA.metrics)
         && not (null dto.runB.metrics)
-        && dto.graderName == Just "g"
-        && length dto.rows == 2
-        -- rows ordered by example key: c1 first
-        && let r0 = head dto.rows
-               r1 = dto.rows !! 1
-           in r0.exampleKey == "c1"
-              && r0.outputA  == Just "a1"
-              && r0.outputB  == Just "b1"
-              && r0.scoreA   == Just 1.0
-              && r0.scoreB   == Just 0.0
-              && r0.passedA  == Just True
-              && r0.passedB  == Just False
-              && r0.delta    == Just 1.0
-              && r1.exampleKey == "c2"
-              && r1.outputA  == Just "a2"
-              && r1.outputB  == Just "b2"
-              && r1.scoreA   == Just 0.0
-              && r1.scoreB   == Just 1.0
-              && r1.passedA  == Just False
-              && r1.passedB  == Just True
-              && r1.delta    == Just (-1.0)
+        -- intersection-first: g scored both runs; h only scored run A — must pick g.
+        && dto.graderName    == Just "g"
+        && dto.graderVersion == Just 1
+        -- 4 rows: c0, c1, c2, c3 ordered by example key.
+        && length dto.rows == 4
+        && let r0 = dto.rows !! 0   -- c0: no output in either run
+               r1 = dto.rows !! 1   -- c1
+               r2 = dto.rows !! 2   -- c2
+               r3 = dto.rows !! 3   -- c3: output only in run A
+           -- c0: all-Nothing sides (pins example-driven alignment).
+           in r0.exampleKey == "c0"
+              && r0.outputA  == Nothing
+              && r0.outputB  == Nothing
+              && r0.scoreA   == Nothing
+              && r0.scoreB   == Nothing
+              && r0.delta    == Nothing
+              -- c1: g's score (1.0), NOT h's score (0.25).
+              && r1.exampleKey == "c1"
+              && r1.outputA  == Just "a1"
+              && r1.outputB  == Just "b1"
+              && r1.scoreA   == Just 1.0
+              && r1.scoreB   == Just 0.0
+              && r1.passedA  == Just True
+              && r1.passedB  == Just False
+              && r1.delta    == Just 1.0
+              -- c2
+              && r2.exampleKey == "c2"
+              && r2.outputA  == Just "a2"
+              && r2.outputB  == Just "b2"
+              && r2.scoreA   == Just 0.0
+              && r2.scoreB   == Just 1.0
+              && r2.passedA  == Just False
+              && r2.passedB  == Just True
+              && r2.delta    == Just (-1.0)
+              -- c3: output only in run A; no score from g (g only scored c1/c2).
+              && r3.exampleKey == "c3"
+              && r3.outputA  == Just "a3"
+              && r3.outputB  == Nothing
+              && r3.scoreA   == Nothing
+              && r3.delta    == Nothing
     -- Mismatch: A vs C (different dataset versions) -> 400 + ApiError
     rAC <- getReq ("/api/compare?a=" <> show aInt <> "&b=" <> show cInt)
     expect "compare AC 400" (statusCode (responseStatus rAC) == 400)

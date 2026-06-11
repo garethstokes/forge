@@ -14,7 +14,6 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (minimumBy, nub, sortBy, sortOn)
-import Data.Maybe (mapMaybe)
 import Data.Ord (comparing)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -264,8 +263,9 @@ scoreDto s = do
 
 -- | Compare two runs side-by-side, aligned by example key.
 -- Both runs must share the same dataset version (else 400).
--- Scores are compared for the lexicographically-first (graderName,
--- graderVersion) pair appearing in either run's scores.
+-- The grader compared is the lexicographically-first (name, version) among
+-- graders that scored BOTH runs, falling back to either run's graders when
+-- none scored both.
 compareHandler :: Pool -> Request -> (Response -> IO a) -> IO a
 compareHandler pool req respond =
   case (queryParam "a" req >>= readMaybeInt, queryParam "b" req >>= readMaybeInt) of
@@ -304,12 +304,22 @@ compareHandler pool req respond =
                       pure (gName, gVersion, s.graderVersion)
                 graderKeysA <- mapM resolveGrader allScoresA
                 graderKeysB <- mapM resolveGrader allScoresB
-                let allGraderKeys = nub [ (n, v, gvid) | (n, v, gvid) <- graderKeysA ++ graderKeysB ]
+                let graderSetA    = nub [ (n, v, gvid) | (n, v, gvid) <- graderKeysA ]
+                    graderSetB    = nub [ (n, v, gvid) | (n, v, gvid) <- graderKeysB ]
+                    graderNamesA  = [ (n, v) | (n, v, _) <- graderSetA ]
+                    graderNamesB  = [ (n, v) | (n, v, _) <- graderSetB ]
+                    -- Graders that appear in BOTH runs (intersection by name+version).
+                    bothNames     = [ nv | nv <- graderNamesA, nv `elem` graderNamesB ]
+                    -- Candidate pool: intersection if non-empty, else union.
+                    candidateKeys =
+                      if null bothNames
+                        then nub (graderSetA ++ graderSetB)
+                        else [ (n, v, gvid) | (n, v, gvid) <- graderSetA, (n, v) `elem` bothNames ]
                 -- Pick the first grader by (graderName, graderVersion) ordering.
                 let mChosenGrader =
-                      if null allGraderKeys
+                      if null candidateKeys
                         then Nothing
-                        else Just (minimumBy (comparing (\(n, v, _) -> (n, v))) allGraderKeys)
+                        else Just (minimumBy (comparing (\(n, v, _) -> (n, v))) candidateKeys)
                 -- Build a score lookup map: outputId -> Score (for chosen grader only).
                 let chosenGvId = fmap (\(_, _, gvid) -> gvid) mChosenGrader
                     scoresByOutput scores =
