@@ -9,13 +9,13 @@ version = "0.1.0.0"
 [build.lib]
 source-dirs = ["src"]
 ghc-options = ["-Wall", "-XOverloadedStrings"]
-depends = ["base", "text", "time", "bytestring", "aeson", "manifest", "crucible", "effectful", "effectful-core", "async"]
+depends = ["base", "text", "time", "bytestring", "aeson", "manifest", "crucible", "effectful", "effectful-core", "async", "evals-api", "wai", "http-types", "filepath", "directory"]
 
 [build.test.spec]
 source-dirs = ["test"]
 main = "Spec.hs"
-ghc-options = ["-XOverloadedStrings", "-lpq"]
-depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals", "evals-api"]
+ghc-options = ["-XOverloadedStrings", "-lpq", "-threaded"]
+depends = ["base", "text", "time", "bytestring", "aeson", "containers", "manifest", "crucible", "manifest-evals", "evals-api", "wai", "warp", "http-client", "http-types"]
 
 [build.exe.manifest-evals]
 source-dirs = ["app"]
@@ -27,7 +27,7 @@ depends = ["base", "text", "bytestring", "manifest", "manifest-evals"]
 source-dirs = ["app-dashboard"]
 main = "Main.hs"
 ghc-options = ["-Wall", "-XOverloadedStrings", "-threaded", "-lpq"]
-depends = ["base", "text", "bytestring", "wai", "warp", "http-types", "filepath", "directory"]
+depends = ["base", "text", "bytestring", "wai", "warp", "http-types", "filepath", "directory", "manifest", "manifest-evals", "evals-api", "aeson"]
 
 [dependencies]
 
