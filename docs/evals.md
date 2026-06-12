@@ -10,8 +10,9 @@ case pairs an input with an expectation; deterministic expectations are scored
 in pure code, judged expectations ask an LLM. The judge plumbing (the grader
 prompt, JSON repair, majority voting) lives in `Crucible.Eval.Judge`, and a
 calibration harness for the judge itself lives in `Crucible.Eval.Calibrate`.
-Everything needs only `LLM :> es`, so the same suite runs scripted in CI,
-from a cassette, or live.
+Scoring needs `LLM :> es` and `Embed :> es` (discharge the latter with
+`Embed.none` when no case uses semantic similarity), so the same suite runs
+scripted in CI, from a cassette, or live.
 
 ## The grading ladder
 
@@ -52,7 +53,7 @@ add criteria rather than widening a scale.
 Run a dataset with `runEval`:
 
 ```haskell
-runEval :: (Eq a, LLM :> es)
+runEval :: (Eq a, LLM :> es, Embed :> es)
         => (a -> Text)        -- render an output for the judge
         -> (i -> Eff es a)    -- the system under test
         -> [Case i a]
@@ -61,16 +62,16 @@ runEval :: (Eq a, LLM :> es)
 
 `Case` is `Case { input :: i, name :: Text, expect :: Expectation a }`, and
 the `Report` carries per-case `results`, a `passRate` (fraction of cases that
-passed: value 1.0, or the in-expectation threshold for `Metric` and `Scale`),
-and a `meanScore`. From the demo in `app/Main.hs` (which uses
+passed: value 1.0, or the in-expectation threshold for `Metric`, `Scale`, and
+`SimilarTo`), and a `meanScore`. From the demo in `app/Main.hs` (which uses
 `runEvalN 3`; the system under test there is `pure`, grading fixed outputs):
 
 ```haskell
-report <- runEff (Anthropic.run cfg (runEval id pure
+report <- runEff (Anthropic.run cfg (Embed.none (runEval id pure
   [ Case ("It is 26C and sunny in Brisbane." :: Text) "weather-report"
       (Checklist [criterion "mentions a temperature", criterion "mentions a city"])
   , Case "pong" "terse-pong" (Rubric "the output is a single short word")
-  ]))
+  ])))
 TIO.putStrLn (renderReport report)
 ```
 
@@ -236,7 +237,7 @@ defaultJudgeOpts :: JudgeOpts   -- votes = 1, examples = []
 
 judgeWith   :: (LLM :> es)
             => JudgeOpts -> (a -> Text) -> Text -> a -> Eff es Score
-runEvalWith :: (Eq a, LLM :> es)
+runEvalWith :: (Eq a, LLM :> es, Embed :> es)
             => JudgeOpts -> (a -> Text) -> (i -> Eff es a) -> [Case i a]
             -> Eff es (Report i a)
 ```
@@ -246,9 +247,9 @@ The four functions you will reach for most often are specializations of these:
 ```haskell
 judge    :: (LLM :> es) => (a -> Text) -> Text -> a -> Eff es Score
 judgeN   :: (LLM :> es) => Int -> (a -> Text) -> Text -> a -> Eff es Score
-runEval  :: (Eq a, LLM :> es)
+runEval  :: (Eq a, LLM :> es, Embed :> es)
          => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
-runEvalN :: (Eq a, LLM :> es)
+runEvalN :: (Eq a, LLM :> es, Embed :> es)
          => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
 ```
 
@@ -328,7 +329,7 @@ protocol is closed-loop and the answer is no.
 
 ### Choosing a grader
 
-The grading ladder offers four rungs:
+The grading ladder offers five rungs:
 
 - `Exactly` / `Predicate` when a rule can decide correctness outright. No
   judge call, no cost.
@@ -409,8 +410,8 @@ track semantic drift across runs without any extra wiring.
 `runEval` and the `scoreM` family now need an `Embed` interpreter at the
 `runEff` edge:
 
-- `OpenAI.runEmbed cfg` wraps an `Eff (Embed : es) a` computation using
-  OpenAI's `text-embedding-3-small` by default.
+- `OpenAI.runEmbed cfg` discharges `Embed` against OpenAI's embeddings
+  endpoint, using `text-embedding-3-small` by default.
 - `Voyage.runEmbed (Voyage.defaultVoyageConfig apiKey)` uses the Voyage AI
   embeddings endpoint.
 - `runEmbedScripted vecs` pops canned vectors for tests; it is the
@@ -439,12 +440,12 @@ not a single case output.
 ```haskell
 import Crucible.Eval.Metrics (rougeL)
 
-report <- runEff (Anthropic.run cfg (runEval id pure
+report <- runEff (Anthropic.run cfg (Embed.none (runEval id pure
   [ Case draftSummary "summary-overlap" (Metric 0.4 (rougeL referenceSummary))
   , Case inquiry "empathetic-tone"
       (Scale 4 "Rate how empathetic this response is"
          [(1, "dismissive"), (5, "fully acknowledges the customer's frustration")])
-  ]))
+  ])))
 TIO.putStrLn (renderReport report)
 ```
 

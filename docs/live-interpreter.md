@@ -268,9 +268,10 @@ A conventional way to supply the key:
 mVoyKey <- lookupEnv "VOYAGE_API_KEY"
 case mVoyKey of
   Nothing  -> putStrLn "VOYAGE_API_KEY not set"
-  Just key ->
+  Just key -> do
     vec <- runEff (Voyage.runEmbed (Voyage.defaultVoyageConfig (T.pack key))
                     (embed "crucible embeds with Voyage"))
+    print (length vec)
 ```
 
 ### Tests and programs without similarity cases
@@ -290,9 +291,8 @@ result <- runEff (Anthropic.run cfg (Embed.none (runEval id pure cases)))
 
 ### Limits
 
-- No usage variants for `Embed`: embedding calls do not return token counts
-  in the same shape as LLM calls, so `OpenAI.embedUsage` and
-  `Voyage.embedUsage` are not yet wired.
+- No usage variants for `Embed`: nothing consumes embedding token counts
+  yet, so there is no `usageEmbed` counterpart to `usage`. Added on demand.
 - No cassette support: `runEmbedScripted` is the test-layer counterpart;
   there is no file-backed cassette for embeddings yet.
 - No fallback chains: `Embed` has no `Fallback.runEmbed` combinator yet.
