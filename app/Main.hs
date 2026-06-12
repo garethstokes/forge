@@ -29,7 +29,9 @@ import Crucible.LLM.Anthropic
 import qualified Crucible.LLM.Anthropic as Anthropic
 import qualified Crucible.LLM.Anthropic.Stream as Anthropic
 import qualified Crucible.Embed as Embed
+import Crucible.Embed (embed)
 import Crucible.LLM.OpenAI (defaultOpenAIConfig)
+import qualified Crucible.LLM.Voyage as Voyage
 import qualified Crucible.LLM.OpenAI as OpenAI
 import qualified Crucible.LLM.OpenAI.Stream as OpenAI
 import qualified Crucible.LLM.Fallback as Fallback
@@ -40,7 +42,7 @@ import Crucible.Skill (Skill, skill, call, withExamples, withTests)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
-import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, runEvalN, renderReport, scoreM)
+import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, runEval, runEvalN, renderReport, scoreM)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -205,3 +207,19 @@ main = do
             ]
           fb <- runEff (Fallback.run providers (complete prompt))
           TIO.putStrLn ("fallback: " <> fb <> " (first member cannot succeed; answered by second)")
+          -- Embeddings: consistency across paraphrases + a SimilarTo case.
+          cons <- runEff (OpenAI.runEmbed ocfg (Embed.consistency
+            [ "The return window is 30 days."
+            , "You have thirty days to return an item." ]))
+          TIO.putStrLn ("consistency: " <> T.pack (show cons))
+          simRep <- runEff (OpenAI.runEmbed ocfg (Anthropic.run cfg (runEval id pure
+            [ Case ("The capital of France is Paris." :: T.Text) "similar-capital"
+                (SimilarTo 0.6 "Paris is France's capital city.") ])))
+          TIO.putStrLn (renderReport simRep)
+      mVoyKey <- lookupEnv "VOYAGE_API_KEY"
+      case mVoyKey of
+        Nothing -> TIO.putStrLn "VOYAGE_API_KEY not set; skipping Voyage demo"
+        Just vkey -> do
+          vec <- runEff (Voyage.runEmbed (Voyage.defaultVoyageConfig (T.pack vkey))
+                   (embed "crucible embeds with Voyage"))
+          TIO.putStrLn ("voyage: embedded to " <> T.pack (show (length vec)) <> " dims")

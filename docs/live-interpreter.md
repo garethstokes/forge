@@ -220,6 +220,84 @@ still falls through to the rest of the list, wrapping around if needed.
 - Which member answered is not yet observable from the result. This is tracked
   separately as CallLog work.
 
+## Embeddings
+
+The `Embed` effect turns a `Text` value into a `[Double]` vector. The effect
+has one operation:
+
+```haskell
+embed :: (Embed :> es) => Text -> Eff es [Double]
+```
+
+Two live interpreters ship. Both are used qualified.
+
+### OpenAI.runEmbed
+
+```haskell
+import qualified Crucible.LLM.OpenAI as OpenAI
+
+vec <- runEff (OpenAI.runEmbed cfg (embed "some text"))
+```
+
+`OpenAI.runEmbed` calls the OpenAI `POST /v1/embeddings` endpoint. It reads
+the `embedModel` field from `OpenAIConfig`; `defaultOpenAIConfig` sets this
+to `"text-embedding-3-small"`. Override it with a record update:
+
+```haskell
+let cfg = (defaultOpenAIConfig key) { embedModel = "text-embedding-3-large" }
+```
+
+### Voyage.runEmbed
+
+```haskell
+import qualified Crucible.LLM.Voyage as Voyage
+
+vec <- runEff (Voyage.runEmbed (Voyage.defaultVoyageConfig (T.pack voyageApiKey))
+                 (embed "some text"))
+```
+
+`Voyage.runEmbed` calls the Voyage AI `POST /v1/embeddings` endpoint.
+`defaultVoyageConfig` takes the API key and sets the model to
+`"voyage-3.5-lite"`. Voyage is an embeddings-only provider; it discharges
+`Embed` but not `LLM` or `Chat`. Anthropic has no embeddings endpoint and
+points customers to Voyage for that use case.
+
+A conventional way to supply the key:
+
+```haskell
+mVoyKey <- lookupEnv "VOYAGE_API_KEY"
+case mVoyKey of
+  Nothing  -> putStrLn "VOYAGE_API_KEY not set"
+  Just key ->
+    vec <- runEff (Voyage.runEmbed (Voyage.defaultVoyageConfig (T.pack key))
+                    (embed "crucible embeds with Voyage"))
+```
+
+### Tests and programs without similarity cases
+
+`runEmbedScripted vecs` pops canned `[Double]` vectors from a list on each
+`embed` call. Use it in tests alongside `runLLMScripted` to keep the suite
+offline and deterministic. An exhausted script yields `[]`.
+
+`Embed.none` discharges `Embed` for programs that have no
+`Crucible.Eval.SimilarTo` cases. It errors with a clear message on first
+use, making the omission visible rather than silent. Wrap existing
+`runEval` / `scoreM` callers with it as a one-line migration:
+
+```haskell
+result <- runEff (Anthropic.run cfg (Embed.none (runEval id pure cases)))
+```
+
+### Limits
+
+- No usage variants for `Embed`: embedding calls do not return token counts
+  in the same shape as LLM calls, so `OpenAI.embedUsage` and
+  `Voyage.embedUsage` are not yet wired.
+- No cassette support: `runEmbedScripted` is the test-layer counterpart;
+  there is no file-backed cassette for embeddings yet.
+- No fallback chains: `Embed` has no `Fallback.runEmbed` combinator yet.
+  Wire a single interpreter at the edge for now.
+
 ## Further reading
 
 Config setup and the first live call are walked through in [Getting

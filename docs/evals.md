@@ -27,6 +27,7 @@ data Expectation a
   | Grounded Text          -- every factual claim supported by this evidence
   | Metric Double (a -> Double)   -- pass threshold, scalar metric in [0,1]
   | Scale Int Text [(Int, Text)]  -- pass level, rubric, anchored levels
+  | SimilarTo Double Text   -- pass threshold, reference: embedded cosine similarity
 ```
 
 `Exactly` and `Predicate` are free and deterministic: use them whenever the
@@ -333,6 +334,9 @@ The grading ladder offers four rungs:
   judge call, no cost.
 - `Metric` when the degree of match is the signal, not a binary threshold.
   The scalar lands in `meanScore` and lets you track improvement over runs.
+- `SimilarTo` when semantic closeness to a reference text is the signal:
+  both texts are embedded and compared by cosine similarity. Deterministic
+  given the embedder; no judge call.
 - `Rubric` for holistic pass/fail judgement on a quality concern that resists
   a predicate but does not need a graded scale.
 - `Scale` when quality is subjective and graded by degree: the judge assigns
@@ -390,6 +394,46 @@ more than one level from the median lands in `dissent`. A case passes at
 `passLevel`; use a pass level of 2 or higher -- at 1, every output passes,
 including judge errors which score 0.
 
+### Semantic similarity
+
+```haskell
+SimilarTo threshold reference
+```
+
+`SimilarTo` embeds both `reference` and the output under test, then scores
+their cosine similarity clamped to [0, 1]. The case passes when
+`value >= threshold`. The rationale carries the cosine value; no judge call
+is made. Like `Metric`, the score feeds `meanScore` directly, so you can
+track semantic drift across runs without any extra wiring.
+
+`runEval` and the `scoreM` family now need an `Embed` interpreter at the
+`runEff` edge:
+
+- `OpenAI.runEmbed cfg` wraps an `Eff (Embed : es) a` computation using
+  OpenAI's `text-embedding-3-small` by default.
+- `Voyage.runEmbed (Voyage.defaultVoyageConfig apiKey)` uses the Voyage AI
+  embeddings endpoint.
+- `runEmbedScripted vecs` pops canned vectors for tests; it is the
+  Embed-layer counterpart of the LLM scripted interpreter.
+- `Embed.none` discharges `Embed` for programs that have no `SimilarTo`
+  cases, erroring on first use. This is the one-line migration path for
+  existing `runEval` / `scoreM` callers.
+
+Per-case `SimilarTo` grades one output against one fixed reference.
+`Embed.consistency` is a separate group-level function that compares outputs
+across a set of paraphrase inputs (how stable is the system's output when the
+input is rephrased?):
+
+```haskell
+cons <- runEff (OpenAI.runEmbed cfg (Embed.consistency
+  [ "The return window is 30 days."
+  , "You have thirty days to return an item." ]))
+-- cons :: Double, mean pairwise cosine over the group
+```
+
+`Embed.consistency` lives outside `Expectation` because it grades a group,
+not a single case output.
+
 ### Code example
 
 ```haskell
@@ -407,9 +451,9 @@ TIO.putStrLn (renderReport report)
 ### Limits
 
 No BLEU: it is a corpus-level metric and misleading on individual cases.
-Embedding cosine similarity is tracked separately. Scale ignores few-shot
-judge examples for now, and [calibration](#calibrating-the-judge) stays
-binary: weighted kappa for ordinal agreement is future work.
+Scale ignores few-shot judge examples for now, and
+[calibration](#calibrating-the-judge) stays binary: weighted kappa for
+ordinal agreement is future work.
 
 ## Calibrating the judge
 
