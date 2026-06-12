@@ -39,7 +39,7 @@ import Crucible.Skill (Skill, skill, call, withExamples, withTests)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
-import Crucible.Eval (Case (..), Expectation (..), criterion, runEvalN, renderReport)
+import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, runEvalN, renderReport, scoreM)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -151,6 +151,13 @@ main = do
       (_, improveSteps) <- runEff (Anthropic.run cfg (improveSkill 1 id weak))
       TIO.putStrLn ("improveSkill: " <> T.pack (show (length improveSteps)) <> " step(s) "
                     <> T.pack (show [s.accepted | s <- improveSteps]))
+      -- Scale: an anchored 1-to-5 politeness rating, judged live.
+      politeness <- runEff (Anthropic.run cfg (scoreM id
+        (Scale 4 "Rate how polite this reply is"
+           [(1, "rude"), (5, "warm and courteous")])
+        ("Thanks so much for waiting, happy to help!" :: T.Text)))
+      let Score { rationale = politeRationale } = politeness
+      TIO.putStrLn ("scale: " <> politeRationale)
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of

@@ -318,6 +318,88 @@ The review test, one line: does every LLM call in this protocol receive the
 original output and the rubric? If any call sees only derived text, the
 protocol is closed-loop and the answer is no.
 
+## Scalar metrics and ordinal scales
+
+### Choosing a grader
+
+The grading ladder offers four rungs:
+
+- `Exactly` / `Predicate` when a rule can decide correctness outright. No
+  judge call, no cost.
+- `Metric` when the degree of match is the signal, not a binary threshold.
+  The scalar lands in `meanScore` and lets you track improvement over runs.
+- `Rubric` for holistic pass/fail judgement on a quality concern that resists
+  a predicate but does not need a graded scale.
+- `Scale` when quality is subjective and graded by degree: the judge assigns
+  a level, and you need the level itself (not just pass/fail) as a signal.
+
+### Metric: scalar scores
+
+```haskell
+Metric threshold f
+```
+
+`f` maps the output to a `Double` in [0, 1]; `threshold` is the pass
+boundary. The scalar is the score value, so `meanScore` tracks it across runs
+without any extra wiring. A case passes at value >= threshold, which mirrors
+how success criteria are usually stated: "an F1 of at least 0.85" maps
+directly to `Metric 0.85 (tokenF1 reference)`.
+
+Three metrics ship in `Crucible.Eval.Metrics`, all pure and offline:
+
+- `normMatch :: Text -> Text -> Double` -- normalised exact-match after
+  case-folding and whitespace normalisation; 1.0 iff the strings match
+  exactly after normalisation, 0.0 otherwise.
+- `tokenF1 :: Text -> Text -> Double` -- token-level F1 over whitespace
+  tokens, case-folded; the harmonic mean of precision and recall.
+- `rougeL :: Text -> Text -> Double` -- longest common subsequence recall
+  over whitespace tokens, case-folded; measures sequence overlap.
+
+All three take the reference first, so they partial-apply cleanly:
+
+```haskell
+Metric 0.85 (tokenF1 referenceSummary)
+```
+
+### Scale: anchored ordinal ratings
+
+```haskell
+Scale passLevel rubric anchors
+```
+
+`anchors` is a list of `(level, description)` pairs the judge sees as
+labelled lines, not prose. Anchor at least the two ends; the highest anchor
+level defines k, so the scale is 1..k. The score normalises to
+`(level - 1) / (k - 1)`, placing it in [0, 1] for `meanScore`.
+
+When using votes, the median level wins. A sample more than one level from
+the median lands in `dissent`. A case passes at `passLevel`; use a pass
+level of 2 or higher -- at 1, every output passes, including judge errors
+which score 0.
+
+Scale ignores few-shot examples for now. `calibrate` stays binary; weighted
+kappa for ordinal scales is future work.
+
+### Code example
+
+```haskell
+import Crucible.Eval.Metrics (rougeL)
+
+report <- runEff (Anthropic.run cfg (runEval id pure
+  [ Case article "summary-overlap" (Metric 0.4 (rougeL referenceSummary))
+  , Case inquiry "empathetic-tone"
+      (Scale 4 "Rate how empathetic this response is"
+         [(1, "dismissive"), (5, "fully acknowledges the customer's frustration")])
+  ]))
+TIO.putStrLn (renderReport report)
+```
+
+### Limits
+
+No BLEU: it is a corpus-level metric and misleading on individual cases.
+Embedding cosine similarity is tracked separately. `calibrate` stays binary.
+Scale ignores few-shot judge examples for now.
+
 ## Calibrating the judge
 
 Suite numbers are only as good as the judge that produced them, so calibrate
