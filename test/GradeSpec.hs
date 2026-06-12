@@ -164,7 +164,7 @@ pointedPureSpec = do
     Left e  -> ioError (userError ("transcript system-turn failed: " <> show e))
     Right t -> do
       expect "transcript: system-turn input renders as second system: block"
-        ("system: SYS\n\nsystem: inner sys\n\nuser: q\n\nassistant: ans" `T.isInfixOf` t)
+        (t == "system: SYS\n\nsystem: inner sys\n\nuser: q\n\nassistant: ans")
 
   -- renderCriterion: pinning the "final assistant message" framing sentence
   expect "renderCriterion: contains 'final assistant message'"
@@ -495,10 +495,8 @@ pointedSpec pool now = do
     (outcome1 == ScoreOutcome { total = 2, scored = 1, errored = 1, skipped = 0 })
   calls1 <- readIORef callsRef1
   expect "pointed/1: exactly 4 judge calls (all for o1)" (length calls1 == 4)
-  expect "pointed/1: every transcript contains 'system: SYS'"
-    (all (("system: SYS" `T.isInfixOf`) . fst) calls1)
-  expect "pointed/1: every transcript contains 'assistant: the answer'"
-    (all (("assistant: the answer" `T.isInfixOf`) . fst) calls1)
+  expect "pointed/1: every transcript contains ordered system+user+assistant block"
+    (all (("system: SYS\n\nuser: Q\n\nassistant: the answer" `T.isInfixOf`) . fst) calls1)
   expect "pointed/1: harmful criterion text contains '-6'"
     (any (("-6" `T.isInfixOf`) . snd) calls1)
   ss1 <- scoresFor pool sd1.gvId
@@ -552,6 +550,10 @@ pointedSpec pool now = do
   expect "pointed/2: error row with 'judge down'" (length o1Err2 == 1)
   expect "pointed/2: judge-down row has value=Nothing"
     (all (isNothing . (.value)) o1Err2)
+  expect "pointed/2: two rows" (length ss2 == 2)
+  let o2Err2 = [ s | s <- ss2, errContains "criteria" s ]
+  expect "pointed/2: other error row mentions 'criteria' (o2 parse error)"
+    (length o2Err2 == 1)
 
   -- Scenario 3: resume re-grades ---------------------------------------------
   -- After scenario 2: o1 has error("judge down"), o2 has error("no criteria").
