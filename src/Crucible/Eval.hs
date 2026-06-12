@@ -27,6 +27,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
 
+import Crucible.Embed (Embed, embed, cosine)
 import Crucible.Eval.Grounding (GroundingOutcome (..), groundingOutcome)
 import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), defaultJudgeOpts, vote, RateOutcome (..), rate)
 import Crucible.LLM (LLM)
@@ -51,6 +52,12 @@ data Expectation a
                            --   Use a pass level of 2 or higher: at pass
                            --   level 1 every case passes, including
                            --   judge errors (which score 0).
+  | SimilarTo Double Text  -- ^ pass threshold, reference text: embeds both
+                           --   the reference and the output, scoring cosine
+                           --   similarity clamped to [0,1], passing at
+                           --   value >= threshold. Needs an Embed
+                           --   interpreter at the edge; 'Crucible.Embed.none'
+                           --   serves programs without similarity cases.
 
 -- | One checklist item: a concrete, observable requirement and its weight.
 -- Write observable criteria ("cites a source URL"), not aspirational ones
@@ -116,7 +123,7 @@ voteScore single (Decided p w d y f) =
 -- | Score one output with explicit judge options. Examples feed 'Rubric'
 -- judging only; 'Checklist' criteria, 'Grounded' claims, and 'Scale' all
 -- take the vote count but ignore examples (each is its own micro-rubric).
-scoreWith :: (Eq a, LLM :> es) => JudgeOpts -> (a -> Text) -> Expectation a -> a -> Eff es Score
+scoreWith :: (Eq a, LLM :> es, Embed :> es) => JudgeOpts -> (a -> Text) -> Expectation a -> a -> Eff es Score
 scoreWith opts render exp_ actual = case exp_ of
   Exactly e    -> pure (score (ind (actual == e)) (if actual == e then "exact match" else "mismatch"))
   Predicate p  -> pure (score (ind (p actual)) (if p actual then "predicate held" else "predicate failed"))
@@ -126,15 +133,20 @@ scoreWith opts render exp_ actual = case exp_ of
   Metric _ f   -> let v = max 0.0 (min 1.0 (f actual))
                   in pure (score v ("metric = " <> T.pack (show v)))
   Scale _ r as -> scaleScore opts.votes r as (render actual)
+  SimilarTo _ ref -> do
+    rv <- embed ref
+    ov <- embed (render actual)
+    let v = min 1.0 (max 0.0 (cosine rv ov))
+    pure (score v ("cosine = " <> T.pack (show v)))
   where ind b = if b then 1.0 else 0.0
 
 -- | Score one output against its expectation, single-sample judging.
-scoreM :: (Eq a, LLM :> es) => (a -> Text) -> Expectation a -> a -> Eff es Score
+scoreM :: (Eq a, LLM :> es, Embed :> es) => (a -> Text) -> Expectation a -> a -> Eff es Score
 scoreM = scoreWith defaultJudgeOpts
 
 -- | 'scoreM' with n-vote judging for 'Rubric' cases and for each
 -- 'Checklist' criterion. Pure for Exactly/Predicate.
-scoreN :: (Eq a, LLM :> es) => Int -> (a -> Text) -> Expectation a -> a -> Eff es Score
+scoreN :: (Eq a, LLM :> es, Embed :> es) => Int -> (a -> Text) -> Expectation a -> a -> Eff es Score
 scoreN n = scoreWith defaultJudgeOpts { votes = n }
 
 -- | Judge each criterion with its own binary call; score = passed weight /
@@ -197,16 +209,18 @@ groundingScore (DecomposeFailed m) =
   score 0.0 ("judge error: claim decomposition failed: " <> m)
 
 -- | Pass condition per expectation: 'Metric' passes at its threshold,
--- 'Scale' at its pass level, everything else at value 1.0.
+-- 'Scale' at its pass level, 'SimilarTo' at its threshold, everything
+-- else at value 1.0.
 passes :: Expectation a -> Double -> Bool
 passes (Metric t _) v = v >= t
 passes (Scale p _ anchors) v =
   let k = maximum (1 : map fst anchors)
   in k > 1 && v >= fromIntegral (p - 1) / fromIntegral (k - 1)
+passes (SimilarTo t _) v = v >= t
 passes _ v = v >= 1.0
 
 -- | 'runEval' with n-vote judging for Rubric cases and Checklist criteria.
-runEvalWith :: (Eq a, LLM :> es)
+runEvalWith :: (Eq a, LLM :> es, Embed :> es)
             => JudgeOpts -> (a -> Text) -> (i -> Eff es a) -> [Case i a]
             -> Eff es (Report i a)
 runEvalWith opts render sut cases = do
@@ -225,11 +239,11 @@ runEvalWith opts render sut cases = do
 
 -- | Run a system-under-test over a dataset and aggregate, single-sample
 -- judging (equivalent to @'runEvalN' 1@).
-runEval :: (Eq a, LLM :> es) => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
+runEval :: (Eq a, LLM :> es, Embed :> es) => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
 runEval = runEvalWith defaultJudgeOpts
 
 -- | 'runEval' with n-vote judging for Rubric cases and Checklist criteria.
-runEvalN :: (Eq a, LLM :> es) => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
+runEvalN :: (Eq a, LLM :> es, Embed :> es) => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
 runEvalN n = runEvalWith defaultJudgeOpts { votes = n }
 
 -- | A human-readable report: one line per case, then a summary. Voted

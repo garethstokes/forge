@@ -37,6 +37,7 @@ import NeatInterpolation (text)
 import Crucible.Codec (str)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Decode (DecodeError (..))
+import Crucible.Embed (Embed)
 import Crucible.Eval (Case (..), Report (..), Result (..), Score (..))
 import Crucible.LLM (LLM, Message (..), Role (..))
 import Crucible.Skill
@@ -78,7 +79,7 @@ reflector = skill "reflect-instruction" str codec $ \digest -> [text|
 -- test cases for up to @rounds@ reflection attempts. Returns the best
 -- skill found and the chronological step history. Stops early when every
 -- case passes. An empty test list returns immediately.
-improveSkill :: (Eq o, LLM :> es)
+improveSkill :: (Eq o, LLM :> es, Embed :> es)
              => Int -> (o -> Text) -> Skill i o -> Eff es (Skill i o, [ImproveStep])
 improveSkill rounds render sk0
   | null sk0.tests = pure (sk0, [])

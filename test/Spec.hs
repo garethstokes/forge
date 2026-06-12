@@ -51,7 +51,7 @@ import Crucible.Rows (splitRows, runRows)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import Control.Concurrent (threadDelay)
-import Control.Exception (try, throwIO, fromException, SomeException, SomeAsyncException (..))
+import Control.Exception (try, throwIO, fromException, evaluate, SomeException, SomeAsyncException (..))
 import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
@@ -444,28 +444,28 @@ main = runChecks
   -- M10 Task 1: Eval harness — exact/predicate/runEval/report
   , check "eval: all pass (exact + predicate)"
       (1.0, 1.0)
-      (let rep = runPureEff (runLLMScripted [] (runEval id (pure . Data.Text.toUpper)
+      (let rep = runPureEff (runLLMScripted [] (Embed.none (runEval id (pure . Data.Text.toUpper)
                    [ Case "abc" "upper" (Exactly "ABC")
-                   , Case "xy"  "nonempty" (Predicate (not . Data.Text.null)) ]))
+                   , Case "xy"  "nonempty" (Predicate (not . Data.Text.null)) ])))
        in (rep.passRate, rep.meanScore))
   , check "eval: detects a mismatch"
       0.0
       ((runPureEff (runLLMScripted []
-        (runEval id (pure . Data.Text.toUpper) [Case "abc" "wrong" (Exactly "abc")]))).passRate)
+        (Embed.none (runEval id (pure . Data.Text.toUpper) [Case "abc" "wrong" (Exactly "abc")])))).passRate)
   , check "eval: report renders per-case + summary"
       True
       (Data.Text.isInfixOf "pass-rate:" (renderReport (runPureEff (runLLMScripted []
-        (runEval id (pure . Data.Text.toUpper) [Case "abc" "c" (Exactly "ABC")])))))
+        (Embed.none (runEval id (pure . Data.Text.toUpper) [Case "abc" "c" (Exactly "ABC")]))))))
   -- M10 Task 2: LLM-as-judge (Rubric) on scripted data
   , check "eval: LLM-as-judge passes a rubric (scripted verdict)"
       (1.0, "looks like a greeting")
       (let rep = runPureEff (runLLMScripted ["{\"pass\":true,\"why\":\"looks like a greeting\"}"]
-                   (runEval id (pure . id) [Case "hi" "greeting" (Rubric "must be a greeting")]))
+                   (Embed.none (runEval id (pure . id) [Case "hi" "greeting" (Rubric "must be a greeting")])))
        in (rep.passRate, (head rep.results).score.rationale))
   , check "eval: LLM-as-judge fails a rubric (scripted verdict)"
       0.0
       ((runPureEff (runLLMScripted ["{\"pass\":false,\"why\":\"not a greeting\"}"]
-        (runEval id (pure . id) [Case "42" "greeting" (Rubric "must be a greeting")]))).passRate)
+        (Embed.none (runEval id (pure . id) [Case "42" "greeting" (Rubric "must be a greeting")])))).passRate)
   -- effectful capability manifest: agent runs end-to-end through interpreters
   , check "effectful agent: tool then answer"
       "sunny in Brisbane"
@@ -547,11 +547,11 @@ main = runChecks
   , check "testSkill: moved cases consume no replies"
       (1.0, "leftover")
       (runPureEff (runLLMScripted ["\"B\"", "leftover"]
-        (do rep <- testSkill id (examplesFromTests 1
-                     (withTests [ Case "a" "ex" (Exactly "A")
-                                , Case "b" "kept" (Exactly "B") ] classifyFn))
-            extra <- complete []
-            pure (rep.passRate, extra))))
+        (Embed.none (do rep <- testSkill id (examplesFromTests 1
+                          (withTests [ Case "a" "ex" (Exactly "A")
+                                     , Case "b" "kept" (Exactly "B") ] classifyFn))
+                        extra <- complete []
+                        pure (rep.passRate, extra)))))
   , check "skill: retries on a bad reply then succeeds"
       (Right "positive")
       (runPureEff (runLLMScripted ["not json", "\"positive\""] (call classifyFn "I love it")))
@@ -563,23 +563,23 @@ main = runChecks
   , check "testSkill: attached case passes on exact match"
       (1.0, 1.0)
       (let sk = withTests [Case "I love it" "pos" (Exactly "positive")] classifyFn
-           rep = runPureEff (runLLMScripted ["\"positive\""] (testSkill id sk))
+           rep = runPureEff (runLLMScripted ["\"positive\""] (Embed.none (testSkill id sk)))
        in (rep.passRate, rep.meanScore))
   , check "testSkill: attached case fails on mismatch"
       0.0
       ((runPureEff (runLLMScripted ["\"negative\""]
-        (testSkill id (withTests [Case "I love it" "pos" (Exactly "positive")] classifyFn)))).passRate)
+        (Embed.none (testSkill id (withTests [Case "I love it" "pos" (Exactly "positive")] classifyFn))))).passRate)
   , check "testSkill: decode failure scores zero"
       0.0
       ((runPureEff (runLLMScripted ["junk"]
-        (testSkill id (withTests [Case "x" "robust" (Predicate (const True))]
-                        (withRetries 0 classifyFn))))).passRate)
+        (Embed.none (testSkill id (withTests [Case "x" "robust" (Predicate (const True))]
+                        (withRetries 0 classifyFn)))))).passRate)
   , check "testSkill: rubric case consults the judge"
       1.0
       ((runPureEff (runLLMScripted
         [ "\"hello there\""                                  -- the skill's reply
         , "{\"pass\":true,\"why\":\"greets the user\"}" ]    -- the judge's verdict
-        (testSkill id (withTests [Case "hi" "greets" (Rubric "must be a greeting")] classifyFn)))).passRate)
+        (Embed.none (testSkill id (withTests [Case "hi" "greets" (Rubric "must be a greeting")] classifyFn))))).passRate)
   -- M12 Task 1: schemaValue shape checks (robust — autodocodec schema shape may differ)
   , check "schemaValue: object codec has type=object"
       (Just (String "object"))
@@ -1024,41 +1024,41 @@ main = runChecks
       (True, True)
       (let s = runPureEff (runLLMScripted
                  [ "{\"why\":\"has it\",\"pass\":true}", "{\"why\":\"missing\",\"pass\":false}" ]
-                 (scoreM id (Checklist [Criterion "cites a source" 2, Criterion "is terse" 1]) ("out" :: Text)))
+                 (Embed.none (scoreM id (Checklist [Criterion "cites a source" 2, Criterion "is terse" 1]) ("out" :: Text))))
        in (abs (s.value - 2/3) < 1e-9, T.isInfixOf "[fail] is terse: missing" s.rationale))
   , check "checklist: all pass scores 1.0 and counts in passRate"
       (1.0, 1.0)
       (let rep = runPureEff (runLLMScripted
                    [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}" ]
-                   (runEval id pure
-                      [Case ("in" :: Text) "c" (Checklist [criterion "a", criterion "b"])]))
+                   (Embed.none (runEval id pure
+                      [Case ("in" :: Text) "c" (Checklist [criterion "a", criterion "b"])])))
        in (rep.passRate, rep.meanScore))
   , check "checklist: empty list scores 1.0 with no judge calls"
       (1.0, "empty checklist")
       (let s = runPureEff (runLLMScripted []
-                 (scoreM id (Checklist []) ("out" :: Text)))
+                 (Embed.none (scoreM id (Checklist []) ("out" :: Text))))
        in (s.value, s.rationale))
   , check "checklist: judge error on a criterion fails that criterion"
       (0.5, True)
       (let s = runPureEff (runLLMScripted
                  [ "junk", "junk2", "{\"why\":\"y\",\"pass\":true}" ]
-                 (scoreM id (Checklist [criterion "a", criterion "b"]) ("out" :: Text)))
+                 (Embed.none (scoreM id (Checklist [criterion "a", criterion "b"]) ("out" :: Text))))
        in (s.value, T.isInfixOf "judge error: " s.rationale))
   -- eval rubric upgrades: runEvalN + report annotations
   , check "runEvalN: votes thread to rubric cases"
       (Just (2, 0))
       (let rep = runPureEff (runLLMScripted
                    [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}" ]
-                   (runEvalN 3 id pure [Case ("x" :: Text) "c" (Rubric "r")]))
+                   (Embed.none (runEvalN 3 id pure [Case ("x" :: Text) "c" (Rubric "r")])))
        in (head rep.results).score.votes)
   , check "renderReport: flags contested and judge-error cases"
       (True, True)
       (let rep = runPureEff (runLLMScripted
                    [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"n\",\"pass\":false}", "{\"why\":\"y\",\"pass\":true}"
                    , "j1", "j2", "j3", "j4", "j5", "j6" ]
-                   (runEvalN 3 id pure
+                   (Embed.none (runEvalN 3 id pure
                       [ Case ("a" :: Text) "contested" (Rubric "r")
-                      , Case ("b" :: Text) "errs" (Rubric "r") ]))
+                      , Case ("b" :: Text) "errs" (Rubric "r") ])))
            r = renderReport rep
        in ( T.isInfixOf "[votes 2-1]" r
              && T.isInfixOf "[judge uncertain: review by hand; dissent: n]" r
@@ -1134,9 +1134,9 @@ main = runChecks
       1.0
       ((runPureEff (runLLMScripted
          [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}" ]
-         (runEvalWith (JudgeOpts 1 [JudgeExample "e" True Nothing]) id pure
+         (Embed.none (runEvalWith (JudgeOpts 1 [JudgeExample "e" True Nothing]) id pure
             [ Case ("x" :: Text) "rub" (Rubric "r")
-            , Case "y" "chk" (Checklist [criterion "c"]) ]))).passRate)
+            , Case "y" "chk" (Checklist [criterion "c"]) ])))).passRate)
   , check "calibrateWith: examples held out of measurement"
       (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2 (0, 0), "leftover")
       (runPureEff (runLLMScripted
@@ -1229,9 +1229,9 @@ main = runChecks
          [ "[\"one claim\"]"
          , "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}"
          , "leftover" ]
-         (do rep <- runEvalN 3 id pure [Case ("text" :: Text) "g" (Grounded "ev")]
-             extra <- complete []
-             pure (rep.passRate, extra))))
+         (Embed.none (do rep <- runEvalN 3 id pure [Case ("text" :: Text) "g" (Grounded "ev")]
+                         extra <- complete []
+                         pure (rep.passRate, extra)))))
   -- improve-skill cycle: structured instruction + prompt tweaks
   , check "prompt: slot-less user message has the exact tweaked shape"
       (Just ("Classify the sentiment of: hi\n\n<input>\n\"hi\"\n</input>\n\nRespond with JSON only; your reply is parsed by a machine."))
@@ -1273,7 +1273,7 @@ main = runChecks
              , "{\"preamble\":\"Always answer GOOD.\",\"constraints\":\"Reply with GOOD only.\"}"
              , "\"GOOD\""                                                       -- candidate passes
              ]
-             (improveSkill 1 id sk))
+             (Embed.none (improveSkill 1 id sk)))
        in (best.instruction.preamble == "Always answer GOOD.", steps))
   , check "improveSkill: no improvement -> rejected, original slots kept"
       (True, [False])
@@ -1284,7 +1284,7 @@ main = runChecks
              , "{\"preamble\":\"P\",\"constraints\":\"C\"}"
              , "\"BAD\""                                                        -- candidate also fails
              ]
-             (improveSkill 1 id sk))
+             (Embed.none (improveSkill 1 id sk)))
        in (best.instruction.preamble == "", map (.accepted) steps))
   , check "improveSkill: reflector junk burns the round, loop survives"
       [False]
@@ -1292,22 +1292,22 @@ main = runChecks
                   (withRetries 0 (skill "s" C.str C.str ("Echo: " <>)))
            (_, steps) = runPureEff (runLLMScripted
              [ "\"BAD\"", "j1", "j2", "j3" ]                                    -- reflector retries 2 = 3 replies
-             (improveSkill 1 id sk))
+             (Embed.none (improveSkill 1 id sk)))
        in map (.accepted) steps)
   , check "improveSkill: empty tests -> immediate return, zero calls"
       (True, "leftover")
       (runPureEff (runLLMScripted ["leftover"]
-        (do (_, steps) <- improveSkill 3 id (skill "s" C.str (C.str :: JSONCodec Text) ("Echo: " <>))
-            extra <- complete []
-            pure (null steps, extra))))
+        (Embed.none (do (_, steps) <- improveSkill 3 id (skill "s" C.str (C.str :: JSONCodec Text) ("Echo: " <>))
+                        extra <- complete []
+                        pure (null steps, extra)))))
   , check "improveSkill: all-passing baseline -> no reflection call"
       (True, "leftover")
       (runPureEff (runLLMScripted ["\"GOOD\"", "leftover"]
-        (do (_, steps) <- improveSkill 3 id
-              (withTests [Case ("in" :: Text) "c" (Exactly ("GOOD" :: Text))]
-                 (withRetries 0 (skill "s" C.str C.str ("Echo: " <>))))
-            extra <- complete []
-            pure (null steps, extra))))
+        (Embed.none (do (_, steps) <- improveSkill 3 id
+                          (withTests [Case ("in" :: Text) "c" (Exactly ("GOOD" :: Text))]
+                             (withRetries 0 (skill "s" C.str C.str ("Echo: " <>))))
+                        extra <- complete []
+                        pure (null steps, extra)))))
   -- crucible-3sj: provider fallback + round-robin
   , do c1 <- newIORef 0; c2 <- newIORef 0
        r <- runEff (Fallback.run [goodProvider "a" c1 "from-a", goodProvider "b" c2 "from-b"] (complete []))
@@ -1394,20 +1394,20 @@ main = runChecks
   , check "metric: scalars land in meanScore; threshold gates passRate"
       (0.5, 0.5)
       (let rep = runPureEff (runLLMScripted []
-                   (runEval id pure
+                   (Embed.none (runEval id pure
                       [ Case ("hello" :: Text) "hit"  (Metric 0.5 (normMatch "Hello "))
-                      , Case "bye" "miss" (Metric 0.5 (normMatch "Hello ")) ]))
+                      , Case "bye" "miss" (Metric 0.5 (normMatch "Hello ")) ])))
        in (rep.passRate, rep.meanScore))
   , check "metric: values clamp into [0,1]"
       (1.0, 0.0)
-      (let s1 = runPureEff (runLLMScripted [] (scoreM id (Metric 1.0 (const 1.5)) ("x" :: Text)))
-           s0 = runPureEff (runLLMScripted [] (scoreM id (Metric 0.0 (const (-0.5))) ("x" :: Text)))
+      (let s1 = runPureEff (runLLMScripted [] (Embed.none (scoreM id (Metric 1.0 (const 1.5)) ("x" :: Text))))
+           s0 = runPureEff (runLLMScripted [] (Embed.none (scoreM id (Metric 0.0 (const (-0.5))) ("x" :: Text))))
        in (s1.value, s0.value))
   -- crucible-2zw: Scale expectation
   , check "scale: single vote level 4 of 5"
       (0.75, "level 4 of 5: polite", Nothing)
       (let s = runPureEff (runLLMScripted ["{\"why\":\"polite\",\"level\":4}"]
-                 (scoreM id (Scale 4 "politeness" [(1, "rude"), (5, "warm")]) ("out" :: Text)))
+                 (Embed.none (scoreM id (Scale 4 "politeness" [(1, "rude"), (5, "warm")]) ("out" :: Text))))
        in (s.value, s.rationale, s.votes))
   , check "scale: median of (3,4,4) is 4 with tally (2,1), no dissent at spread 1"
       (0.75, Just (2, 1), Nothing)
@@ -1415,7 +1415,7 @@ main = runChecks
                  [ "{\"why\":\"meh\",\"level\":3}"
                  , "{\"why\":\"good\",\"level\":4}"
                  , "{\"why\":\"good\",\"level\":4}" ]
-                 (scoreN 3 id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text)))
+                 (Embed.none (scoreN 3 id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text))))
        in (s.value, s.votes, s.dissent))
   , check "scale: spread beyond one level records dissent"
       (Just (2, 1), Just "awful")
@@ -1423,27 +1423,27 @@ main = runChecks
                  [ "{\"why\":\"awful\",\"level\":1}"
                  , "{\"why\":\"good\",\"level\":4}"
                  , "{\"why\":\"good\",\"level\":4}" ]
-                 (scoreN 3 id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text)))
+                 (Embed.none (scoreN 3 id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text))))
        in (s.votes, s.dissent))
   , check "scale: out-of-range level takes the judge-error path"
       (0.0, True)
       (let s = runPureEff (runLLMScripted
                  [ "{\"why\":\"x\",\"level\":7}", "{\"why\":\"x\",\"level\":9}" ]
-                 (scoreM id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text)))
+                 (Embed.none (scoreM id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text))))
        in (s.value, T.isInfixOf "judge error: " s.rationale))
   , check "scale: anchors without a top level are a judge error"
       (0.0, True)
       (let s = runPureEff (runLLMScripted []
-                 (scoreM id (Scale 1 "r" [(1, "only")]) ("out" :: Text)))
+                 (Embed.none (scoreM id (Scale 1 "r" [(1, "only")]) ("out" :: Text))))
        in (s.value, T.isInfixOf "judge error: " s.rationale))
   -- crucible-2zw: per-expectation pass rule, mixed dataset
   , check "passRate: per-expectation thresholds across a mixed dataset"
       (2 / 3, 2 / 3)
       (let rep = runPureEff (runLLMScripted ["{\"why\":\"mid\",\"level\":3}"]
-                   (runEval id pure
+                   (Embed.none (runEval id pure
                       [ Case ("x" :: Text) "exact" (Exactly "x")
                       , Case "y" "metric-borderline" (Metric 0.5 (const 0.5))
-                      , Case "z" "scale-fail" (Scale 4 "r" [(1, "bad"), (5, "good")]) ]))
+                      , Case "z" "scale-fail" (Scale 4 "r" [(1, "bad"), (5, "good")]) ])))
        in (rep.passRate, rep.meanScore))
   -- crucible-d4w: embeddings (pure math + scripted interpreter)
   , check "cosine: orthogonal and zero-vector cases are 0"
@@ -1478,4 +1478,33 @@ main = runChecks
       (Right [1.5 :: Double], True)
       ( Voyage.extractEmbedding "{\"data\":[{\"embedding\":[1.5]}]}"
       , case Voyage.extractEmbedding "junk" of Left _ -> True; Right _ -> False )
+  -- crucible-d4w: SimilarTo expectation
+  , check "similarTo: identical embeddings score 1.0, no votes"
+      (1.0, Nothing)
+      (let s = runPureEff (runLLMScripted [] (runEmbedScripted [[1, 0], [1, 0]]
+                 (scoreM id (SimilarTo 0.8 "ref") ("out" :: Text))))
+       in (s.value, s.votes))
+  , check "similarTo: hand cosine lands in value"
+      True
+      (let s = runPureEff (runLLMScripted [] (runEmbedScripted [[1, 0], [1, 1]]
+                 (scoreM id (SimilarTo 0.8 "ref") ("out" :: Text))))
+       in abs (s.value - 1 / sqrt 2) < 1e-9)
+  , check "similarTo: negative cosine clamps to 0"
+      0.0
+      ((runPureEff (runLLMScripted [] (runEmbedScripted [[1, 0], [-1, 0]]
+          (scoreM id (SimilarTo 0.5 "ref") ("out" :: Text))))).value)
+  , check "similarTo: threshold gates passRate in a mixed dataset"
+      (0.5, 0.5)
+      (let rep = runPureEff (runLLMScripted [] (runEmbedScripted [[1, 0], [0, 1]]
+                   (runEval id pure
+                      [ Case ("x" :: Text) "exact" (Exactly "x")
+                      , Case "y" "orthogonal" (SimilarTo 0.8 "ref") ])))
+       in (rep.passRate, rep.meanScore))
+  , do r <- try (evaluate (runPureEff (runLLMScripted [] (Embed.none
+              (scoreM id (SimilarTo 0.8 "ref") ("out" :: Text))))))
+       check "embed: none errors clearly when a program embeds"
+         True
+         (case r of
+            Left (e :: SomeException) -> T.isInfixOf "Crucible.Embed.none" (T.pack (show e))
+            Right s -> s.value < 0)  -- unreachable; forces the Score
   ]

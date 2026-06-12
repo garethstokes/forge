@@ -28,6 +28,7 @@ import Crucible.LLM.Anthropic
   )
 import qualified Crucible.LLM.Anthropic as Anthropic
 import qualified Crucible.LLM.Anthropic.Stream as Anthropic
+import qualified Crucible.Embed as Embed
 import Crucible.LLM.OpenAI (defaultOpenAIConfig)
 import qualified Crucible.LLM.OpenAI as OpenAI
 import qualified Crucible.LLM.OpenAI.Stream as OpenAI
@@ -135,27 +136,27 @@ main = do
           | otherwise -> TIO.putStrLn ("chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
         _ -> TIO.putStrLn "chat cassette: a run failed"
       -- Eval: a checklist and an n-vote rubric judged live (runEvalN 3).
-      evalRep <- runEff (Anthropic.run cfg (runEvalN 3 id pure
+      evalRep <- runEff (Anthropic.run cfg (Embed.none (runEvalN 3 id pure
         [ Case ("It is 26C and sunny in Brisbane." :: T.Text) "weather-report"
             (Checklist [criterion "mentions a temperature", criterion "mentions a city"])
         , Case "pong" "terse-pong" (Rubric "the output is a single short word")
         , Case "It is 26C and sunny in Brisbane." "grounded-weather"
             (Grounded "Brisbane forecast: sunny, 26 degrees, light winds.")
-        ]))
+        ])))
       TIO.putStrLn (renderReport evalRep)
       -- improveSkill: one live reflection round over a deliberately weak skill.
       let weak = withTests
             [ Case ("the meeting is at 3pm tomorrow" :: T.Text) "extracts-time"
                 (Exactly ("15:00" :: T.Text)) ]
             (skill "extract-time" str str (\s -> [text|What time? ${s}|]))
-      (_, improveSteps) <- runEff (Anthropic.run cfg (improveSkill 1 id weak))
+      (_, improveSteps) <- runEff (Anthropic.run cfg (Embed.none (improveSkill 1 id weak)))
       TIO.putStrLn ("improveSkill: " <> T.pack (show (length improveSteps)) <> " step(s) "
                     <> T.pack (show [s.accepted | s <- improveSteps]))
       -- Scale: an anchored 1-to-5 politeness rating, judged live.
-      politeness <- runEff (Anthropic.run cfg (scoreM id
+      politeness <- runEff (Anthropic.run cfg (Embed.none (scoreM id
         (Scale 4 "Rate how polite this reply is"
            [(1, "rude"), (5, "warm and courteous")])
-        ("Thanks so much for waiting, happy to help!" :: T.Text)))
+        ("Thanks so much for waiting, happy to help!" :: T.Text))))
       TIO.putStrLn ("scale: " <> politeness.rationale)
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"

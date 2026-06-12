@@ -41,6 +41,7 @@ import Effectful
 import Autodocodec (dimapCodec, toJSONVia)
 
 import Crucible.Codec (JSONCodec, field, object, schemaText, str)
+import Crucible.Embed (Embed)
 import Crucible.Eval (Case (..), Expectation (..), Report, runEval)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
 import Crucible.Decode (decodeLLM, DecodeError (..))
@@ -207,7 +208,7 @@ call fn@Skill{output = outC, retries = rets} inp = loop rets (prompt fn inp)
 -- against its 'Expectation'; a decode failure scores 0. The render function is
 -- used when a 'Rubric' case hands the output to the LLM judge. Like 'call',
 -- needs only @LLM :> es@, so the same cases run scripted, replayed, or live.
-testSkill :: (Eq o, LLM :> es) => (o -> Text) -> Skill i o -> Eff es (Report i (Either DecodeError o))
+testSkill :: (Eq o, LLM :> es, Embed :> es) => (o -> Text) -> Skill i o -> Eff es (Report i (Either DecodeError o))
 testSkill render sk =
   runEval render' (call sk) (map liftCase sk.tests)
   where

@@ -112,7 +112,7 @@ if it has moved). Key from `VOYAGE_API_KEY`. Used qualified:
 votes, no dissent. `passes` gains `SimilarTo t _ -> v >= t`.
 
 **Breaking change, stated plainly:** `scoreWith` gains `Embed :> es`,
-rippling to `scoreM`, `scoreN`, `runEval`, `runEvalN`, `runEvalWith`.
+rippling to `scoreM`, `scoreN`, `runEval`, `runEvalN`, `runEvalWith`. (As built: also `Crucible.Skill.testSkill` and `Crucible.Skill.Improve.improveSkill`, which call `runEval` internally; found during planning.)
 Every existing crucible call site adds one `Embed.none` (or
 `runEmbedScripted`) wrapper; roughly thirty mechanical edits in
 `test/Spec.hs` plus the demo. Downstream, manifest-evals imports
