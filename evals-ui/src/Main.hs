@@ -87,14 +87,16 @@ updateModel = \case
       CompareR a b | a == ra, b == rb -> compareL %= \old -> keepStale old (fromEither e)
       _ -> pure ()  -- response arrived after navigation away; drop it
   SseOpen -> do
-    prev <- use liveL
+    -- Track whether this is the very first connect or a genuine reconnect.
+    -- On the first connect SetRoute has already issued a fetch, so we must NOT
+    -- refetch (duplicate). On every subsequent connect (browser EventSource
+    -- auto-reconnect after a drop) we MAY have missed change events, so we DO
+    -- refetch regardless of the current RemoteData state — including deep-linked
+    -- detail routes where _runsM stays NotAsked.
+    firstTime <- not <$> use sseConnectedOnceL
+    sseConnectedOnceL .= True
     liveL .= LiveConnected
-    -- SSE spec scopes replay out; on reconnect we may have missed change events.
-    -- Cheap best-effort healing: refetch when we had data before and lost the
-    -- feed. At startup, _liveM is already LiveReconnecting and runs==NotAsked,
-    -- so the guard below skips the duplicate fetch that SetRoute already issued.
-    runs <- use runsL
-    when (prev == LiveReconnecting && runs /= NotAsked) (issue DoRefetch)
+    when (not firstTime) (issue DoRefetch)
   SseError ->
     liveL .= LiveReconnecting
   SseMessage raw ->

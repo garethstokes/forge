@@ -111,7 +111,7 @@ manifest's session layer). To simulate a change without running the full CLI,
 pair the write with a manual notify:
 
 ```sql
-SELECT pg_notify('manifest_runs', '<run-uuid>');
+SELECT pg_notify('manifest_runs', '<run-id>');  -- pks are Ints, e.g. '1'
 ```
 
 Replace `manifest_runs` / `manifest_outputs` / `manifest_scores` /

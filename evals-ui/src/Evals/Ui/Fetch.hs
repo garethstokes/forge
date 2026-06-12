@@ -17,7 +17,8 @@ module Evals.Ui.Fetch
 
 import Data.Aeson (FromJSON, eitherDecodeStrictText)
 import Data.Text (Text)
-import Miso.DSL (JSVal, asyncCallback, fromJSValUnchecked, jsg, setField, (!), (#))
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Miso.DSL (Function (..), JSVal, asyncCallback, freeFunction, fromJSValUnchecked, jsg, setField, (!), (#))
 import Miso.Effect (Effect)
 import Miso.Fetch (Response (..), getText)
 import Miso.String (MisoString, fromMisoString, ms)
@@ -36,9 +37,17 @@ setHash h = do
 -- | Run an action after @delayMs@ milliseconds via @window.setTimeout@.
 -- NOT 'Control.Concurrent.threadDelay': on the wasm reactor that would park
 -- the JS event loop; setTimeout schedules on it instead.
+--
+-- The JS callback frees itself after firing to avoid a permanent GC reference:
+-- we stash the 'Function' handle in an 'IORef' so the callback body can read
+-- it back and call 'freeFunction' once the action has run.
 setTimeout :: Int -> IO () -> IO ()
 setTimeout delayMs action = do
-  cb <- asyncCallback action
+  ref <- newIORef Nothing
+  cb  <- asyncCallback $ do
+    action
+    readIORef ref >>= mapM_ freeFunction
+  writeIORef ref (Just (Function cb))
   _ <- jsg "window" # "setTimeout" $ (cb, delayMs)
   pure ()
 

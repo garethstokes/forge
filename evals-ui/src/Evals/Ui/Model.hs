@@ -21,6 +21,7 @@ module Evals.Ui.Model
   , expandedL
   , liveL
   , refetchQueuedL
+  , sseConnectedOnceL
     -- * Live updates (pure)
   , relevantTo
     -- * Hash routing (pure)
@@ -79,10 +80,15 @@ data Model = Model
   , _liveM :: LiveStatus
   , _refetchQueuedM :: Bool
     -- ^ a debounced 'DoRefetch' is already scheduled; coalesce further changes
+  , _sseConnectedOnceM :: Bool
+    -- ^ True after the SSE feed has connected at least once; used to
+    -- distinguish the initial connect (no refetch needed — SetRoute already
+    -- fetched) from a genuine reconnect (may have missed change events, so we
+    -- refetch)
   } deriving (Show, Eq)
 
 emptyModel :: Model
-emptyModel = Model RunsR NotAsked NotAsked NotAsked [] [] LiveReconnecting False
+emptyModel = Model RunsR NotAsked NotAsked NotAsked [] [] LiveReconnecting False False
 
 data Action
   = Startup
@@ -139,6 +145,9 @@ liveL = lens _liveM $ \r x -> r { _liveM = x }
 
 refetchQueuedL :: Lens Model Bool
 refetchQueuedL = lens _refetchQueuedM $ \r x -> r { _refetchQueuedM = x }
+
+sseConnectedOnceL :: Lens Model Bool
+sseConnectedOnceL = lens _sseConnectedOnceM $ \r x -> r { _sseConnectedOnceM = x }
 
 -- Live updates ----------------------------------------------------------------
 
