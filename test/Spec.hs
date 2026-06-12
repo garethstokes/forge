@@ -114,12 +114,12 @@ demoBox = DemoBox
 
 -- crucible-3sj: fake providers for fallback tests (count invocations)
 goodProvider :: Text -> IORef Int -> Text -> Provider
-goodProvider nm c out = Provider nm
+goodProvider nm c out = Provider nm "fake-model"
   (\_ -> modifyIORef' c (+ 1) >> pure (out, Usage 1 2))
   (\_ _ -> modifyIORef' c (+ 1) >> pure (Turn out [], Usage 1 2))
 
 badProvider :: Text -> IORef Int -> Provider
-badProvider nm c = Provider nm
+badProvider nm c = Provider nm "fake-model"
   (\_ -> modifyIORef' c (+ 1) >> ioError (userError "down"))
   (\_ _ -> modifyIORef' c (+ 1) >> ioError (userError "down"))
 
@@ -1356,7 +1356,7 @@ main = runChecks
             Left e -> Just e
             Right (_ :: Text) -> Nothing)
   , do c1 <- newIORef 0; c2 <- newIORef 0
-       let asyncProvider = Provider "a"
+       let asyncProvider = Provider "a" "fake-model"
              (\_ -> modifyIORef' c1 (+ 1) >> throwIO (SomeAsyncException (userError "cancelled")))
              (\_ _ -> modifyIORef' c1 (+ 1) >> throwIO (SomeAsyncException (userError "cancelled")))
        r <- try (runEff (Fallback.run [asyncProvider, goodProvider "b" c2 "from-b"] (complete [])))
@@ -1369,6 +1369,13 @@ main = runChecks
   , do p <- Anthropic.provider (defaultAnthropicConfig "k")
        q <- OpenAI.provider (defaultOpenAIConfig "k")
        check "providers: constructors carry their names" ("anthropic", "openai") (p.name, q.name)
+  -- crucible-c11: providers carry their models
+  , do let acfg = defaultAnthropicConfig "k"
+           ocfg = defaultOpenAIConfig "k"
+       p <- Anthropic.provider acfg
+       q <- OpenAI.provider ocfg
+       check "providers: constructors fill model from config"
+         (acfg.model, ocfg.model) (p.model, q.model)
   -- crucible-2zw: scalar metrics
   , check "metrics: normMatch ignores case and whitespace"
       (1.0, 0.0) (normMatch "Hello  World" "hello world", normMatch "hello" "goodbye")

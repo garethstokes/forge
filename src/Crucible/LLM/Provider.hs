@@ -22,6 +22,7 @@ import Crucible.Usage (Usage)
 
 data Provider = Provider
   { name     :: Text
+  , model    :: Text
   , complete :: [Message] -> IO (Text, Usage)
   , converse :: [(ToolName, Value)] -> [Chat.Message] -> IO (Turn, Usage)
   }

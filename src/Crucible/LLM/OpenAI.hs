@@ -494,6 +494,7 @@ provider cfg = do
   mgr <- newOpenAIManager cfg
   pure Provider
     { name     = "openai"
+    , model    = cfg.model
     , complete = openaiCompleteUsage cfg mgr
     , converse = converseOnce cfg mgr
     }

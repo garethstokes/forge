@@ -407,6 +407,7 @@ provider cfg = do
   mgr <- newAnthropicManager cfg
   pure Provider
     { name     = "anthropic"
+    , model    = cfg.model
     , complete = anthropicCompleteUsage cfg mgr
     , converse = converseOnce cfg mgr
     }
