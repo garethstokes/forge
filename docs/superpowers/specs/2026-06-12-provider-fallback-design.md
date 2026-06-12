@@ -23,7 +23,8 @@ performed.
 - Advance policy: after a member's own internal retries give up, advance on
   ANY failure (BAML semantics). A misconfigured member (401) falls through
   to a healthy one; every member error is collected for the terminal
-  exception.
+  exception. (As built: any SYNCHRONOUS failure; async exceptions such as
+  timeouts and cancellation rethrow instead of advancing, per code review.)
 - Round-robin ships in this cycle (same list, rotating start index).
 - Chain-level retry (re-running the exhausted chain) is an explicit
   non-goal; each member already retried internally.
