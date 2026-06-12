@@ -55,6 +55,9 @@ import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
 import qualified Data.List
+import Data.IORef (IORef, newIORef, modifyIORef', readIORef)
+import Crucible.LLM.Provider (Provider (..))
+import qualified Crucible.LLM.Fallback as Fallback
 
 -- Sample types for codec tests
 
@@ -104,6 +107,17 @@ demoBox = DemoBox
   { demo_weather = \(Loc c) -> pure ("sunny in " <> c)
   , demo_time    = pure "noon"
   }
+
+-- crucible-3sj: fake providers for fallback tests (count invocations)
+goodProvider :: Text -> IORef Int -> Text -> Provider
+goodProvider nm c out = Provider nm
+  (\_ -> modifyIORef' c (+ 1) >> pure (out, Usage 1 2))
+  (\_ _ -> modifyIORef' c (+ 1) >> pure (Turn out [], Usage 1 2))
+
+badProvider :: Text -> IORef Int -> Provider
+badProvider nm c = Provider nm
+  (\_ -> modifyIORef' c (+ 1) >> ioError (userError "down"))
+  (\_ _ -> modifyIORef' c (+ 1) >> ioError (userError "down"))
 
 -- M12 Task 3: runToolAgent fixture
 -- Tool's schema field is an aeson Value (JSON Schema object)
@@ -1290,4 +1304,52 @@ main = runChecks
                  (withRetries 0 (skill "s" C.str C.str ("Echo: " <>))))
             extra <- complete []
             pure (null steps, extra))))
+  -- crucible-3sj: provider fallback + round-robin
+  , do c1 <- newIORef 0; c2 <- newIORef 0
+       r <- runEff (Fallback.run [goodProvider "a" c1 "from-a", goodProvider "b" c2 "from-b"] (complete []))
+       n2 <- readIORef c2
+       check "fallback: first member answers, second untouched" ("from-a", 0 :: Int) (r, n2)
+  , do c1 <- newIORef 0; c2 <- newIORef 0
+       r <- runEff (Fallback.run [badProvider "a" c1, goodProvider "b" c2 "from-b"] (complete []))
+       n1 <- readIORef c1
+       check "fallback: failing member advances to the next" ("from-b", 1 :: Int) (r, n1)
+  , do c1 <- newIORef 0; c2 <- newIORef 0
+       r <- try (runEff (Fallback.run [badProvider "a" c1, badProvider "b" c2] (complete [])))
+       check "fallback: exhaustion collects every member error in order"
+         (Just (["a", "b"], True))
+         (case r of
+            Left (Fallback.FallbackExhausted errs) ->
+              Just (map fst errs, all (T.isInfixOf "down" . snd) errs)
+            Right (_ :: Text) -> Nothing)
+  , do c1 <- newIORef 0
+       (rs, u) <- runEff (Fallback.usage [goodProvider "a" c1 "ok"]
+                    (do x <- complete []; y <- complete []; pure (x, y)))
+       check "fallback: usage accumulates across calls" (("ok", "ok"), Usage 2 4) (rs, u)
+  , do c1 <- newIORef 0; c2 <- newIORef 0
+       r <- runEff (Fallback.runChat [badProvider "a" c1, goodProvider "b" c2 "from-b"]
+              (converse [] []))
+       check "fallback: chat path advances too" (Turn "from-b" []) r
+  , do c1 <- newIORef 0; c2 <- newIORef 0
+       let ps = [goodProvider "a" c1 "from-a", goodProvider "b" c2 "from-b"]
+       (r1, r2, r3) <- runEff (Fallback.roundRobin ps
+                         (do x <- complete []; y <- complete []; z <- complete []; pure (x, y, z)))
+       (n1, n2) <- (,) <$> readIORef c1 <*> readIORef c2
+       check "roundRobin: rotates the starting member per call"
+         (("from-a", "from-b", "from-a"), (2 :: Int, 1 :: Int))
+         ((r1, r2, r3), (n1, n2))
+  , do c1 <- newIORef 0; c2 <- newIORef 0
+       let ps = [goodProvider "a" c1 "from-a", badProvider "b" c2]
+       (r1, r2) <- runEff (Fallback.roundRobin ps
+                      (do x <- complete []; y <- complete []; pure (x, y)))
+       check "roundRobin: failure wraps back around the list"
+         ("from-a", "from-a") (r1, r2)
+  , do r <- try (runEff (Fallback.run [] (complete [])))
+       check "fallback: empty provider list throws immediately"
+         (Just (Fallback.FallbackExhausted []))
+         (case r of
+            Left e -> Just e
+            Right (_ :: Text) -> Nothing)
+  , do p <- Anthropic.provider (defaultAnthropicConfig "k")
+       q <- OpenAI.provider (defaultOpenAIConfig "k")
+       check "providers: constructors carry their names" ("anthropic", "openai") (p.name, q.name)
   ]
