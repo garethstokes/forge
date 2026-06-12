@@ -48,6 +48,9 @@ data Expectation a
                            --   LLM-rated ordinal scale (1..k, k = highest
                            --   anchor); value = (level-1)/(k-1), passing at
                            --   the pass level. Anchor at least the ends.
+                           --   Use a pass level of 2 or higher: at pass
+                           --   level 1 every case passes, including
+                           --   judge errors (which score 0).
 
 -- | One checklist item: a concrete, observable requirement and its weight.
 -- Write observable criteria ("cites a source URL"), not aspirational ones
