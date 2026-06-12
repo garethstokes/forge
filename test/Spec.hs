@@ -41,6 +41,7 @@ import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetrya
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
 import qualified Crucible.LLM.OpenAI as OpenAI
+import qualified Crucible.LLM.Voyage as Voyage
 import qualified Crucible.LLM.OpenAI.Stream as OS
 import qualified Crucible.Chat as Chat
 import Crucible.Chat
@@ -1463,4 +1464,18 @@ main = runChecks
   , check "embed: a dry script yields the empty vector"
       ([] :: [Double])
       (runPureEff (runEmbedScripted [] (embed "x")))
+  -- crucible-d4w: embedding wire formats (pure)
+  , check "openai embed: request body pins model and input"
+      (A.object ["model" A..= ("text-embedding-3-small" :: Text), "input" A..= ("hello" :: Text)])
+      (OpenAI.embedRequestJson (defaultOpenAIConfig "k") "hello")
+  , check "openai embed: response decode pulls data[0].embedding"
+      (Right [0.1, 0.2 :: Double])
+      (OpenAI.extractEmbedding "{\"data\":[{\"embedding\":[0.1,0.2]}]}")
+  , check "voyage embed: request body wraps input in an array"
+      (A.object ["model" A..= ("voyage-3.5-lite" :: Text), "input" A..= (["hello"] :: [Text])])
+      (Voyage.embedRequestJson (Voyage.defaultVoyageConfig "k") "hello")
+  , check "voyage embed: response decode + junk rejection"
+      (Right [1.5 :: Double], True)
+      ( Voyage.extractEmbedding "{\"data\":[{\"embedding\":[1.5]}]}"
+      , case Voyage.extractEmbedding "junk" of Left _ -> True; Right _ -> False )
   ]

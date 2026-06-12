@@ -52,6 +52,9 @@ module Crucible.LLM.OpenAI
   , replayChat
   , completionsRequest
   , withOpenAIRetry
+  , runEmbed
+  , embedRequestJson
+  , extractEmbedding
   ) where
 
 import Data.Text (Text)
@@ -94,6 +97,7 @@ import qualified Data.Vector as V
 
 import qualified Crucible.Chat as Chat
 import Crucible.Chat (Block (..), Chat (..), ToolUse (..), Turn (..))
+import Crucible.Embed (Embed (..))
 import Crucible.LLM (LLM (..), Message (..), Role (..))
 import Crucible.LLM.Provider (Provider (..))
 import Crucible.Tool (ToolName)
@@ -125,6 +129,7 @@ isRetryable (OpenAIStreamTimeout _)  = False
 data OpenAIConfig = OpenAIConfig
   { apiKey          :: Text
   , model           :: Text
+  , embedModel      :: Text  -- ^ model used for @\/v1\/embeddings@ calls
   , maxTokens       :: Int  -- ^ sent as @max_completion_tokens@
   , timeoutSecs     :: Int  -- ^ request timeout in seconds
   , maxRetries      :: Int  -- ^ retries on transient failures
@@ -140,6 +145,7 @@ defaultOpenAIConfig key =
   OpenAIConfig
     { apiKey = key
     , model = "gpt-4o-mini"
+    , embedModel = "text-embedding-3-small"
     , maxTokens = 1024
     , timeoutSecs = 60
     , maxRetries = 3
@@ -491,3 +497,55 @@ provider cfg = do
     , complete = openaiCompleteUsage cfg mgr
     , converse = converseOnce cfg mgr
     }
+
+-- | The embeddings request body: the configured embedding model and one
+-- input text.
+embedRequestJson :: OpenAIConfig -> Text -> Value
+embedRequestJson cfg input =
+  A.object ["model" .= cfg.embedModel, "input" .= input]
+
+-- | Pull @data[0].embedding@ out of an embeddings response.
+extractEmbedding :: Text -> Either String [Double]
+extractEmbedding t = do
+  v <- A.eitherDecode (LBS.fromStrict (TE.encodeUtf8 t))
+  AT.parseEither
+    (A.withObject "resp" $ \o -> do
+        ds <- o .: "data"
+        case ds of
+          (x : _) -> A.withObject "datum" (.: "embedding") x
+          []      -> fail "empty data array")
+    v
+
+-- | POST a JSON body to @\/v1\/embeddings@ with the shared headers and
+-- retry policy (mirrors 'postCompletions').
+postEmbeddings :: OpenAIConfig -> Manager -> Value -> IO Text
+postEmbeddings cfg mgr bodyJson =
+  withOpenAIRetry cfg $
+    handle (\(e :: HttpException) -> throwIO (OpenAIHttpError e)) $ do
+      base <- parseRequest "https://api.openai.com/v1/embeddings"
+      let req = base
+            { method = "POST"
+            , requestHeaders =
+                [ ("authorization", "Bearer " <> TE.encodeUtf8 cfg.apiKey)
+                , ("content-type", "application/json")
+                ]
+            , requestBody = RequestBodyLBS (A.encode bodyJson)
+            }
+      resp <- httpLbs req mgr
+      let body = TE.decodeUtf8Lenient (LBS.toStrict (responseBody resp))
+          code = statusCode (responseStatus resp)
+      if code >= 200 && code < 300
+        then pure body
+        else throwIO (OpenAIStatusError code body)
+
+-- | Interpret 'Embed' against the live OpenAI embeddings API. One shared
+-- TLS manager; each 'EmbedText' is one @POST \/v1\/embeddings@ with
+-- timeout + retry. Failures throw 'OpenAIError'. Use as @OpenAI.runEmbed@.
+runEmbed :: (IOE :> es) => OpenAIConfig -> Eff (Embed : es) a -> Eff es a
+runEmbed cfg action = do
+  mgr <- liftIO (newOpenAIManager cfg)
+  interpret
+    (\_ (EmbedText t) -> liftIO $ do
+        body <- postEmbeddings cfg mgr (embedRequestJson cfg t)
+        either (\_ -> throwIO (OpenAINoContent body)) pure (extractEmbedding body))
+    action
