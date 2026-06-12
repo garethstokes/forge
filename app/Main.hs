@@ -31,6 +31,7 @@ import qualified Crucible.LLM.Anthropic.Stream as Anthropic
 import Crucible.LLM.OpenAI (defaultOpenAIConfig)
 import qualified Crucible.LLM.OpenAI as OpenAI
 import qualified Crucible.LLM.OpenAI.Stream as OpenAI
+import qualified Crucible.LLM.Fallback as Fallback
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
@@ -190,3 +191,9 @@ main = do
               | a == b    -> TIO.putStrLn ("openai chat cassette: OK replay matches: " <> a)
               | otherwise -> TIO.putStrLn ("openai chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
             _ -> TIO.putStrLn "openai chat cassette: a run failed"
+          -- Fallback: a junk-key member fails fast; the chain recovers.
+          providers <- (\a o -> [a, o])
+            <$> Anthropic.provider (defaultAnthropicConfig "junk-key")
+            <*> OpenAI.provider ocfg
+          fb <- runEff (Fallback.run providers (complete prompt))
+          TIO.putStrLn ("fallback: " <> fb <> " (first member cannot succeed; answered by second)")

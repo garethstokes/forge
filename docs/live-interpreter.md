@@ -131,6 +131,89 @@ The cassette format is provider-neutral (it is crucible's own turn
 serialization, defined in `Crucible.Chat`), so a conversation recorded with
 `Anthropic.recordChat` replays under `OpenAI.replayChat` and vice versa.
 
+## Fallback and round-robin
+
+The `Provider` record is a named pair of per-call functions:
+
+```haskell
+data Provider = Provider
+  { name     :: Text
+  , complete :: [Message] -> IO (Text, Usage)
+  , converse :: [(ToolName, Value)] -> [Chat.Message] -> IO (Turn, Usage)
+  }
+```
+
+Each function carries the provider's own retry policy, so a member inside a
+fallback chain behaves exactly as it would alone: the chain only advances when
+the member's internal retries have given up.
+
+Build a `Provider` with either constructor:
+
+```haskell
+import qualified Crucible.LLM.Anthropic as Anthropic
+import qualified Crucible.LLM.OpenAI   as OpenAI
+
+aProvider <- Anthropic.provider acfg
+oProvider <- OpenAI.provider   ocfg
+```
+
+Both constructors allocate one shared TLS manager for that provider. You can
+also construct a `Provider` directly, which is useful for stubs or custom
+dispatch strategies.
+
+### Fallback combinators
+
+`Crucible.LLM.Fallback` exports eight functions, used qualified:
+
+| Combinator | Discharges | Also returns |
+|---|---|---|
+| `Fallback.run` | `LLM` | result only |
+| `Fallback.usage` | `LLM` | result + accumulated `Usage` |
+| `Fallback.runChat` | `Chat` | result only |
+| `Fallback.usageChat` | `Chat` | result + accumulated `Usage` |
+| `Fallback.roundRobin` | `LLM` | result only |
+| `Fallback.roundRobinUsage` | `LLM` | result + accumulated `Usage` |
+| `Fallback.roundRobinChat` | `Chat` | result only |
+| `Fallback.roundRobinUsageChat` | `Chat` | result + accumulated `Usage` |
+
+Example using the `LLM` path:
+
+```haskell
+import qualified Crucible.LLM.Fallback as Fallback
+
+providers <- sequence [Anthropic.provider acfg, OpenAI.provider ocfg]
+answer <- runEff (Fallback.run providers (complete msgs))
+```
+
+### Semantics
+
+Fallback is per call, not per program. Each call to `complete` or `converse`
+tries the members in order. The chain advances on any synchronous member
+failure -- a misconfigured member (bad API key, wrong base URL) falls through
+to a healthy one instead of wedging the chain. Effects already performed
+(such as tool calls from a previous loop turn) are never replayed: the chain
+only advances before the member produces a result.
+
+When every member fails, `FallbackExhausted` is thrown, carrying each
+member's rendered error in the order tried. An empty member list throws
+`FallbackExhausted []` immediately on the first call.
+
+### Round-robin
+
+`Fallback.roundRobin` and its siblings rotate the starting member per call.
+An `IORef` counter created when the interpreter starts advances by one for
+each call, so successive calls distribute across members. A failing member
+still falls through to the rest of the list, wrapping around if needed.
+
+### Limits
+
+- Streaming stays single-provider; the fallback combinators cover `LLM` and
+  `Chat` only.
+- Cassettes record at the provider level (inside each member), not at the
+  chain level.
+- Which member answered is not yet observable from the result. This is tracked
+  separately as CallLog work.
+
 ## Further reading
 
 Config setup and the first live call are walked through in [Getting
