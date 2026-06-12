@@ -10,7 +10,8 @@
 -- | Scoring (the grading bridge): grade a run's Outputs with named grader
 -- versions through crucible's eval machinery, one 'Score' row per
 -- (output x grader version), then recompute per-grader 'RunMetric's. exact
--- grading is pure and local; the LLM-judge mechanics are crucible's. Failure
+-- grading is pure and local; the LLM-judge mechanics are crucible's; pointed
+-- judges per-example signed criteria with conversation context. Failure
 -- is per-pair: any grading error becomes a 'Score' row with @error@ set and
 -- @value = NULL@ (excluded from aggregates, re-graded on the next
 -- invocation).
@@ -307,7 +308,9 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
 
     -- Dispatch on the grader kind: exact is pure and local; rubric and
     -- checklist build a crucible expectation from the config and go through
-    -- the injected runner. An exception from the runner is captured as an
+    -- the injected runner; pointed judges the example's own criteria one by
+    -- one through the injected CriterionJudge with the full transcript.
+    -- An exception from the runner is captured as an
     -- LlmError rather than killing the batch; a judge-error score is folded
     -- into the error path.
     gradePair :: Maybe TargetVersion -> Grader -> GraderVersion -> Output -> IO (Either ExecError Graded)
