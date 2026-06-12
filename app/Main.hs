@@ -35,6 +35,8 @@ import qualified Crucible.LLM.Voyage as Voyage
 import qualified Crucible.LLM.OpenAI as OpenAI
 import qualified Crucible.LLM.OpenAI.Stream as OpenAI
 import qualified Crucible.LLM.Fallback as Fallback
+import Crucible.LLM.CallLog (CallEntry (..))
+import qualified Crucible.LLM.CallLog as CallLog
 import GHC.Generics (Generic)
 import qualified Data.Aeson as A
 import NeatInterpolation (text)
@@ -201,12 +203,20 @@ main = do
               | otherwise -> TIO.putStrLn ("openai chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
             _ -> TIO.putStrLn "openai chat cassette: a run failed"
           -- Fallback: a junk-key member fails fast; the chain recovers.
-          providers <- sequence
+          lg <- CallLog.new
+          providers <- map (CallLog.logging lg) <$> sequence
             [ Anthropic.provider (defaultAnthropicConfig "junk-key")
             , OpenAI.provider ocfg
             ]
           fb <- runEff (Fallback.run providers (complete prompt))
           TIO.putStrLn ("fallback: " <> fb <> " (first member cannot succeed; answered by second)")
+          entries <- CallLog.drain lg
+          mapM_
+            (\e -> TIO.putStrLn
+              ("calllog: " <> e.provider <> " " <> e.model <> " "
+                 <> either (const "error") (const "ok") e.outcome
+                 <> " in " <> T.pack (show e.durationMs) <> "ms"))
+            entries
           -- Embeddings: consistency across paraphrases + a SimilarTo case.
           cons <- runEff (OpenAI.runEmbed ocfg (Embed.consistency
             [ "The return window is 30 days."

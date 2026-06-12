@@ -133,11 +133,12 @@ serialization, defined in `Crucible.Chat`), so a conversation recorded with
 
 ## Fallback and round-robin
 
-The `Provider` record is a named pair of per-call functions:
+The `Provider` record carries the provider name, model id, and per-call functions:
 
 ```haskell
 data Provider = Provider
   { name     :: Text
+  , model    :: Text
   , complete :: [Message] -> IO (Text, Usage)
   , converse :: [(ToolName, Value)] -> [Chat.Message] -> IO (Turn, Usage)
   }
@@ -211,14 +212,49 @@ An `IORef` counter created when the interpreter starts advances by one for
 each call, so successive calls distribute across members. A failing member
 still falls through to the rest of the list, wrapping around if needed.
 
+### Observing the chain
+
+`Crucible.LLM.CallLog` (used qualified) instruments a provider list without
+touching fallback internals. Create a handle, decorate the members, run the
+chain, then drain:
+
+```haskell
+import Crucible.LLM.CallLog (CallEntry (..))
+import qualified Crucible.LLM.CallLog as CallLog
+
+lg        <- CallLog.new
+providers <- map (CallLog.logging lg) <$>
+               sequence [ Anthropic.provider acfg, OpenAI.provider ocfg ]
+answer    <- runEff (Fallback.run providers (complete msgs))
+entries   <- CallLog.drain lg
+```
+
+Each `CallEntry` has four fields:
+
+| Field        | Type              | Meaning                                          |
+|--------------|-------------------|--------------------------------------------------|
+| `provider`   | `Text`            | The member's `name`.                             |
+| `model`      | `Text`            | The model id used for that attempt.              |
+| `durationMs` | `Int`             | Wall-clock time from call start to finish, in ms.|
+| `outcome`    | `Either Text Usage` | `Left` rendered error, or `Right` usage on success. |
+
+Failed member attempts are recorded before the exception is rethrown, so the
+entries arrive in tried order. The entry with a `Right` outcome is the member
+that answered; every preceding `Left` entry is one that fell through. The full
+walk is reconstructable from a single drain.
+
+`drain` reads and clears the handle, so distinct phases of a longer program
+can collect their own windows without cross-contamination. For a single
+provider, wrap it in a singleton chain: `Fallback.run [CallLog.logging lg p]`.
+
 ### Limits
 
 - Streaming stays single-provider; the fallback combinators cover `LLM` and
   `Chat` only.
 - Cassettes record at the provider level (inside each member), not at the
   chain level.
-- Which member answered is not yet observable from the result. This is tracked
-  separately as CallLog work.
+- Which member answered is not part of the result value; decorate the chain
+  with `CallLog.logging` (above) to observe the walk.
 
 ## Embeddings
 
