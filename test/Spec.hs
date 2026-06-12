@@ -33,7 +33,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
-import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith)
+import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt, ratePrompt)
 import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa)
@@ -1387,4 +1387,59 @@ main = runChecks
       (case ratePrompt 5 [(5, "good"), (1, "bad")] "r" "out" of
          [Message _ sys, Message _ u] -> (u, T.isInfixOf "between 1 and 5" sys)
          _ -> ("wrong shape", False))
+  -- crucible-2zw: Metric expectation + pass rule
+  , check "metric: scalars land in meanScore; threshold gates passRate"
+      (0.5, 0.5)
+      (let rep = runPureEff (runLLMScripted []
+                   (runEval id pure
+                      [ Case ("hello" :: Text) "hit"  (Metric 0.5 (normMatch "Hello "))
+                      , Case "bye" "miss" (Metric 0.5 (normMatch "Hello ")) ]))
+       in (rep.passRate, rep.meanScore))
+  , check "metric: values clamp into [0,1]"
+      (1.0, 0.0)
+      (let s1 = runPureEff (runLLMScripted [] (scoreM id (Metric 1.0 (const 1.5)) ("x" :: Text)))
+           s0 = runPureEff (runLLMScripted [] (scoreM id (Metric 0.0 (const (-0.5))) ("x" :: Text)))
+       in (s1.value, s0.value))
+  -- crucible-2zw: Scale expectation
+  , check "scale: single vote level 4 of 5"
+      (0.75, "level 4 of 5: polite", Nothing)
+      (let s = runPureEff (runLLMScripted ["{\"why\":\"polite\",\"level\":4}"]
+                 (scoreM id (Scale 4 "politeness" [(1, "rude"), (5, "warm")]) ("out" :: Text)))
+       in (s.value, s.rationale, s.votes))
+  , check "scale: median of (3,4,4) is 4 with tally (2,1), no dissent at spread 1"
+      (0.75, Just (2, 1), Nothing)
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"meh\",\"level\":3}"
+                 , "{\"why\":\"good\",\"level\":4}"
+                 , "{\"why\":\"good\",\"level\":4}" ]
+                 (scoreN 3 id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text)))
+       in (s.value, s.votes, s.dissent))
+  , check "scale: spread beyond one level records dissent"
+      (Just (2, 1), Just "awful")
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"awful\",\"level\":1}"
+                 , "{\"why\":\"good\",\"level\":4}"
+                 , "{\"why\":\"good\",\"level\":4}" ]
+                 (scoreN 3 id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text)))
+       in (s.votes, s.dissent))
+  , check "scale: out-of-range level takes the judge-error path"
+      (0.0, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"x\",\"level\":7}", "{\"why\":\"x\",\"level\":9}" ]
+                 (scoreM id (Scale 4 "r" [(1, "bad"), (5, "good")]) ("out" :: Text)))
+       in (s.value, T.isInfixOf "judge error: " s.rationale))
+  , check "scale: anchors without a top level are a judge error"
+      (0.0, True)
+      (let s = runPureEff (runLLMScripted []
+                 (scoreM id (Scale 1 "r" [(1, "only")]) ("out" :: Text)))
+       in (s.value, T.isInfixOf "judge error: " s.rationale))
+  -- crucible-2zw: per-expectation pass rule, mixed dataset
+  , check "passRate: per-expectation thresholds across a mixed dataset"
+      (2 / 3, 2 / 3)
+      (let rep = runPureEff (runLLMScripted ["{\"why\":\"mid\",\"level\":3}"]
+                   (runEval id pure
+                      [ Case ("x" :: Text) "exact" (Exactly "x")
+                      , Case "y" "metric-borderline" (Metric 0.5 (const 0.5))
+                      , Case "z" "scale-fail" (Scale 4 "r" [(1, "bad"), (5, "good")]) ]))
+       in (rep.passRate, rep.meanScore))
   ]

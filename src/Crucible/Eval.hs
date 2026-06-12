@@ -8,10 +8,11 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- | Datasets, expectations, and scoring. Deterministic graders first
--- ('Exactly', 'Predicate'); 'Rubric' asks the LLM judge one holistic
--- question; 'Checklist' decomposes a quality goal into weighted binary
--- criteria, each judged with its own call. The judge plumbing (prompt,
--- repair, voting) lives in "Crucible.Eval.Judge".
+-- ('Exactly', 'Predicate', 'Metric'); 'Rubric' asks the LLM judge one
+-- holistic question; 'Checklist' decomposes a quality goal into weighted
+-- binary criteria, each judged with its own call; 'Scale' rates on an
+-- anchored ordinal scale. The judge plumbing (prompt, repair, voting) lives
+-- in "Crucible.Eval.Judge".
 module Crucible.Eval
   ( Case(..), Expectation(..), Criterion(..), criterion
   , Score(..), score, Verdict(..)
@@ -27,7 +28,7 @@ import qualified Data.Text as T
 import Effectful
 
 import Crucible.Eval.Grounding (GroundingOutcome (..), groundingOutcome)
-import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), defaultJudgeOpts, vote)
+import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), defaultJudgeOpts, vote, RateOutcome (..), rate)
 import Crucible.LLM (LLM)
 
 -- | What a case's output is checked against.
@@ -38,6 +39,15 @@ data Expectation a
   | Checklist [Criterion]  -- ^ weighted binary criteria, judged one by one
   | Grounded Text          -- ^ every factual claim in the output must be
                            --   supported by this evidence (derived claims)
+  | Metric Double (a -> Double)
+                           -- ^ pass threshold, scalar metric in [0,1]
+                           --   (see "Crucible.Eval.Metrics"); the scalar IS
+                           --   the score value, passing at value >= threshold
+  | Scale Int Text [(Int, Text)]
+                           -- ^ pass level, rubric, anchored levels: an
+                           --   LLM-rated ordinal scale (1..k, k = highest
+                           --   anchor); value = (level-1)/(k-1), passing at
+                           --   the pass level. Anchor at least the ends.
 
 -- | One checklist item: a concrete, observable requirement and its weight.
 -- Write observable criteria ("cites a source URL"), not aspirational ones
@@ -101,8 +111,8 @@ voteScore single (Decided p w d y f) =
     (if single then Nothing else d)
 
 -- | Score one output with explicit judge options. Examples feed 'Rubric'
--- judging only; 'Checklist' criteria and 'Grounded' claims take the vote
--- count but ignore examples (each is its own micro-rubric).
+-- judging only; 'Checklist' criteria, 'Grounded' claims, and 'Scale' all
+-- take the vote count but ignore examples (each is its own micro-rubric).
 scoreWith :: (Eq a, LLM :> es) => JudgeOpts -> (a -> Text) -> Expectation a -> a -> Eff es Score
 scoreWith opts render exp_ actual = case exp_ of
   Exactly e    -> pure (score (ind (actual == e)) (if actual == e then "exact match" else "mismatch"))
@@ -110,6 +120,9 @@ scoreWith opts render exp_ actual = case exp_ of
   Rubric r     -> judgeWith opts render r actual
   Checklist cs -> checklistScore opts.votes render cs actual
   Grounded ev  -> groundingScore <$> groundingOutcome opts.votes ev (render actual)
+  Metric _ f   -> let v = max 0.0 (min 1.0 (f actual))
+                  in pure (score v ("metric = " <> T.pack (show v)))
+  Scale _ r as -> scaleScore opts.votes r as (render actual)
   where ind b = if b then 1.0 else 0.0
 
 -- | Score one output against its expectation, single-sample judging.
@@ -142,6 +155,24 @@ checklistScore n render cs actual = do
         AllErrored m      -> (c, False, "judge error: " <> m)
         Decided p w _ _ _ -> (c, p, w)
 
+-- | Rate the rendered output on an anchored 1..k scale; the median level
+-- normalizes to (level-1)/(k-1). Single-vote keeps votes/dissent Nothing,
+-- like 'judgeWith'. A scale whose anchors do not reach level 2 is a judge
+-- error (never a division by zero).
+scaleScore :: (LLM :> es) => Int -> Text -> [(Int, Text)] -> Text -> Eff es Score
+scaleScore n rubric anchors rendered
+  | k <= 1 = pure (score 0.0 "judge error: a scale needs anchors up to level 2 or higher")
+  | otherwise = do
+      out <- rate n k anchors rubric rendered
+      pure $ case out of
+        RateAllErrored m -> score 0.0 ("judge error: " <> m)
+        Rated lvl w d agree others ->
+          Score (fromIntegral (lvl - 1) / fromIntegral (k - 1))
+            ("level " <> T.pack (show lvl) <> " of " <> T.pack (show k) <> ": " <> w)
+            (if n <= 1 then Nothing else Just (agree, others))
+            (if n <= 1 then Nothing else d)
+  where k = maximum (0 : map fst anchors)
+
 -- | Check that every factual claim in an output is supported by the given
 -- evidence: decompose into atomic claims (at most 20, one decompose call
 -- plus one repair attempt), verify each with an n-vote judge call, and
@@ -162,16 +193,26 @@ groundingScore NoClaims =
 groundingScore (DecomposeFailed m) =
   score 0.0 ("judge error: claim decomposition failed: " <> m)
 
+-- | Pass condition per expectation: 'Metric' passes at its threshold,
+-- 'Scale' at its pass level, everything else at value 1.0.
+passes :: Expectation a -> Double -> Bool
+passes (Metric t _) v = v >= t
+passes (Scale p _ anchors) v =
+  let k = maximum (1 : map fst anchors)
+  in k > 1 && v >= fromIntegral (p - 1) / fromIntegral (k - 1)
+passes _ v = v >= 1.0
+
 -- | 'runEval' with n-vote judging for Rubric cases and Checklist criteria.
 runEvalWith :: (Eq a, LLM :> es)
             => JudgeOpts -> (a -> Text) -> (i -> Eff es a) -> [Case i a]
             -> Eff es (Report i a)
 runEvalWith opts render sut cases = do
   rs <- mapM run1 cases
-  let vals = map (\Result{score = s} -> s.value) rs
-      len  = length rs
-      mean = if len == 0 then 0 else sum vals / fromIntegral len
-      pr   = if len == 0 then 0 else fromIntegral (length (filter (>= 1.0) vals)) / fromIntegral len
+  let vals   = map (\Result{score = s} -> s.value) rs
+      len    = length rs
+      mean   = if len == 0 then 0 else sum vals / fromIntegral len
+      passed = length [() | Result{case' = Case{expect = ex}, score = s} <- rs, passes ex s.value]
+      pr     = if len == 0 then 0 else fromIntegral passed / fromIntegral len
   pure (Report rs pr mean)
   where
     run1 c@Case{input = i, expect = ex} = do
