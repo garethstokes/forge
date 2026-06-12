@@ -11,8 +11,8 @@
 -- ('Exactly', 'Predicate', 'Metric'); 'Rubric' asks the LLM judge one
 -- holistic question; 'Checklist' decomposes a quality goal into weighted
 -- binary criteria, each judged with its own call; 'Scale' rates on an
--- anchored ordinal scale. The judge plumbing (prompt, repair, voting) lives
--- in "Crucible.Eval.Judge".
+-- anchored ordinal scale; 'SimilarTo' compares embeddings by cosine. The
+-- judge plumbing (prompt, repair, voting) lives in "Crucible.Eval.Judge".
 module Crucible.Eval
   ( Case(..), Expectation(..), Criterion(..), criterion
   , Score(..), score, Verdict(..)

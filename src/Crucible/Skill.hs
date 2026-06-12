@@ -206,8 +206,10 @@ call fn@Skill{output = outC, retries = rets} inp = loop rets (prompt fn inp)
 -- | Run a skill's attached 'tests' through the eval pipeline and aggregate
 -- a 'Report'. Each case 'call's the skill with its input and scores the result
 -- against its 'Expectation'; a decode failure scores 0. The render function is
--- used when a 'Rubric' case hands the output to the LLM judge. Like 'call',
--- needs only @LLM :> es@, so the same cases run scripted, replayed, or live.
+-- used when a 'Rubric' case hands the output to the LLM judge. Needs
+-- @LLM :> es@ and @Embed :> es@ (discharge the latter with
+-- 'Crucible.Embed.none' when no case uses 'Crucible.Eval.SimilarTo'), so
+-- the same cases run scripted, replayed, or live.
 testSkill :: (Eq o, LLM :> es, Embed :> es) => (o -> Text) -> Skill i o -> Eff es (Report i (Either DecodeError o))
 testSkill render sk =
   runEval render' (call sk) (map liftCase sk.tests)

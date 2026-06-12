@@ -88,6 +88,10 @@ data VoyageError = ...                        -- status / decode errors, like An
 runEmbed :: VoyageConfig -> Eff (Embed : es) a -> Eff es a
 ```
 
+(As built: VoyageConfig carries the house timeout/retry knobs
+(timeoutSecs, maxRetries, baseDelayMicros) instead of baseUrl; the URL is
+hardcoded exactly as the OpenAI module hardcodes its endpoints.)
+
 POST `https://api.voyageai.com/v1/embeddings`, headers
 `Authorization: Bearer <key>`, body `{"input": [<text>], "model": <model>}`,
 decoding `data[0].embedding`. Retryable: 429, 5xx, timeouts;

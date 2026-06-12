@@ -364,6 +364,7 @@ of `Case` values; `testSkill` runs every case through `call` and aggregates a
 ```haskell
 import Crucible.Eval (Case (..), Expectation (..), renderReport)
 import Crucible.Skill (skill, withTests, testSkill)
+import qualified Crucible.Embed as Embed
 
 classify :: Skill Text Polarity
 classify =
@@ -375,15 +376,16 @@ classify =
     (skill "classify-polarity" str polarityCodec
       (\s -> [text|Classify the sentiment of: ${s}|]))
 
-report <- runEff (Anthropic.run cfg (testSkill (T.pack . show) classify))
+report <- runEff (Anthropic.run cfg (Embed.none (testSkill (T.pack . show) classify)))
 putStrLn (T.unpack (renderReport report))
 ```
 
 An `Exactly` or `Predicate` case scores 1 or 0; a `Rubric` case asks the LLM
 judge, rendering the output with the function you pass. A reply that fails to
-decode scores 0. `testSkill` needs only `LLM :> es`, so the same cases run
-against `runLLMScripted` in CI and against a live interpreter when you want a
-real regression signal.
+decode scores 0. `testSkill` needs `LLM :> es` and `Embed :> es` (discharge
+the latter with `Embed.none` when no case uses `SimilarTo`), so the same
+cases run against `runLLMScripted` in CI and against a live interpreter when
+you want a real regression signal.
 
 For rubric design, voting, and judge calibration, see [Evals](evals.md).
 
@@ -394,7 +396,7 @@ attached test cases:
 
 ```haskell
 improveSkill
-  :: (Eq o, LLM :> es)
+  :: (Eq o, LLM :> es, Embed :> es)
   => Int              -- maximum rounds
   -> (o -> Text)      -- render function passed to testSkill
   -> Skill i o        -- skill to improve (must have tests attached)
