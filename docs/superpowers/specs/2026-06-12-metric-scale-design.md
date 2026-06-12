@@ -79,9 +79,11 @@ judge error at scoring time, never a division by zero.
 New `rate`: prompt renders the rubric, the anchor lines in ascending
 order (`"1: dismissive"`), the inclusive level range, and asks for
 reasoning first then a single level, following the existing judge prompt
-idiom (machine line, input delimiters, trailing reminder). Parsing
-accepts a bare integer in 1..k; out-of-range or unparseable replies take
-the existing retry-then-judge-error path.
+idiom (machine line, input delimiters, trailing reminder). (As built:
+replies must be the JSON rating object, consistent with the binary judge;
+a bare integer is handled by the repair re-prompt rather than parsed
+leniently. Out-of-range or unparseable replies take the existing
+retry-then-judge-error path.)
 
 With n votes: all n samples are taken (no early stop; the median needs
 the full sample), median level wins with ties rounding DOWN
