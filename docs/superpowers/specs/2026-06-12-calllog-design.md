@@ -19,7 +19,7 @@ reconstructable after the fact.
 - Hook point: a pure Provider decorator (`logging`), not logged Fallback
   variants (grammar doubling) and not an effect-level wrapper (cannot see
   provider name, member attempts, or failed-call durations).
-- Entry fields: lean plus model — provider, model, duration (ms), outcome.
+- Entry fields: lean plus model: provider, model, duration (ms), outcome.
   TTFT deferred (streaming stays uninstrumented; non-streaming TTFT equals
   duration). Attempt position and which-member-answered are derivable from
   entry order and outcome, not first-class fields.
@@ -81,7 +81,7 @@ drain :: CallLog -> IO [CallEntry]
 Timing via `GHC.Clock.getMonotonicTimeNSec`, reported in whole
 milliseconds. The decorator preserves `name` and `model` unchanged and
 wraps both per-call functions with the same time/try/record/rethrow
-shape (`try @SomeException`; record even async exceptions, then rethrow —
+shape (`try @SomeException`; record even async exceptions, then rethrow;
 the fallback walk decides what advances).
 
 Single-provider logging needs no new machinery:
