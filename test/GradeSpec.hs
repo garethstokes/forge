@@ -7,7 +7,8 @@
 module GradeSpec (main) where
 
 import Control.Monad (unless)
-import Data.Aeson (Value, object, toJSON, (.=))
+import Data.Aeson (Value, decode, object, toJSON, (.=))
+import qualified Data.Aeson as Aeson
 import Data.Either (isLeft)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (sort)
@@ -43,6 +44,7 @@ main = do
   configSpec
   gradeCfgSpec
   exactSpec
+  pointedPureSpec
   withEphemeralDb $ \pool -> do
     _ <- withSession pool migrateAll
     now <- getCurrentTime
@@ -54,7 +56,7 @@ main = do
     unknownKindSpec pool now
     missingRunSpec pool now
     dedupeSpec pool now
-  putStrLn "manifest-evals GradeSpec: config + exact + engine + checklist + resume + metrics + edge-cases OK"
+  putStrLn "manifest-evals GradeSpec: config + exact + pointed + engine + checklist + resume + metrics + edge-cases OK"
 
 configSpec :: IO ()
 configSpec = do
@@ -98,6 +100,98 @@ exactSpec = do
     (isJudgeError (Eval.score 0.0 "judge error: all samples failed"))
   expect "ordinary zero score is not a judge error"
     (isJudgeError (Eval.score 0.0 "mismatch") == False)
+
+-- Pointed pure specs -------------------------------------------------------
+
+pointedPureSpec :: IO ()
+pointedPureSpec = do
+  -- criteria parsing
+  let twoItems = toJSON
+        [ object ["criterion" .= ("c1" :: Text), "points" .= (7 :: Double)]
+        , object ["criterion" .= ("c2" :: Text), "points" .= ((-6) :: Double), "tags" .= (["axis:accuracy"] :: [Text])]
+        ]
+  case criteriaFromExpected (Just (Aeson twoItems)) of
+    Left e  -> ioError (userError ("criteria parsing failed: " <> show e))
+    Right cs -> do
+      expect "criteria: two items" (length cs == 2)
+      expect "criteria: first has no tags"  (cs !! 0 == Criterion' { criterion = "c1", points = 7.0, tags = [] })
+      expect "criteria: second has tags"    (cs !! 1 == Criterion' { criterion = "c2", points = -6.0, tags = ["axis:accuracy"] })
+  expect "criteria: Nothing expected → Left"
+    (isLeft (criteriaFromExpected Nothing))
+  expect "criteria: non-array → Left"
+    (isLeft (criteriaFromExpected (Just (Aeson (object ["criterion" .= ("x" :: Text), "points" .= (1 :: Double)])))))
+  expect "criteria: empty array → Left"
+    (isLeft (criteriaFromExpected (Just (Aeson (toJSON ([] :: [Value]))))))
+  let allNeg = toJSON [object ["criterion" .= ("bad" :: Text), "points" .= ((-3) :: Double)]]
+  expect "criteria: all-negative → Left"
+    (isLeft (criteriaFromExpected (Just (Aeson allNeg))))
+
+  -- renderCriterion
+  let negCrit = Criterion' { criterion = "says something wrong", points = -6.0, tags = ["axis:accuracy"] }
+      rendered = renderCriterion negCrit
+  expect "renderCriterion: contains signed points [-6.0]" ("-6.0" `T.isInfixOf` rendered)
+  expect "renderCriterion: contains 'whether the criterion is MET'"
+    ("whether the criterion is MET" `T.isInfixOf` rendered)
+  expect "renderCriterion: contains 'such as'"
+    ("such as" `T.isInfixOf` rendered)
+
+  -- transcript
+  let sysPrompt = "SYS"
+      inputMsgs = object ["messages" .= [object ["role" .= ("user" :: Text), "content" .= ("q1" :: Text)],
+                                          object ["role" .= ("assistant" :: Text), "content" .= ("a1" :: Text)]]]
+      finalAnswer = "final answer"
+  case transcript sysPrompt inputMsgs finalAnswer of
+    Left e  -> ioError (userError ("transcript failed: " <> show e))
+    Right t ->
+      expect "transcript: full conversation with system + messages + completion"
+        (t == "system: SYS\n\nuser: q1\n\nassistant: a1\n\nassistant: final answer")
+  case transcript sysPrompt (toJSON ("string input" :: Text)) "completion" of
+    Left e  -> ioError (userError ("transcript string input failed: " <> show e))
+    Right t -> expect "transcript: string input treated as user message"
+      ("user: string input" `T.isInfixOf` t)
+  expect "transcript: numeric input → Left"
+    (isLeft (transcript sysPrompt (toJSON (42 :: Int)) "completion"))
+
+  -- HealthBench vector: 7/5/10/-6 with verdicts T/F/T/T → 11/22
+  let hbCriteria =
+        [ (Criterion' "c1" 7.0  [], CriterionVerdict True  "e1")
+        , (Criterion' "c2" 5.0  [], CriterionVerdict False "e2")
+        , (Criterion' "c3" 10.0 [], CriterionVerdict True  "e3")
+        , (Criterion' "c4" (-6.0) [], CriterionVerdict True  "e4")
+        ]
+      hbGraded = pointedGraded hbCriteria
+  expect "pointedGraded: value == 11/22"
+    (near hbGraded.value (11.0 / 22.0))
+  expect "pointedGraded: passed == Nothing"
+    (isNothing hbGraded.passed)
+
+  -- negative score possible
+  let negPairs =
+        [ (Criterion' "pos" 5.0   [], CriterionVerdict False "e1")
+        , (Criterion' "neg" (-6.0) [], CriterionVerdict True  "e2")
+        ]
+  expect "pointedGraded: negative score possible"
+    ((pointedGraded negPairs).value < 0)
+
+  -- detail golden
+  let singlePair = [(Criterion' "c" 7.0 [], CriterionVerdict True "e")]
+      g = pointedGraded singlePair
+      decoded = decode (Aeson.encode g.detail) :: Maybe Value
+  case decoded of
+    Nothing -> ioError (userError "detail round-trip failed to decode")
+    Just v ->
+      expect "pointedGraded: detail golden shape"
+        (v == object
+          [ "achieved" .= (7.0 :: Double)
+          , "possible" .= (7.0 :: Double)
+          , "criteria" .= [object
+              [ "criterion"   .= ("c" :: Text)
+              , "points"      .= (7.0 :: Double)
+              , "tags"        .= ([] :: [Text])
+              , "met"         .= True
+              , "explanation" .= ("e" :: Text)
+              ]]
+          ])
 
 -- Seeding -----------------------------------------------------------------
 
@@ -144,6 +238,9 @@ scoresFor pool gv = withSession pool (selectWhere [ #graderVersion ==. gv ])
 noRunner :: GradeRunner
 noRunner _ _ _ = ioError (userError "runner must not be called")
 
+noCriterionJudge :: CriterionJudge
+noCriterionJudge _ _ _ = ioError (userError "criterion judge must not be called")
+
 -- Scenarios ----------------------------------------------------------------
 
 -- exact end-to-end: no runner call; pass + fail rows; errored output
@@ -152,7 +249,7 @@ noRunner _ _ _ = ioError (userError "runner must not be called")
 engineSpec :: Pool -> UTCTime -> IO ()
 engineSpec pool now = do
   sd <- seedScoring pool now "exact" (object [])
-  outcome <- scoreRun pool 2 noRunner sd.runId [sd.gvId]
+  outcome <- scoreRun pool 2 noRunner noCriterionJudge sd.runId [sd.gvId]
   expect "exact: outcome" (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   ss <- scoresFor pool sd.gvId
   expect "exact: one pass one fail (value paired with passed)"
@@ -179,7 +276,7 @@ errorRowSpec pool now = do
           "out-a" -> pure (Right (Eval.Score { value = 1.0, rationale = "good", votes = Just (2, 1) }))
           "out-b" -> ioError (userError "kaboom")
           _       -> pure (Right (Eval.score 1.0 "fine"))
-  outcome <- scoreRun pool 1 runner sd.runId [sd.gvId]
+  outcome <- scoreRun pool 1 runner noCriterionJudge sd.runId [sd.gvId]
   expect "rubric: outcome" (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   calls <- readIORef ref
   expect "rubric: runner saw config rubric + text for every gradeable output"
@@ -213,7 +310,7 @@ checklistSpec pool now = do
           "out-a" -> Right (Eval.score 0.5 "partial")
           "out-b" -> Right (Eval.score 0.0 "judge error: all samples failed")
           _       -> Right (Eval.score 1.0 "ok")
-  outcome <- scoreRun pool 1 runner sd.runId [sd.gvId]
+  outcome <- scoreRun pool 1 runner noCriterionJudge sd.runId [sd.gvId]
   expect "checklist: outcome" (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   calls <- readIORef ref
   expect "checklist: criteria threaded on every call (weight defaults 1)"
@@ -232,10 +329,10 @@ checklistSpec pool now = do
 resumeSpec :: Pool -> UTCTime -> IO ()
 resumeSpec pool now = do
   sd <- seedScoring pool now "exact" (object [])
-  outcome1 <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
+  outcome1 <- scoreRun pool 1 noRunner noCriterionJudge sd.runId [sd.gvId]
   expect "resume: first run grades 2, errors 1 (no expected), skips 1"
     (outcome1 == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
-  outcome2 <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
+  outcome2 <- scoreRun pool 1 noRunner noCriterionJudge sd.runId [sd.gvId]
   expect "resume: re-run skips good pairs, re-grades the still-failing pair"
     (outcome2 == ScoreOutcome { total = 4, scored = 0, errored = 1, skipped = 3 })
   ss <- scoresFor pool sd.gvId
@@ -243,7 +340,7 @@ resumeSpec pool now = do
   withSession pool $ update @Score (Key (head [ s.id | s <- ss, isNothing s.error ]))
     [ #value =. (Nothing :: Maybe Double), #passed =. (Nothing :: Maybe Bool)
     , #detail =. (Nothing :: Maybe (Aeson Value)), #error =. Just "llm: transient" ]
-  outcome3 <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
+  outcome3 <- scoreRun pool 1 noRunner noCriterionJudge sd.runId [sd.gvId]
   expect "resume: hand-errored pair re-graded; still-failing pair errors again"
     (outcome3 == ScoreOutcome { total = 4, scored = 1, errored = 1, skipped = 2 })
   ss2 <- scoresFor pool sd.gvId
@@ -260,14 +357,14 @@ metricSpec pool now = do
         "out-a" -> Right (Eval.score 1.0 "good")
         "out-b" -> Left (LlmError "transient")
         _       -> Right (Eval.score 0.0 "bad")
-  outcome1 <- scoreRun pool 1 runner sd.runId [sd.gvId]
+  outcome1 <- scoreRun pool 1 runner noCriterionJudge sd.runId [sd.gvId]
   expect "metric: runner Left counts as errored in the outcome"
     (outcome1 == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   ms <- withSession pool (selectWhere [ #graderVersion ==. sd.gvId ]) :: IO [RunMetric]
   expect "metric: one row, mean over graded only, count 2"
     (map (\m -> (m.mean, m.passRate, m.count)) ms == [(0.5, Just 0.5, 2)])
   let runner2 _ _ _ = pure (Right (Eval.score 1.0 "good now"))
-  _ <- scoreRun pool 1 runner2 sd.runId [sd.gvId]
+  _ <- scoreRun pool 1 runner2 noCriterionJudge sd.runId [sd.gvId]
   ms2 <- withSession pool (selectWhere [ #graderVersion ==. sd.gvId ]) :: IO [RunMetric]
   expect "metric: replaced, errored pair re-graded into the aggregate"
     (case ms2 of
@@ -279,7 +376,7 @@ metricSpec pool now = do
 unknownKindSpec :: Pool -> UTCTime -> IO ()
 unknownKindSpec pool now = do
   sd <- seedScoring pool now "alien" (object [])
-  outcome <- scoreRun pool 1 noRunner sd.runId [sd.gvId]
+  outcome <- scoreRun pool 1 noRunner noCriterionJudge sd.runId [sd.gvId]
   expect "unknown kind: outcome" (outcome == ScoreOutcome { total = 4, scored = 0, errored = 3, skipped = 1 })
   ss <- scoresFor pool sd.gvId
   expect "unknown kind: every error row names the kind"
@@ -289,7 +386,7 @@ unknownKindSpec pool now = do
 missingRunSpec :: Pool -> UTCTime -> IO ()
 missingRunSpec pool now = do
   sd <- seedScoring pool now "exact" (object [])
-  outcome <- scoreRun pool 1 noRunner (RunId 999999) [sd.gvId]
+  outcome <- scoreRun pool 1 noRunner noCriterionJudge (RunId 999999) [sd.gvId]
   expect "missing run: all-zero outcome"
     (outcome == ScoreOutcome { total = 0, scored = 0, errored = 0, skipped = 0 })
   ss <- scoresFor pool sd.gvId
@@ -301,7 +398,7 @@ missingRunSpec pool now = do
 dedupeSpec :: Pool -> UTCTime -> IO ()
 dedupeSpec pool now = do
   sd <- seedScoring pool now "exact" (object [])
-  outcome <- scoreRun pool 1 noRunner sd.runId [sd.gvId, sd.gvId]
+  outcome <- scoreRun pool 1 noRunner noCriterionJudge sd.runId [sd.gvId, sd.gvId]
   expect "dedupe: duplicate gv ids grade once"
     (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   ss <- scoresFor pool sd.gvId

@@ -16,11 +16,19 @@
 -- invocation).
 module Evals.Grade
   ( GradeRunner
+  , CriterionJudge
+  , Criterion' (..)
+  , CriterionVerdict (..)
+  , Graded (..)
   , votesFrom
   , rubricFrom
   , criteriaFrom
   , gradeExact
   , isJudgeError
+  , criteriaFromExpected
+  , renderCriterion
+  , transcript
+  , pointedGraded
   , ScoreOutcome (..)
   , scoreRun
   ) where
@@ -40,10 +48,11 @@ import qualified Data.Text.Encoding as TE
 import Data.Time (getCurrentTime)
 
 import qualified Crucible.Eval as Eval
+import Crucible.LLM (Message (..), Role (..))
 import Manifest
 import Manifest.Postgres (Pool)
 
-import Evals.Execute (ExecError (..), renderExecError)
+import Evals.Execute (ExecError (..), decodeInput, renderExecError)
 import Evals.Ids
 import Evals.Schema
 
@@ -105,6 +114,107 @@ gradeExact (Just (Aeson expected)) (Just txt) = Right $ case expected of
 isJudgeError :: Eval.Score -> Bool
 isJudgeError s = s.value == 0 && "judge error: " `T.isPrefixOf` s.rationale
 
+-- ---------------------------------------------------------------------------
+-- Pointed grader kind
+-- ---------------------------------------------------------------------------
+
+-- | One criterion in a pointed rubric: a natural-language statement, a
+-- signed point value (negative = penalty), and optional classification tags.
+data Criterion' = Criterion'
+  { criterion :: Text, points :: Double, tags :: [Text] } deriving (Eq, Show)
+
+-- | The per-criterion verdict from the injected judge.
+data CriterionVerdict = CriterionVerdict
+  { met :: Bool, explanation :: Text } deriving (Eq, Show)
+
+-- | The injected per-criterion judge for the pointed kind. Live:
+-- "Evals.Grade.Anthropic". NOTE the fidelity caveat: the live judge uses
+-- crucible's hardened prompt + a Claude model, not HealthBench's published
+-- GPT-4.1 grader — scores are directionally comparable, not benchmark-comparable.
+type CriterionJudge =
+  GraderVersion -> Text -> Criterion' -> IO (Either ExecError CriterionVerdict)
+
+-- | A grading result that unifies the old Eval.Score path and the new
+-- pointed path.
+data Graded = Graded
+  { value  :: Double
+  , passed :: Maybe Bool
+  , detail :: Value
+  }
+
+-- | Parse the pointed rubric criteria from an example's expected field.
+-- Nothing → error; non-array → error; empty → error; no positive points → error.
+criteriaFromExpected :: Maybe (Aeson Value) -> Either ExecError [Criterion']
+criteriaFromExpected Nothing = Left (InputDecodeError "no expected criteria")
+criteriaFromExpected (Just (Aeson v)) =
+  case AT.parseEither parseArr v of
+    Left msg -> Left (InputDecodeError (T.pack msg))
+    Right [] -> Left (InputDecodeError "criteria are empty")
+    Right cs
+      | sum [p | Criterion' _ p _ <- cs, p > 0] <= 0
+          -> Left (InputDecodeError "no positive points")
+      | otherwise -> Right cs
+  where
+    parseArr = AT.withArray "criteria" $ \arr ->
+      mapM parseCriterion (foldr (:) [] arr)
+    parseCriterion = AT.withObject "criterion" $ \o -> do
+      c <- o AT..: "criterion"
+      p <- o AT..: "points"
+      t <- maybe [] id <$> o AT..:? "tags"
+      pure Criterion' { criterion = c, points = p, tags = t }
+
+-- | Render a criterion as the rubric line shown to the judge.
+renderCriterion :: Criterion' -> Text
+renderCriterion c =
+  "[" <> T.pack (show (c.points)) <> "] " <> c.criterion
+  <> "\n\nNotes: a criterion that says \"such as\", \"for example\", or \"including\" does not require the response to include all of the examples. For a criterion with negative points, report whether the criterion is MET — not whether meeting it is good."
+
+-- | Build a transcript from a system prompt, a structured input value, and
+-- the final assistant completion.
+transcript :: Text -> Value -> Text -> Either ExecError Text
+transcript sys inputVal completion = do
+  msgs <- decodeInput inputVal
+  let renderRole System    = "system"
+      renderRole User      = "user"
+      renderRole Assistant = "assistant"
+      renderRole Tool      = "tool"
+      renderMsg (Message r c) = renderRole r <> ": " <> c
+      sysLine = "system: " <> sys
+      convLines = map renderMsg msgs
+      finalLine = "assistant: " <> completion
+      allLines = sysLine : convLines ++ [finalLine]
+  pure (T.intercalate "\n\n" allLines)
+
+-- | Compute the pointed grading result from verdict pairs.
+pointedGraded :: [(Criterion', CriterionVerdict)] -> Graded
+pointedGraded pairs =
+  Graded { value = achieved / possible, passed = Nothing, detail = detailVal }
+  where
+    achieved = sum [c.points | (c, v) <- pairs, v.met]
+    possible = sum [c.points | (c, _) <- pairs, c.points > 0]
+    detailVal = object
+      [ "achieved" .= achieved
+      , "possible" .= possible
+      , "criteria"  .= map criterionDetail pairs
+      ]
+    criterionDetail (c, v) = object
+      [ "criterion"   .= c.criterion
+      , "points"      .= c.points
+      , "tags"        .= c.tags
+      , "met"         .= v.met
+      , "explanation" .= v.explanation
+      ]
+
+-- | Wrap an old-style 'Eval.Score' as a 'Graded'.
+fromEvalScore :: Eval.Score -> Graded
+fromEvalScore s = Graded
+  { value  = s.value
+  , passed = Just (s.value >= 1.0)
+  , detail = detailJson s
+  }
+
+-- ---------------------------------------------------------------------------
+
 -- | What 'scoreRun' did: (output x grader version) pair counts by fate.
 data ScoreOutcome = ScoreOutcome
   { total   :: Int
@@ -120,12 +230,13 @@ data ScoreOutcome = ScoreOutcome
 -- each grader version's 'RunMetric' is recomputed (delete+insert).
 -- @Run.status@ is never touched. A missing run or grader version returns an
 -- all-zero outcome with nothing written.
-scoreRun :: Pool -> Int -> GradeRunner -> RunId -> [GraderVersionId] -> IO ScoreOutcome
-scoreRun pool concurrency runner runId gvIds = do
+scoreRun :: Pool -> Int -> GradeRunner -> CriterionJudge -> RunId -> [GraderVersionId] -> IO ScoreOutcome
+scoreRun pool concurrency runner criterionJudge runId gvIds = do
   setup <- withSession pool $
     get @Run (Key runId) >>= \case
       Nothing -> pure Nothing
-      Just _run -> do
+      Just run -> do
+        mtv <- get @TargetVersion (Key run.targetVersion)
         -- nub before the gets: duplicates would double-grade every pair
         mgvs <- mapM (\i -> get @GraderVersion (Key i)) (nub gvIds)
         case sequence mgvs of
@@ -137,10 +248,10 @@ scoreRun pool concurrency runner runId gvIds = do
               Just gs -> do
                 outputs  <- selectWhere [ #run ==. runId ]
                 existing <- concat <$> mapM (\gv -> existingFor gv.id) gvs
-                pure (Just (zip gs gvs, outputs :: [Output], existing))
+                pure (Just (mtv, zip gs gvs, outputs :: [Output], existing))
   case setup of
     Nothing -> pure ScoreOutcome { total = 0, scored = 0, errored = 0, skipped = 0 }
-    Just (graders, outputs, existing) -> do
+    Just (mtv, graders, outputs, existing) -> do
       let pairs = [ (g, gv, out) | (g, gv) <- graders, out <- outputs ]
           -- existing :: [(OutputId, (GraderVersionId, Maybe Text))]
           prior gv out = find (\(oid, (gvid, _)) -> oid == out.id && gvid == gv.id) existing
@@ -151,7 +262,7 @@ scoreRun pool concurrency runner runId gvIds = do
           (skips, work) = partitionEithers (map classify pairs)
       sem <- newQSem (max 1 concurrency)
       oks <- forConcurrently work $ \(g, gv, out, regrade) ->
-        bracket_ (waitQSem sem) (signalQSem sem) (gradeOne g gv out regrade)
+        bracket_ (waitQSem sem) (signalQSem sem) (gradeOne mtv g gv out regrade)
       mapM_ (recompute . snd) graders
       pure ScoreOutcome
         { total   = length pairs
@@ -163,12 +274,12 @@ scoreRun pool concurrency runner runId gvIds = do
     -- One pair: grade, then write exactly one Score row — value + detail on
     -- success, error text (value NULL) on failure. A regrade first deletes
     -- the prior errored row.
-    gradeOne :: Grader -> GraderVersion -> Output -> Bool -> IO Bool
-    gradeOne g gv out regrade = do
+    gradeOne :: Maybe TargetVersion -> Grader -> GraderVersion -> Output -> Bool -> IO Bool
+    gradeOne mtv g gv out regrade = do
       -- The try covers gradePair WHOLE (including the exact kind's Example
       -- fetch), so even a transient DB error becomes this pair's error row
       -- rather than cancelling the concurrent batch.
-      result <- try (gradePair g gv out) >>= \case
+      result <- try (gradePair mtv g gv out) >>= \case
         Left (e :: SomeException) -> pure (Left (LlmError (T.pack (show e))))
         Right r                   -> pure r
       now <- getCurrentTime
@@ -176,11 +287,11 @@ scoreRun pool concurrency runner runId gvIds = do
         when regrade $
           deleteWhere ([ #output ==. out.id, #graderVersion ==. gv.id ] :: [Cond Score])
         case result of
-          Right s -> do
+          Right graded -> do
             _ <- add (Score
               { id = ScoreId 0, output = out.id, graderVersion = gv.id
-              , value = Just s.value, passed = Just (s.value >= 1.0)
-              , detail = Just (Aeson (detailJson s)), error = Nothing
+              , value = Just graded.value, passed = graded.passed
+              , detail = Just (Aeson graded.detail), error = Nothing
               , createdAt = now } :: Score)
             pure True
           Left err -> do
@@ -196,13 +307,35 @@ scoreRun pool concurrency runner runId gvIds = do
     -- the injected runner. An exception from the runner is captured as an
     -- LlmError rather than killing the batch; a judge-error score is folded
     -- into the error path.
-    gradePair :: Grader -> GraderVersion -> Output -> IO (Either ExecError Eval.Score)
-    gradePair g gv out = case g.kind of
+    gradePair :: Maybe TargetVersion -> Grader -> GraderVersion -> Output -> IO (Either ExecError Graded)
+    gradePair mtv g gv out = case g.kind of
         "exact" -> do
           ex <- withSession pool (get @Example (Key out.example))
-          pure (gradeExact (ex >>= (.expected)) out.text)
+          pure (fmap fromEvalScore (gradeExact (ex >>= (.expected)) out.text))
         "rubric"    -> llmKind (Eval.Rubric <$> rubricFrom cfgV)
         "checklist" -> llmKind (Eval.Checklist <$> criteriaFrom cfgV)
+        "pointed" -> do
+          mex <- withSession pool (get @Example (Key out.example))
+          case mex of
+            Nothing -> pure (Left (InputDecodeError "example missing"))
+            Just ex ->
+              case criteriaFromExpected ex.expected of
+                Left e -> pure (Left e)
+                Right cs ->
+                  case mtv of
+                    Nothing -> pure (Left (InputDecodeError "target version missing"))
+                    Just tv ->
+                      case out.text of
+                        Nothing -> pure (Left (InputDecodeError "output has no text"))
+                        Just txt ->
+                          let Aeson inputVal = ex.input
+                          in case transcript tv.prompt inputVal txt of
+                            Left e -> pure (Left e)
+                            Right transcriptTxt -> do
+                              verdicts <- sequentialJudge gv transcriptTxt cs
+                              case verdicts of
+                                Left e  -> pure (Left e)
+                                Right vs -> pure (Right (pointedGraded vs))
         k -> pure (Left (InputDecodeError ("unknown grader kind: " <> k)))
       where
         Aeson cfgV = gv.config
@@ -215,7 +348,22 @@ scoreRun pool concurrency runner runId gvIds = do
               Right (Left e)            -> pure (Left e)
               Right (Right s)
                 | isJudgeError s -> pure (Left (LlmError s.rationale))
-                | otherwise      -> pure (Right s)
+                | otherwise      -> pure (Right (fromEvalScore s))
+
+    -- Judge criteria sequentially, stopping at the first error.
+    sequentialJudge :: GraderVersion -> Text -> [Criterion'] -> IO (Either ExecError [(Criterion', CriterionVerdict)])
+    sequentialJudge _  _            []     = pure (Right [])
+    sequentialJudge gv transcriptTxt (c:cs) = do
+      r <- try (criterionJudge gv transcriptTxt c) >>= \case
+        Left (e :: SomeException) -> pure (Left (LlmError (T.pack (show e))))
+        Right x                   -> pure x
+      case r of
+        Left e -> pure (Left e)
+        Right v -> do
+          rest <- sequentialJudge gv transcriptTxt cs
+          case rest of
+            Left e   -> pure (Left e)
+            Right vs -> pure (Right ((c, v) : vs))
 
     -- One grader version's RunMetric over this run, from scratch: errored
     -- rows (value NULL) are excluded; no graded rows means mean 0 and no

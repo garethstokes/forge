@@ -23,7 +23,7 @@ import Manifest.Postgres (Pool, closePool, newPool)
 import Evals.Execute (RunOutcome (..), executeRun)
 import Evals.Execute.Anthropic (liveAnthropicRunner)
 import Evals.Grade (ScoreOutcome (..), scoreRun)
-import Evals.Grade.Anthropic (liveGradeRunner)
+import Evals.Grade.Anthropic (liveCriterionJudge, liveGradeRunner)
 import Evals.Ids (GraderVersionId (..), RunId (..))
 import Evals.Migrate (migrateAll)
 
@@ -53,7 +53,7 @@ main = getArgs >>= \case
         key  <- requireEnv "ANTHROPIC_API_KEY"
         conc <- concurrencyFrom flags
         withEnvPool $ \pool -> do
-          o <- scoreRun pool conc (liveGradeRunner (T.pack key)) (RunId rid) gvs
+          o <- scoreRun pool conc (liveGradeRunner (T.pack key)) (liveCriterionJudge (T.pack key)) (RunId rid) gvs
           putStrLn $ "score " <> ridStr <> ": "
             <> show o.total <> " pairs, "
             <> show o.scored <> " scored, "
