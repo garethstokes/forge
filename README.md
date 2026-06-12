@@ -92,3 +92,28 @@ bash scripts/seed-demo.sh   # creates and seeds a *demo* database
   highlighted.
 
 Runs and scoring remain CLI-driven; the dashboard is read-only.
+
+### Live updates
+
+The dashboard self-updates via Server-Sent Events at `/api/events`. manifest's
+change feed (writes to Run, Output, Score, and RunMetric tables) flows into a
+broadcast hub in `Evals.Dashboard.Events`, which the SSE handler subscribes to;
+each connected client receives a notification and debounces a full refetch
+(~300ms). The header dot indicates connection state: green = live, gray =
+reconnecting.
+
+Events carry wake-up-only semantics — they are refetch hints, never data
+payloads. A missed event means the UI stays stale until the next change arrives;
+a manual browser refresh covers any gap.
+
+**Demo / debugging note**: raw `psql` writes do NOT emit (emission is
+manifest's session layer). To simulate a change without running the full CLI,
+pair the write with a manual notify:
+
+```sql
+SELECT pg_notify('manifest_runs', '<run-uuid>');
+```
+
+Replace `manifest_runs` / `manifest_outputs` / `manifest_scores` /
+`manifest_run_metrics` and the appropriate primary-key value for the table you
+wrote to.
