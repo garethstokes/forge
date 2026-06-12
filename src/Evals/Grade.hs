@@ -167,7 +167,7 @@ criteriaFromExpected (Just (Aeson v)) =
 renderCriterion :: Criterion' -> Text
 renderCriterion c =
   "[" <> T.pack (show (c.points)) <> "] " <> c.criterion
-  <> "\n\nNotes: a criterion that says \"such as\", \"for example\", or \"including\" does not require the response to include all of the examples. For a criterion with negative points, report whether the criterion is MET — not whether meeting it is good."
+  <> "\n\nNotes: a criterion that says \"such as\", \"for example\", or \"including\" does not require the response to include all of the examples. For a criterion with negative points, report whether the criterion is MET — not whether meeting it is good. Judge only the final assistant message; earlier turns are context."
 
 -- | Build a transcript from a system prompt, a structured input value, and
 -- the final assistant completion.
@@ -186,6 +186,9 @@ transcript sys inputVal completion = do
   pure (T.intercalate "\n\n" allLines)
 
 -- | Compute the pointed grading result from verdict pairs.
+-- Precondition: @possible > 0@ is the caller's obligation (guaranteed via
+-- 'criteriaFromExpected'; an all-negative list yields NaN). A second call
+-- site (future tag-metrics slice) must also satisfy this invariant.
 pointedGraded :: [(Criterion', CriterionVerdict)] -> Graded
 pointedGraded pairs =
   Graded { value = achieved / possible, passed = Nothing, detail = detailVal }
@@ -381,9 +384,12 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
             graded = [ (v, p) | (Just v, p) <- rows' ]
             n = length graded
             mean = if n == 0 then 0 else sum (map fst graded) / fromIntegral n
-            pr = if n == 0
-                   then Nothing
-                   else Just (fromIntegral (length [ () | (_, Just True) <- graded ]) / fromIntegral n)
+            -- passRate is over rows carrying a pass/fail verdict only;
+            -- pointed rows carry passed = Nothing so they do not contribute.
+            judged = [ b | (_, Just b) <- graded ]
+            pr     = if null judged then Nothing
+                     else Just (fromIntegral (length (filter id judged))
+                                  / fromIntegral (length judged))
         deleteWhere ([ #run ==. runId, #graderVersion ==. gv.id ] :: [Cond RunMetric])
         _ <- add (RunMetric
           { id = RunMetricId 0, run = runId, graderVersion = gv.id

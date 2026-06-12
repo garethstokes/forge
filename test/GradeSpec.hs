@@ -9,6 +9,7 @@ module GradeSpec (main) where
 import Control.Monad (unless)
 import Data.Aeson (Value, decode, object, toJSON, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Types as AT
 import Data.Either (isLeft)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (sort)
@@ -56,6 +57,7 @@ main = do
     unknownKindSpec pool now
     missingRunSpec pool now
     dedupeSpec pool now
+    pointedSpec pool now
   putStrLn "manifest-evals GradeSpec: config + exact + pointed + engine + checklist + resume + metrics + edge-cases OK"
 
 configSpec :: IO ()
@@ -151,6 +153,22 @@ pointedPureSpec = do
       ("user: string input" `T.isInfixOf` t)
   expect "transcript: numeric input → Left"
     (isLeft (transcript sysPrompt (toJSON (42 :: Int)) "completion"))
+  -- system-turn in input messages: the prepended "system: SYS" line comes
+  -- first, then the conversation including any system turn from the input —
+  -- pinning the current behaviour so we see exactly what the graded model saw.
+  let sysInInput = object ["messages" .=
+        [ object ["role" .= ("system" :: Text), "content" .= ("inner sys" :: Text)]
+        , object ["role" .= ("user"   :: Text), "content" .= ("q"         :: Text)]
+        ]]
+  case transcript "SYS" sysInInput "ans" of
+    Left e  -> ioError (userError ("transcript system-turn failed: " <> show e))
+    Right t -> do
+      expect "transcript: system-turn input renders as second system: block"
+        ("system: SYS\n\nsystem: inner sys\n\nuser: q\n\nassistant: ans" `T.isInfixOf` t)
+
+  -- renderCriterion: pinning the "final assistant message" framing sentence
+  expect "renderCriterion: contains 'final assistant message'"
+    ("final assistant message" `T.isInfixOf` renderCriterion negCrit)
 
   -- HealthBench vector: 7/5/10/-6 with verdicts T/F/T/T → 11/22
   let hbCriteria =
@@ -164,6 +182,19 @@ pointedPureSpec = do
     (near hbGraded.value (11.0 / 22.0))
   expect "pointedGraded: passed == Nothing"
     (isNothing hbGraded.passed)
+
+  -- Unmet-negative vector: 7/5/10/-6 with verdicts T/F/T/F → 17/22
+  -- (the -6 criterion is unmet so it must NOT be subtracted — only met items
+  -- contribute to achieved; achieved = 7+10 = 17, possible = 7+5+10 = 22)
+  let unmetNegCriteria =
+        [ (Criterion' "cites"    7.0  [], CriterionVerdict True  "e1")
+        , (Criterion' "complete" 5.0  [], CriterionVerdict False "e2")
+        , (Criterion' "thorough" 10.0 [], CriterionVerdict True  "e3")
+        , (Criterion' "harmful"  (-6.0) [], CriterionVerdict False "e4")
+        ]
+      unmetNegGraded = pointedGraded unmetNegCriteria
+  expect "pointedGraded: unmet-negative vector value == 17/22"
+    (near unmetNegGraded.value (17.0 / 22.0))
 
   -- negative score possible
   let negPairs =
@@ -403,3 +434,152 @@ dedupeSpec pool now = do
     (outcome == ScoreOutcome { total = 4, scored = 2, errored = 1, skipped = 1 })
   ss <- scoresFor pool sd.gvId
   expect "dedupe: no duplicate rows" (length ss == 3)
+
+-- Pointed engine scenarios -------------------------------------------------
+
+data SeededP = SeededP
+  { runId :: RunId, gvId :: GraderVersionId }
+
+-- Seed a "pointed" run: e1 carries 4 criteria in expected (cites/complete/
+-- thorough/harmful), e2 has no expected; one output per example; the grader
+-- version config is empty (the pointed kind reads criteria from the example,
+-- not from the config).
+seedPointed :: Pool -> UTCTime -> IO SeededP
+seedPointed pool now = withSession pool $ do
+  let crit c p ts = object (["criterion" .= (c :: Text), "points" .= (p :: Double)]
+                              ++ if null ts then [] else ["tags" .= (ts :: [Text])])
+  d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "p", slug = "p", createdAt = now } :: Dataset)
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "pe1"
+                     , input = Aeson (object ["messages" .= [object ["role" .= ("user" :: Text), "content" .= ("Q" :: Text)]]])
+                     , expected = Just (Aeson (toJSON
+                         [ crit "cites"    7.0  ([] :: [Text])
+                         , crit "complete" 5.0  ([] :: [Text])
+                         , crit "thorough" 10.0 ([] :: [Text])
+                         , crit "harmful"  (-6.0) ["axis:accuracy"]
+                         ]))
+                     , meta = Nothing } :: Example)
+  e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "pe2"
+                     , input = Aeson (object ["messages" .= [object ["role" .= ("user" :: Text), "content" .= ("Q2" :: Text)]]])
+                     , expected = Nothing, meta = Nothing } :: Example)
+  t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "pt", createdAt = now } :: Target)
+  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "SYS"
+                           , params = Aeson (object []), createdAt = now } :: TargetVersion)
+  r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded"
+                 , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+  _o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "the answer"
+                     , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
+  _o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "x"
+                     , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
+  g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "pg", kind = "pointed", createdAt = now } :: Grader)
+  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  pure SeededP { runId = r.id, gvId = gv.id }
+
+-- Four scenarios for the pointed engine: happy path, stop-at-first-error,
+-- resume re-grades, and passRate == Nothing for pointed rows.
+pointedSpec :: Pool -> UTCTime -> IO ()
+pointedSpec pool now = do
+
+  -- Scenario 1: happy path ---------------------------------------------------
+  -- Judge: met=True except when "complete" is in the criterion text.
+  -- Criteria: cites(7,T) + complete(5,F) + thorough(10,T) + harmful(-6,T)
+  --   achieved = 7 + 10 + (-6) = 11, possible = 7+5+10 = 22 → 11/22
+  sd1 <- seedPointed pool now
+  callsRef1 <- newIORef ([] :: [(Text, Text)])  -- (transcript, criterionText) pairs
+  let judge1 _gv tr c = do
+        atomicModifyIORef' callsRef1 (\acc -> (acc ++ [(tr, renderCriterion c)], ()))
+        let isComplete = "complete" `T.isInfixOf` c.criterion
+        pure (Right (CriterionVerdict { met = not isComplete, explanation = "ok" }))
+  outcome1 <- scoreRun pool 1 noRunner judge1 sd1.runId [sd1.gvId]
+  expect "pointed/1: outcome {2,1,1,0}"
+    (outcome1 == ScoreOutcome { total = 2, scored = 1, errored = 1, skipped = 0 })
+  calls1 <- readIORef callsRef1
+  expect "pointed/1: exactly 4 judge calls (all for o1)" (length calls1 == 4)
+  expect "pointed/1: every transcript contains 'system: SYS'"
+    (all (("system: SYS" `T.isInfixOf`) . fst) calls1)
+  expect "pointed/1: every transcript contains 'assistant: the answer'"
+    (all (("assistant: the answer" `T.isInfixOf`) . fst) calls1)
+  expect "pointed/1: harmful criterion text contains '-6'"
+    (any (("-6" `T.isInfixOf`) . snd) calls1)
+  ss1 <- scoresFor pool sd1.gvId
+  let scored1 = [ s | s <- ss1, isJust s.value ]
+      errored1 = [ s | s <- ss1, isJust s.error ]
+  expect "pointed/1: one scored row, value ≈ 11/22"
+    (case scored1 of
+       [s] -> maybe False (\v -> near v (11.0 / 22.0)) s.value
+       _   -> False)
+  expect "pointed/1: scored row passed == Nothing" (all (isNothing . (.passed)) scored1)
+  -- detail must decode and contain 4 criteria entries; check via AT.parseMaybe
+  expect "pointed/1: detail has 4 criteria, complete has met=False"
+    (case scored1 of
+       [s] -> case s.detail of
+         Just (Aeson dv) ->
+           -- parse the criteria array out of the detail object
+           let parseCriteria = AT.withObject "detail" $ \o -> do
+                 arr <- o AT..: "criteria"
+                 mapM (AT.withObject "crit" $ \c ->
+                         (,) <$> c AT..: "criterion" <*> c AT..: "met") arr
+               mKvs = AT.parseMaybe parseCriteria dv :: Maybe [(Text, Bool)]
+           in case mKvs of
+                Just kvs -> length kvs == 4 && lookup "complete" kvs == Just False
+                Nothing  -> False
+         _ -> False
+       _ -> False)
+  expect "pointed/1: e2 error row mentions 'criteria'"
+    (case errored1 of
+       [s] -> errContains "criteria" s
+       _   -> False)
+
+  -- Scenario 2: stop at first error ------------------------------------------
+  -- Judge errors on the 2nd call; counting via IORef.
+  -- o1 has 4 criteria so judge: call1 ok, call2 → Left → sequentialJudge stops.
+  -- Expected: o1 → error (judge down); o2 → error (no criteria).
+  -- Outcome: {total=2, scored=0, errored=2, skipped=0}
+  sd2 <- seedPointed pool now
+  callCount2 <- newIORef (0 :: Int)
+  let judge2 _gv _tr _c = do
+        n <- atomicModifyIORef' callCount2 (\x -> (x + 1, x + 1))
+        if n == 2
+          then pure (Left (LlmError "judge down"))
+          else pure (Right (CriterionVerdict { met = True, explanation = "ok" }))
+  outcome2 <- scoreRun pool 1 noRunner judge2 sd2.runId [sd2.gvId]
+  expect "pointed/2: outcome {2,0,2,0}"
+    (outcome2 == ScoreOutcome { total = 2, scored = 0, errored = 2, skipped = 0 })
+  n2 <- readIORef callCount2
+  expect "pointed/2: exactly 2 judge calls (sequential stop)" (n2 == 2)
+  ss2 <- scoresFor pool sd2.gvId
+  let o1Err2 = [ s | s <- ss2, errContains "judge down" s ]
+  expect "pointed/2: error row with 'judge down'" (length o1Err2 == 1)
+  expect "pointed/2: judge-down row has value=Nothing"
+    (all (isNothing . (.value)) o1Err2)
+
+  -- Scenario 3: resume re-grades ---------------------------------------------
+  -- After scenario 2: o1 has error("judge down"), o2 has error("no criteria").
+  -- Both are error rows → both re-grade.
+  -- o1: re-grades with all-True judge → scores (achieved=7+5+10+(-6)=16, possible=22)
+  -- o2: re-grades but criteriaFromExpected Nothing → errors again.
+  -- Outcome: {total=2, scored=1, errored=1, skipped=0}
+  -- (no rows skip because both prior rows were errors)
+  let judge3 _gv _tr _c = pure (Right (CriterionVerdict { met = True, explanation = "ok" }))
+  outcome3 <- scoreRun pool 1 noRunner judge3 sd2.runId [sd2.gvId]
+  expect "pointed/3: outcome {2,1,1,0} — both error rows re-grade; o2 errors again"
+    (outcome3 == ScoreOutcome { total = 2, scored = 1, errored = 1, skipped = 0 })
+  ss3 <- scoresFor pool sd2.gvId
+  expect "pointed/3: two rows total (old errors replaced)" (length ss3 == 2)
+  let scored3 = [ s | s <- ss3, isJust s.value ]
+  -- all-True: achieved = 7+5+10+(-6) = 16, possible = 22 → 16/22
+  expect "pointed/3: re-graded o1 value ≈ 16/22"
+    (case scored3 of
+       [s] -> maybe False (\v -> near v (16.0 / 22.0)) s.value
+       _   -> False)
+
+  -- Scenario 4: passRate == Nothing for pointed rows -------------------------
+  -- After scenario 1: the scored row has passed=Nothing.
+  -- recompute should see no judged rows → passRate=Nothing (not Just 0).
+  ms4 <- withSession pool (selectWhere [ #graderVersion ==. sd1.gvId ]) :: IO [RunMetric]
+  expect "pointed/4: RunMetric count=1"
+    (case ms4 of [m] -> m.count == 1; _ -> False)
+  expect "pointed/4: mean ≈ 11/22"
+    (case ms4 of [m] -> near m.mean (11.0 / 22.0); _ -> False)
+  expect "pointed/4: passRate == Nothing (no verdict-bearing rows)"
+    (case ms4 of [m] -> isNothing m.passRate; _ -> False)
