@@ -35,7 +35,7 @@ import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
-import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt)
+import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt, ratePrompt)
 import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
@@ -1381,4 +1381,10 @@ main = runChecks
       True (abs (tokenF1 "a a b" "a b b" - 2 / 3) < 1e-9)
   , check "metrics: rougeL is order-sensitive where tokenF1 is not"
       (1.0, True) (tokenF1 "a b c" "c b a", abs (rougeL "a b c" "c b a" - 1 / 3) < 1e-9)
+  -- crucible-2zw: ordinal rating prompt
+  , check "ratePrompt: anchors sort ascending; system states the range"
+      ("Rubric: r\nLevels:\n1: bad\n5: good\nOutput to grade: out", True)
+      (case ratePrompt 5 [(5, "good"), (1, "bad")] "r" "out" of
+         [Message _ sys, Message _ u] -> (u, T.isInfixOf "between 1 and 5" sys)
+         _ -> ("wrong shape", False))
   ]

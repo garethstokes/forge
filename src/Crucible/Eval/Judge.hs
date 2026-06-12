@@ -24,18 +24,24 @@ module Crucible.Eval.Judge
   , judgeOnce
   , VoteOutcome (..)
   , vote
+  , Rating (..)
+  , ratingCodec
+  , ratePrompt
+  , rateOnce
+  , RateOutcome (..)
+  , rate
   ) where
 
 import Control.Applicative ((<|>))
 import Data.Bits (shiftL, shiftR, xor)
-import Data.List (partition, sortOn)
+import Data.List (partition, sort, sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
 import NeatInterpolation (text)
 
-import Crucible.Codec (JSONCodec, object, field, str, bool)
+import Crucible.Codec (JSONCodec, object, field, str, bool, int)
 import Crucible.Decode (DecodeError (..), decodeLLM)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
 
@@ -202,3 +208,92 @@ vote earlyStop opts rubric graded = go n' (0, 0) (Nothing, Nothing) ""
             Right v
               | v.pass    -> go (k - 1) (y + 1, f) (firstYes <|> Just v.why, firstNo) lastErr
               | otherwise -> go (k - 1) (y, f + 1) (firstYes, firstNo <|> Just v.why) lastErr
+
+-- | The judge's structured ordinal rating. Same field order rationale as
+-- 'Verdict': "why" first so the level is conditioned on the reasoning.
+data Rating = Rating { why :: Text, level :: Int } deriving (Eq, Show)
+
+ratingCodec :: JSONCodec Rating
+ratingCodec = object (Rating <$> field "why"   (.why)   str
+                             <*> field "level" (.level) int)
+
+-- | The rating system message; k is the top level of the scale.
+rateSystem :: Int -> Message
+rateSystem k =
+  let kTxt = T.pack (show k)
+  in Message System [text|
+  You are a strict grader.
+  Reason through the rubric and the level anchors in "why" first, quoting the
+  part of the output that determines the level, then give the level.
+  Length and style are not criteria unless the rubric says so.
+  Respond ONLY with JSON {"why": <string>, "level": <int between 1 and ${kTxt}>}.|]
+
+-- | The rater's messages, pure and testable (mirrors 'judgePrompt').
+-- Anchors render in ascending level order; sparse anchoring (ends only)
+-- is expected. Assembled by concatenation: list blocks do not belong in
+-- quasiquotes.
+ratePrompt :: Int -> [(Int, Text)] -> Text -> Text -> [Message]
+ratePrompt k anchors rubric graded =
+  [ rateSystem k
+  , Message User $ T.concat $
+      ["Rubric: " <> rubric <> "\nLevels:\n"]
+        ++ [ T.pack (show l) <> ": " <> d <> "\n" | (l, d) <- sortOn fst anchors ]
+        ++ ["Output to grade: " <> graded]
+  ]
+
+-- | One rating call with validate-and-repair: a decode failure OR an
+-- out-of-range level re-prompts once with the raw reply and the error,
+-- then gives up with 'JudgeError'.
+rateOnce :: (LLM :> es) => Int -> [(Int, Text)] -> Text -> Text -> Eff es (Either JudgeError Rating)
+rateOnce k anchors rubric graded = do
+  let msgs = ratePrompt k anchors rubric graded
+  raw <- complete msgs
+  case checked raw of
+    Right v -> pure (Right v)
+    Left m1 -> do
+      raw2 <- complete
+        ( msgs
+            ++ [ Message Assistant raw
+               , Message User [text|Your reply did not parse: ${m1}. Respond with valid JSON only.|]
+               ]
+        )
+      case checked raw2 of
+        Right v -> pure (Right v)
+        Left m2 -> pure (Left (JudgeError m2))
+  where
+    checked raw = case decodeLLM ratingCodec raw of
+      Left e -> Left e.message
+      Right r
+        | r.level < 1 || r.level > k ->
+            Left ("level " <> T.pack (show r.level) <> " outside 1.." <> T.pack (show k))
+        | otherwise -> Right r
+
+-- | The result of an n-sample ordinal rating. 'why' is a SAMPLE from the
+-- median level (the first one); 'dissent' keeps the first rationale from a
+-- sample more than one level away from the median, when one was cast.
+data RateOutcome
+  = Rated { level :: Int, why :: Text, dissent :: Maybe Text, agree :: Int, others :: Int }
+  | RateAllErrored Text
+  deriving (Eq, Show)
+
+-- | Sample the rater n times (sequentially, no early stop: the median
+-- needs the full sample) and aggregate: median level with ties rounding
+-- DOWN (the lower middle of an even split), 'agree' counts samples at the
+-- median, 'others' the rest. Errored samples are excluded; all errored
+-- yields 'RateAllErrored' with the last error.
+rate :: (LLM :> es) => Int -> Int -> [(Int, Text)] -> Text -> Text -> Eff es RateOutcome
+rate n k anchors rubric graded = do
+  rs <- mapM (const (rateOnce k anchors rubric graded)) [1 .. max 1 n]
+  let oks  = [r | Right r <- rs]
+      errs = [m | Left (JudgeError m) <- rs]
+  pure $ case oks of
+    [] -> RateAllErrored (last ("" : errs))
+    _  ->
+      let levels = sort (map (.level) oks)
+          med    = levels !! ((length levels - 1) `div` 2)
+          agree  = length (filter (== med) levels)
+          dis    = case [r.why | r <- oks, abs (r.level - med) > 1] of
+                     (d : _) -> Just d
+                     []      -> Nothing
+          w      = head [r.why | r <- oks, r.level == med]
+      in Rated med w dis agree (length levels - agree)
