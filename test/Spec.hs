@@ -59,6 +59,8 @@ import Data.IORef (IORef, newIORef, modifyIORef', readIORef)
 import Crucible.LLM.Provider (Provider (..))
 import qualified Crucible.LLM.Fallback as Fallback
 import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
+import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
+import qualified Crucible.Embed as Embed
 
 -- Sample types for codec tests
 
@@ -1442,4 +1444,23 @@ main = runChecks
                       , Case "y" "metric-borderline" (Metric 0.5 (const 0.5))
                       , Case "z" "scale-fail" (Scale 4 "r" [(1, "bad"), (5, "good")]) ]))
        in (rep.passRate, rep.meanScore))
+  -- crucible-d4w: embeddings (pure math + scripted interpreter)
+  , check "cosine: orthogonal and zero-vector cases are 0"
+      (0.0, 0.0) (cosine [1, 0] [0, 1], cosine [0, 0] [1, 1])
+  , check "cosine: identical is 1; hand value 1/sqrt 2"
+      (True, True)
+      ( abs (cosine [1, 2] [1, 2] - 1.0) < 1e-9
+      , abs (cosine [1, 0] [1, 1] - 1 / sqrt 2) < 1e-9 )
+  , check "consistency: mean pairwise cosine over a group"
+      True
+      (let r = runPureEff (runEmbedScripted [[1, 0], [0, 1], [1, 1]]
+                 (consistency ["a", "b", "c"]))
+       in abs (r - sqrt 2 / 3) < 1e-9)
+  , check "consistency: empty and singleton groups score 1.0"
+      (1.0, 1.0)
+      ( runPureEff (runEmbedScripted [] (consistency []))
+      , runPureEff (runEmbedScripted [] (consistency ["only"])) )
+  , check "embed: a dry script yields the empty vector"
+      ([] :: [Double])
+      (runPureEff (runEmbedScripted [] (embed "x")))
   ]
