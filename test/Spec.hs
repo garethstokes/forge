@@ -50,7 +50,7 @@ import Crucible.Rows (splitRows, runRows)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import Control.Concurrent (threadDelay)
-import Control.Exception (try)
+import Control.Exception (try, throwIO, fromException, SomeException, SomeAsyncException (..))
 import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
@@ -1341,14 +1341,27 @@ main = runChecks
        let ps = [goodProvider "a" c1 "from-a", badProvider "b" c2]
        (r1, r2) <- runEff (Fallback.roundRobin ps
                       (do x <- complete []; y <- complete []; pure (x, y)))
+       (n1, n2) <- (,) <$> readIORef c1 <*> readIORef c2
        check "roundRobin: failure wraps back around the list"
-         ("from-a", "from-a") (r1, r2)
+         (("from-a", "from-a"), (2 :: Int, 1 :: Int))
+         ((r1, r2), (n1, n2))
   , do r <- try (runEff (Fallback.run [] (complete [])))
        check "fallback: empty provider list throws immediately"
          (Just (Fallback.FallbackExhausted []))
          (case r of
             Left e -> Just e
             Right (_ :: Text) -> Nothing)
+  , do c1 <- newIORef 0; c2 <- newIORef 0
+       let asyncProvider = Provider "a"
+             (\_ -> modifyIORef' c1 (+ 1) >> throwIO (SomeAsyncException (userError "cancelled")))
+             (\_ _ -> modifyIORef' c1 (+ 1) >> throwIO (SomeAsyncException (userError "cancelled")))
+       r <- try (runEff (Fallback.run [asyncProvider, goodProvider "b" c2 "from-b"] (complete [])))
+       n2 <- readIORef c2
+       check "fallback: async exceptions rethrow without advancing"
+         (True, 0 :: Int)
+         (case r of
+            Left (e :: SomeException) -> (case fromException @SomeAsyncException e of Just _ -> True; Nothing -> False, n2)
+            Right (_ :: Text) -> (False, n2))
   , do p <- Anthropic.provider (defaultAnthropicConfig "k")
        q <- OpenAI.provider (defaultOpenAIConfig "k")
        check "providers: constructors carry their names" ("anthropic", "openai") (p.name, q.name)
