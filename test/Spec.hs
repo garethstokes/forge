@@ -1377,4 +1377,8 @@ main = runChecks
       True (abs (rougeL "a b c d" "c a b" - 4 / 7) < 1e-9)
   , check "metrics: rougeL empty cases pinned"
       (1.0, 0.0) (rougeL "" "", rougeL "" "x")
+  , check "metrics: tokenF1 counts multiset overlap, not set"
+      True (abs (tokenF1 "a a b" "a b b" - 2 / 3) < 1e-9)
+  , check "metrics: rougeL is order-sensitive where tokenF1 is not"
+      (1.0, True) (tokenF1 "a b c" "c b a", abs (rougeL "a b c" "c b a" - 1 / 3) < 1e-9)
   ]

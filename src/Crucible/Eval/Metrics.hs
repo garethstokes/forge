@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 -- | Pure scalar metrics for 'Crucible.Eval' @Metric@ expectations. Every
 -- function takes the REFERENCE first so partial application composes:
 -- @Metric 0.4 (rougeL reference . render)@. All results land in [0,1].
@@ -16,8 +14,7 @@ import qualified Data.Text as T
 -- | 1.0 when the two texts are equal after case-folding and whitespace
 -- normalization, else 0.0.
 normMatch :: Text -> Text -> Double
-normMatch ref out = if norm ref == norm out then 1.0 else 0.0
-  where norm = T.unwords . T.words . T.toCaseFold
+normMatch ref out = if tokens ref == tokens out then 1.0 else 0.0
 
 -- | Token-multiset F1 (SQuAD style): case-folded whitespace tokens,
 -- harmonic mean of precision and recall. Both empty = 1.0; one empty = 0.0.
@@ -64,9 +61,11 @@ commonCount xs ys = go (sort xs) (sort ys)
       | otherwise = go aas bs
     go _ _ = 0
 
--- | Classic one-row LCS dynamic programme.
+-- | Classic one-row LCS dynamic programme. Each row is forced as it is
+-- produced, keeping space at O(|ys|) instead of a full lazy table.
 lcsLen :: [Text] -> [Text] -> Int
 lcsLen xs ys = last (foldl' step (replicate (length ys + 1) 0) xs)
   where
-    step prev x = scanl f 0 (zip3 ys prev (drop 1 prev))
+    step prev x = forced (scanl f 0 (zip3 ys prev (drop 1 prev)))
       where f left (y, diag, up) = if x == y then diag + 1 else max left up
+    forced row = foldl' (\u v -> v `seq` u) () row `seq` row
