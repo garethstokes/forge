@@ -144,8 +144,19 @@ House style: no emdashes, no hype, no manifest mentions.
 
 ## Non-goals
 
-- Embeddings / cosine-similarity evals (`crucible-d4w`).
-- BLEU.
-- Weighted-kappa calibration for ordinal scales.
-- Ordinal few-shot examples (level field on `JudgeExample`).
-- Global or per-report pass thresholds.
+- Embeddings / cosine-similarity evals (`crucible-d4w`): crucible has no
+  embedding capability at all, so this needs its own design cycle for an
+  Embed effect and provider endpoints rather than riding along here.
+- BLEU: it is a corpus-level statistic whose per-case values are noisy
+  and misleading, and per-case scoring is exactly how `Metric` is used.
+- Weighted-kappa calibration for ordinal scales: binary kappa would
+  punish a judge that rates 4 where the human rated 5 as a full
+  disagreement, so doing it properly means weighted kappa plus an ordinal
+  labelling workflow, which is a calibration cycle of its own.
+- Ordinal few-shot examples (level field on `JudgeExample`): the example
+  machinery is built around a Bool pass field shared by rendering,
+  balancing, and calibration, and extending all three for levels is not
+  worth it before anchored scales prove they need the help.
+- Global or per-report pass thresholds: one knob across a dataset is
+  wrong whenever cases have different acceptable floors, and the
+  in-expectation threshold already covers every case individually.
