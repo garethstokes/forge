@@ -55,7 +55,9 @@ none = interpret $ \_ -> \case
       "Crucible.Embed.none: this program embeds text; interpret Embed with \
       \OpenAI.runEmbed, Voyage.runEmbed, or runEmbedScripted"
 
--- | Pure cosine similarity; 0 when either vector is all zeros.
+-- | Pure cosine similarity; 0 when either vector is all zeros. Expects
+-- same-length vectors (one embedder, one dimensionality); a length
+-- mismatch truncates the dot product to the shared prefix.
 cosine :: [Double] -> [Double] -> Double
 cosine xs ys
   | nx == 0 || ny == 0 = 0
