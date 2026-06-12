@@ -59,6 +59,8 @@ import qualified Data.List
 import Data.IORef (IORef, newIORef, modifyIORef', readIORef)
 import Crucible.LLM.Provider (Provider (..))
 import qualified Crucible.LLM.Fallback as Fallback
+import Crucible.LLM.CallLog (CallEntry (..))
+import qualified Crucible.LLM.CallLog as CallLog
 import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
 import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
@@ -1376,6 +1378,50 @@ main = runChecks
        q <- OpenAI.provider ocfg
        check "providers: constructors fill model from config"
          (acfg.model, ocfg.model) (p.model, q.model)
+  -- crucible-c11: CallLog decorator
+  , do lg <- CallLog.new; c1 <- newIORef 0
+       let p = goodProvider "a" c1 "from-a"
+       r  <- runEff (Fallback.run [CallLog.logging lg p] (complete []))
+       r0 <- runEff (Fallback.run [p] (complete []))
+       es <- CallLog.drain lg
+       check "calllog: success entry records provider/model/usage; decoration transparent"
+         (True, [("a", "fake-model", Right (Usage 1 2))], True)
+         ( r == r0 && r == "from-a"
+         , [(e.provider, e.model, e.outcome) | e <- es]
+         , all (\e -> e.durationMs >= 0) es )
+  , do lg <- CallLog.new; c1 <- newIORef 0; c2 <- newIORef 0
+       r <- runEff (Fallback.run
+              (map (CallLog.logging lg) [badProvider "a" c1, goodProvider "b" c2 "from-b"])
+              (complete []))
+       es <- CallLog.drain lg
+       check "calllog: failed attempts log in tried order before the answer"
+         ("from-b", ["a", "b"], (True, True))
+         ( r
+         , map (.provider) es
+         , case map (.outcome) es of
+             [Left m, Right u] -> (T.isInfixOf "down" m, u == Usage 1 2)
+             _                 -> (False, False) )
+  , do lg <- CallLog.new; c1 <- newIORef 0
+       let ps = [CallLog.logging lg (goodProvider "a" c1 "ok")]
+       _ <- runEff (Fallback.run ps (complete []))
+       es1 <- CallLog.drain lg
+       es2 <- CallLog.drain lg
+       _ <- runEff (Fallback.run ps (complete []))
+       es3 <- CallLog.drain lg
+       check "calllog: drain reads and clears; later calls land in the next window"
+         (1 :: Int, 0 :: Int, 1 :: Int) (length es1, length es2, length es3)
+  , do lg <- CallLog.new; c1 <- newIORef 0
+       r <- runEff (Fallback.runChat [CallLog.logging lg (goodProvider "a" c1 "t")]
+              (converse [] []))
+       es <- CallLog.drain lg
+       check "calllog: chat path records too"
+         (Turn "t" [], [Right (Usage 1 2)]) (r, map (.outcome) es)
+  , do lg <- CallLog.new; c1 <- newIORef 0; c2 <- newIORef 0
+       let ps = map (CallLog.logging lg) [goodProvider "a" c1 "from-a", goodProvider "b" c2 "from-b"]
+       _ <- runEff (Fallback.roundRobin ps (do _ <- complete []; _ <- complete []; pure ()))
+       es <- CallLog.drain lg
+       check "calllog: round-robin rotation is visible in the log"
+         ["a", "b"] (map (.provider) es)
   -- crucible-2zw: scalar metrics
   , check "metrics: normMatch ignores case and whitespace"
       (1.0, 0.0) (normMatch "Hello  World" "hello world", normMatch "hello" "goodbye")
