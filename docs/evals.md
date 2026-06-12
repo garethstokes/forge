@@ -60,7 +60,8 @@ runEval :: (Eq a, LLM :> es)
 
 `Case` is `Case { input :: i, name :: Text, expect :: Expectation a }`, and
 the `Report` carries per-case `results`, a `passRate` (fraction of cases that
-scored 1.0), and a `meanScore`. From the demo in `app/Main.hs` (which uses
+passed: value 1.0, or the in-expectation threshold for `Metric` and `Scale`),
+and a `meanScore`. From the demo in `app/Main.hs` (which uses
 `runEvalN 3`; the system under test there is `pure`, grading fixed outputs):
 
 ```haskell
@@ -256,7 +257,8 @@ when you need to pass few-shot examples.
 
 Examples feed `Rubric` judging only. `Checklist` criteria and `Grounded`
 claims each run as their own micro-rubric (one judge call per criterion or
-claim), so they draw no benefit from examples set on the top-level opts.
+claim), so they draw no benefit from examples set on the top-level opts;
+`Scale` ratings ignore them too.
 
 Use odd n. The vote stops early once one side holds a strict majority, so
 n = 3 typically costs about 2 calls per judgement; the worst case is n calls,
