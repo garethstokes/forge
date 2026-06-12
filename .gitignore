@@ -17,3 +17,6 @@ result-*
 static/evals-ui.wasm
 static/ghc_wasm_jsffi.js
 static/js/
+
+# API keys (never commit)
+.env
