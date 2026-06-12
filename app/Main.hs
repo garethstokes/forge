@@ -192,8 +192,9 @@ main = do
               | otherwise -> TIO.putStrLn ("openai chat cassette: MISMATCH live=" <> a <> " replay=" <> b)
             _ -> TIO.putStrLn "openai chat cassette: a run failed"
           -- Fallback: a junk-key member fails fast; the chain recovers.
-          providers <- (\a o -> [a, o])
-            <$> Anthropic.provider (defaultAnthropicConfig "junk-key")
-            <*> OpenAI.provider ocfg
+          providers <- sequence
+            [ Anthropic.provider (defaultAnthropicConfig "junk-key")
+            , OpenAI.provider ocfg
+            ]
           fb <- runEff (Fallback.run providers (complete prompt))
           TIO.putStrLn ("fallback: " <> fb <> " (first member cannot succeed; answered by second)")

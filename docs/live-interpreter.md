@@ -157,6 +157,9 @@ aProvider <- Anthropic.provider acfg
 oProvider <- OpenAI.provider   ocfg
 ```
 
+Here `acfg` and `ocfg` are the Anthropic and OpenAI configs from the sections
+above.
+
 Both constructors allocate one shared TLS manager for that provider. You can
 also construct a `Provider` directly, which is useful for stubs or custom
 dispatch strategies.
@@ -165,16 +168,16 @@ dispatch strategies.
 
 `Crucible.LLM.Fallback` exports eight functions, used qualified:
 
-| Combinator | Discharges | Also returns |
-|---|---|---|
-| `Fallback.run` | `LLM` | result only |
-| `Fallback.usage` | `LLM` | result + accumulated `Usage` |
-| `Fallback.runChat` | `Chat` | result only |
-| `Fallback.usageChat` | `Chat` | result + accumulated `Usage` |
-| `Fallback.roundRobin` | `LLM` | result only |
-| `Fallback.roundRobinUsage` | `LLM` | result + accumulated `Usage` |
-| `Fallback.roundRobinChat` | `Chat` | result only |
-| `Fallback.roundRobinUsageChat` | `Chat` | result + accumulated `Usage` |
+| Combinator                     | Discharges | Returns                      |
+|--------------------------------|------------|------------------------------|
+| `Fallback.run`                 | `LLM`      | result                       |
+| `Fallback.usage`               | `LLM`      | result + accumulated `Usage` |
+| `Fallback.runChat`             | `Chat`     | result                       |
+| `Fallback.usageChat`           | `Chat`     | result + accumulated `Usage` |
+| `Fallback.roundRobin`          | `LLM`      | result                       |
+| `Fallback.roundRobinUsage`     | `LLM`      | result + accumulated `Usage` |
+| `Fallback.roundRobinChat`      | `Chat`     | result                       |
+| `Fallback.roundRobinUsageChat` | `Chat`     | result + accumulated `Usage` |
 
 Example using the `LLM` path:
 
@@ -194,12 +197,15 @@ to a healthy one instead of wedging the chain. Effects already performed
 (such as tool calls from a previous loop turn) are never replayed: the chain
 only advances before the member produces a result.
 
-When every member fails, `FallbackExhausted` is thrown, carrying each
-member's rendered error in the order tried. An empty member list throws
-`FallbackExhausted []` immediately on the first call.
+When every member fails, `FallbackExhausted` (the sole constructor of
+`FallbackError`) is thrown, carrying each member's rendered error in the
+order tried. An empty member list throws `FallbackExhausted []` immediately
+on the first call.
 
 ### Round-robin
 
+Fallback treats the list as a primary with backups; round-robin spreads load
+and rate-limit pressure across members instead.
 `Fallback.roundRobin` and its siblings rotate the starting member per call.
 An `IORef` counter created when the interpreter starts advances by one for
 each call, so successive calls distribute across members. A failing member
