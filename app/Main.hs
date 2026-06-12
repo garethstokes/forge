@@ -156,8 +156,7 @@ main = do
         (Scale 4 "Rate how polite this reply is"
            [(1, "rude"), (5, "warm and courteous")])
         ("Thanks so much for waiting, happy to help!" :: T.Text)))
-      let Score { rationale = politeRationale } = politeness
-      TIO.putStrLn ("scale: " <> politeRationale)
+      TIO.putStrLn ("scale: " <> politeness.rationale)
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of

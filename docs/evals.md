@@ -24,6 +24,9 @@ data Expectation a
   | Predicate (a -> Bool)  -- must satisfy
   | Rubric Text            -- LLM-as-judge against this rubric
   | Checklist [Criterion]  -- weighted binary criteria, judged one by one
+  | Grounded Text          -- every factual claim supported by this evidence
+  | Metric Double (a -> Double)   -- pass threshold, scalar metric in [0,1]
+  | Scale Int Text [(Int, Text)]  -- pass level, rubric, anchored levels
 ```
 
 `Exactly` and `Predicate` are free and deterministic: use them whenever the
@@ -352,8 +355,9 @@ Three metrics ship in `Crucible.Eval.Metrics`, all pure and offline:
   exactly after normalisation, 0.0 otherwise.
 - `tokenF1 :: Text -> Text -> Double` -- token-level F1 over whitespace
   tokens, case-folded; the harmonic mean of precision and recall.
-- `rougeL :: Text -> Text -> Double` -- longest common subsequence recall
-  over whitespace tokens, case-folded; measures sequence overlap.
+- `rougeL :: Text -> Text -> Double` -- longest common subsequence over
+  whitespace tokens, case-folded; the harmonic mean of LCS precision and
+  recall, so it rewards shared content in a shared order.
 
 All three take the reference first, so they partial-apply cleanly:
 
@@ -367,18 +371,22 @@ Metric 0.85 (tokenF1 referenceSummary)
 Scale passLevel rubric anchors
 ```
 
+Earlier this page warns against 1-5 scales because nobody can say what
+separates a 3 from a 4. The anchors are what change that: each level (or at
+least each end) carries a concrete description, so the judge grades against
+the anchor text rather than a bare number. An unanchored scale is still the
+wrong tool; reach for `Checklist` criteria instead.
+
 `anchors` is a list of `(level, description)` pairs the judge sees as
 labelled lines, not prose. Anchor at least the two ends; the highest anchor
 level defines k, so the scale is 1..k. The score normalises to
 `(level - 1) / (k - 1)`, placing it in [0, 1] for `meanScore`.
 
-When using votes, the median level wins. A sample more than one level from
-the median lands in `dissent`. A case passes at `passLevel`; use a pass
-level of 2 or higher -- at 1, every output passes, including judge errors
-which score 0.
-
-Scale ignores few-shot examples for now. `calibrate` stays binary; weighted
-kappa for ordinal scales is future work.
+When using votes, the median level wins, and every vote is taken (no early
+stop: the median needs the full sample, so n votes cost n calls). A sample
+more than one level from the median lands in `dissent`. A case passes at
+`passLevel`; use a pass level of 2 or higher -- at 1, every output passes,
+including judge errors which score 0.
 
 ### Code example
 
@@ -386,7 +394,7 @@ kappa for ordinal scales is future work.
 import Crucible.Eval.Metrics (rougeL)
 
 report <- runEff (Anthropic.run cfg (runEval id pure
-  [ Case article "summary-overlap" (Metric 0.4 (rougeL referenceSummary))
+  [ Case draftSummary "summary-overlap" (Metric 0.4 (rougeL referenceSummary))
   , Case inquiry "empathetic-tone"
       (Scale 4 "Rate how empathetic this response is"
          [(1, "dismissive"), (5, "fully acknowledges the customer's frustration")])
@@ -397,8 +405,9 @@ TIO.putStrLn (renderReport report)
 ### Limits
 
 No BLEU: it is a corpus-level metric and misleading on individual cases.
-Embedding cosine similarity is tracked separately. `calibrate` stays binary.
-Scale ignores few-shot judge examples for now.
+Embedding cosine similarity is tracked separately. Scale ignores few-shot
+judge examples for now, and [calibration](#calibrating-the-judge) stays
+binary: weighted kappa for ordinal agreement is future work.
 
 ## Calibrating the judge
 
@@ -519,8 +528,9 @@ Writing criteria:
 
 1. One observable fact per criterion; checkable from the output alone.
    ([Writing observable criteria](#writing-observable-criteria))
-2. Binary, never scaled. Granularity comes from more criteria, not a wider
-   scale. ([The grading ladder](#the-grading-ladder))
+2. Binary, never scaled; granularity comes from more criteria, not a wider
+   scale. The exception is an anchored ordinal `Scale`, where every level is
+   described. ([Scalar metrics and ordinal scales](#scalar-metrics-and-ordinal-scales))
 3. Phrase so "yes" is unambiguously the good outcome.
    ([Lint your rubric](#lint-your-rubric))
 4. Negative criteria ("does not...") are first-class; state prohibitions
