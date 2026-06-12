@@ -235,13 +235,13 @@ Each `CallEntry` has four fields:
 |--------------|-------------------|--------------------------------------------------|
 | `provider`   | `Text`            | The member's `name`.                             |
 | `model`      | `Text`            | The model id used for that attempt.              |
-| `durationMs` | `Int`             | Wall-clock time from call start to finish, in ms.|
+| `durationMs` | `Int`             | Elapsed time from call start to finish, in ms.   |
 | `outcome`    | `Either Text Usage` | `Left` rendered error, or `Right` usage on success. |
 
 Failed member attempts are recorded before the exception is rethrown, so the
-entries arrive in tried order. The entry with a `Right` outcome is the member
-that answered; every preceding `Left` entry is one that fell through. The full
-walk is reconstructable from a single drain.
+entries arrive in tried order. Within one call's walk, the entry with a
+`Right` outcome is the member that answered; every preceding `Left` entry is
+one that fell through. The full walk is reconstructable from a single drain.
 
 `drain` reads and clears the handle, so distinct phases of a longer program
 can collect their own windows without cross-contamination. For a single
