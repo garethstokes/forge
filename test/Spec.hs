@@ -58,6 +58,7 @@ import qualified Data.List
 import Data.IORef (IORef, newIORef, modifyIORef', readIORef)
 import Crucible.LLM.Provider (Provider (..))
 import qualified Crucible.LLM.Fallback as Fallback
+import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
 
 -- Sample types for codec tests
 
@@ -1365,4 +1366,15 @@ main = runChecks
   , do p <- Anthropic.provider (defaultAnthropicConfig "k")
        q <- OpenAI.provider (defaultOpenAIConfig "k")
        check "providers: constructors carry their names" ("anthropic", "openai") (p.name, q.name)
+  -- crucible-2zw: scalar metrics
+  , check "metrics: normMatch ignores case and whitespace"
+      (1.0, 0.0) (normMatch "Hello  World" "hello world", normMatch "hello" "goodbye")
+  , check "metrics: tokenF1 on a hand-computed overlap"
+      True (abs (tokenF1 "a b c d" "c a b" - 6 / 7) < 1e-9)
+  , check "metrics: tokenF1 identical and empty cases pinned"
+      (1.0, 1.0, 0.0) (tokenF1 "x y" "x y", tokenF1 "" "", tokenF1 "x" "")
+  , check "metrics: rougeL on a hand-computed LCS"
+      True (abs (rougeL "a b c d" "c a b" - 4 / 7) < 1e-9)
+  , check "metrics: rougeL empty cases pinned"
+      (1.0, 0.0) (rougeL "" "", rougeL "" "x")
   ]
