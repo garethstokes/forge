@@ -14,7 +14,11 @@ effectful capabilities, Anthropic interpreters, skills/tools).
   `Evals.Execute.Anthropic` (the live crucible-backed runner) — plus the
   scorer (sub-project: scoring): `Evals.Grade` (grader config → crucible
   `Expectation`, `scoreRun` with resume + per-grader `RunMetric` recompute)
-  and `Evals.Grade.Anthropic` (the live judge edge).
+  and `Evals.Grade.Anthropic` (the live judge edge); the `pointed` grader kind
+  uses per-example signed-point criteria (HealthBench-style) living in
+  `Example.expected` as `[{"criterion","points","tags"}]`, each judged with
+  full conversation context, scored sum(met points)/sum(positive points)
+  unclipped, with grader config carrying judge knobs only.
 - `app/` — the `manifest-evals` CLI: `migrate`, `run <runId>`, and
   `score <runId> <graderVersionId>...` (env: `MANIFEST_DATABASE_URL`,
   `ANTHROPIC_API_KEY`, `EVALS_CONCURRENCY`).
@@ -25,7 +29,7 @@ effectful capabilities, Anthropic interpreters, skills/tools).
 - `app-dashboard/` — the warp server: serves the JSON API and the static SPA.
 - `test/` — `SchemaSpec` (schema scenarios), `ExecuteSpec` (assembly,
   executeRun happy path / per-example error / resume / multi-turn recording),
-  `GradeSpec` (config/exact/engine/checklist/resume/metrics/edge-cases), and
+  `GradeSpec` (config/exact/engine/checklist/pointed/resume/metrics/edge-cases), and
   `ApiSpec` (wire DTO round-trips) against an ephemeral Postgres
   (`Manifest.Testing.withEphemeralDb`).
 
