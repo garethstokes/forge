@@ -330,8 +330,9 @@ serverSpec = withEphemeralDb $ \pool -> do
     gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
     _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True, detail = Just (Aeson (object ["rationale" .= ("exact match" :: Text)])), error = Nothing, createdAt = now } :: Score)
     -- o2 has no score (errored output)
-    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
-    -- A per-tag breakdown row the dashboard must EXCLUDE (only the overall row is shown).
+    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.05 } :: RunMetric)
+    -- A per-tag breakdown row: now surfaced as a nested `breakdowns` entry on
+    -- the grader's MetricDto (asserted below), not excluded.
     _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Nothing, count = 1, computedAt = now, tag = Just "axis:accuracy", stderr = Nothing } :: RunMetric)
     pure (r.id, v.id)
   mgr <- newManager defaultManagerSettings
@@ -352,7 +353,13 @@ serverSpec = withEphemeralDb $ \pool -> do
     expect "runs shape" (case decode (responseBody r2) :: Maybe [RunSummaryDto] of
       Just [r] -> r.status == "succeeded" && r.model == "claude-x"
                     && r.datasetName == "demo"
-                    && (case r.metrics of [m] -> m.graderName == "exactness" && m.mean == 1.0 && m.passRate == Just 1.0; _ -> False)
+                    && (case r.metrics of
+                          [m] -> m.graderName == "exactness" && m.mean == 1.0 && m.passRate == Just 1.0
+                                   && m.stderr == Just 0.05
+                                   && (case m.breakdowns of
+                                         [b] -> b.tag == "axis:accuracy" && b.mean == 1.0 && b.count == 1
+                                         _   -> False)
+                          _ -> False)
       _ -> False)
     -- filter by datasetVersion: bogus id yields []
     r2b <- getReq "/api/runs?datasetVersion=999999"

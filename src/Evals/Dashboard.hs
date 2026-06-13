@@ -14,7 +14,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (minimumBy, nub, sortBy, sortOn)
-import Data.Maybe (isNothing)
+import Data.Maybe (catMaybes, isNothing)
 import Data.Ord (comparing)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -170,8 +170,7 @@ runSummary r = do
   mdv <- get @DatasetVersion (Key r.datasetVersion)
   md  <- maybe (pure Nothing) (\dv -> get @Dataset (Key dv.dataset)) mdv
   allMetrics <- selectWhere [ #run ==. r.id ] :: Db [RunMetric]
-  let metrics = filter (\m -> isNothing m.tag) allMetrics
-  metricDtos <- mapM metricDto metrics
+  metricDtos <- groupedMetricDtos allMetrics
   let sortedMetrics = sortOn (\m -> m.graderName) metricDtos
       RunId rid = r.id
       tvVersion  = maybe 0 (.version) mtv
@@ -194,19 +193,29 @@ runSummary r = do
     , metrics         = sortedMetrics
     }
 
-metricDto :: RunMetric -> Db MetricDto
-metricDto rm = do
-  mgv <- get @GraderVersion (Key rm.graderVersion)
-  mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
-  let gName    = maybe "?" (.name) mg
-      gVersion = maybe 0 (.version) mgv
-  pure MetricDto
-    { graderName    = gName
-    , graderVersion = gVersion
-    , mean          = rm.mean
-    , passRate      = rm.passRate
-    , count         = rm.count
-    }
+-- | One MetricDto per grader version: the overall (tag Nothing) row supplies
+-- mean/passRate/stderr/count; the tagged rows become sorted breakdowns. A group
+-- with no overall row is dropped (recompute always writes one).
+groupedMetricDtos :: [RunMetric] -> Db [MetricDto]
+groupedMetricDtos rms =
+  fmap catMaybes (mapM buildOne (Map.toList byGrader))
+  where
+    byGrader = Map.fromListWith (++) [ (rm.graderVersion, [rm]) | rm <- rms ]
+    buildOne (gvId, rows) =
+      case [ rm | rm <- rows, isNothing rm.tag ] of
+        []          -> pure Nothing
+        (overall:_) -> do
+          mgv <- get @GraderVersion (Key gvId)
+          mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
+          let gName    = maybe "?" (.name) mg
+              gVersion = maybe 0 (.version) mgv
+              brks = sortOn (.tag)
+                       [ TagMetricDto { tag = t, mean = rm.mean, stderr = rm.stderr, count = rm.count }
+                       | rm <- rows, Just t <- [rm.tag] ]
+          pure (Just MetricDto
+            { graderName = gName, graderVersion = gVersion
+            , mean = overall.mean, passRate = overall.passRate, count = overall.count
+            , stderr = overall.stderr, breakdowns = brks })
 
 -- ---------------------------------------------------------------------------
 -- /api/runs/:id
