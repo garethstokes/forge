@@ -20,3 +20,6 @@ static/js/
 
 # API keys (never commit)
 .env
+
+# superpowers visual-companion / brainstorm scratch
+.superpowers/
