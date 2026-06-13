@@ -182,8 +182,8 @@ depends = ["data-default-class"]
 [[locked]]
 name = "crucible"
 repo = "https://github.com/garethstokes/crucible.git"
-rev = "ea618868587c68084dc2bf80ae6410c11c8f0641"
-sha256 = "sha256:092519d205edf3d7c46a14d5301d652f7447782f40027d328fe8d09de6a2a37c"
+rev = "e6f29d94b0a7c217c35221677fe8a32ac05a260c"
+sha256 = "sha256:3c1341b85472154550d049980c6110ad29478a27ac87d3d73dd9626679d02c21"
 depends = ["aeson", "autodocodec", "autodocodec-schema", "effectful", "effectful-core", "hpke", "http-client-tls", "mlkem", "monad-control", "neat-interpolation", "ram", "retry", "strict-mutable-base"]
 
 [[locked]]
@@ -302,9 +302,8 @@ depends = ["async", "effectful-core", "strict-mutable-base", "unliftio"]
 
 [[locked]]
 name = "effectful-core"
-repo = "https://github.com/haskell-effectful/effectful.git#effectful-core"
-rev = "70f2b865e2f35cfd9f2e901fe5d2a9b1014c5e34"
-sha256 = "sha256:42a84deaf3a6432732cd4eca03846f277ecb6ea9b367558815ce834b4de57da7"
+vendored = "2.6.1.0"
+sha256 = "sha256:340eadcad483fabcd73708b340e45f8a713f6d4591a781afb916f473bb000a5c"
 depends = ["monad-control", "primitive", "strict-mutable-base", "transformers-base", "unliftio-core"]
 
 [[locked]]
@@ -438,9 +437,8 @@ depends = ["hashable", "split", "unordered-containers", "vector", "vector-algori
 
 [[locked]]
 name = "mtl-compat"
-repo = "https://github.com/haskell-compat/mtl-compat"
-rev = "60c10ad7b99b4660dcf35d948b1577f6c6eef2b8"
-sha256 = "sha256:754bdbf81899d29cc47241940d4fcfd8cfbefa9cd8451001bb0a097145f0da4d"
+vendored = "0.2.2"
+sha256 = "sha256:adc5872e68c23c0d147b0476764798a9088255dd3a2f3b3808e77189aa5e514f"
 depends = []
 
 [[locked]]
