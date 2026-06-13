@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -14,7 +15,8 @@ import qualified Data.Aeson.Types as AT
 import qualified Data.Vector as V
 import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
-import Crucible.Codec (JSONCodec, schemaValue, schemaText)
+import Crucible.Codec (JSONCodec, schemaValue, schemaText, refine, checked, Checked (..), allPassed)
+import NeatInterpolation (text)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.Skill (Skill (..), Instruction (..), skill, skillWith, withPreamble, withConstraints, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, call, testSkill)
 import Data.Text (Text)
@@ -1749,4 +1751,51 @@ main = runChecks
                    (Embed.none (runEval id pure [Case ("x" :: Text) "a" (Rubric "r")])))
            t = renderReport rep
        in (T.isInfixOf "[judge abstained]" t, T.isInfixOf "[judge error]" t))
+  -- crucible-mti: refine (hard) and checked (soft)
+  , check "refine: a satisfying value decodes, a violating one fails with the message"
+      (Right 5 :: Either DecodeError Int, True)
+      ( decodeLLM (refine "must be positive" (> 0) C.int) "5"
+      , case decodeLLM (refine "must be positive" (> 0) C.int) "-3" of
+          Left e -> T.isInfixOf "must be positive" e.message
+          Right (_ :: Int) -> False )
+  , check "refine: the message is surfaced in the schema description"
+      True
+      (T.isInfixOf "must be positive" (schemaText (refine "must be positive" (> 0) C.int)))
+  , check "refine: a field-level violation carries the constraint message"
+      True
+      (case decodeLLM (C.object (C.field "age" Prelude.id
+              (refine "age must be 0..130" (\a -> a >= 0 && a <= 130) C.int))) "{\"age\": 200}" of
+         Left e -> T.isInfixOf "age must be 0..130" e.message
+         Right (_ :: Int) -> False)
+  , check "refine: call retries on a violation then succeeds"
+      (Right 42 :: Either DecodeError Int)
+      (runPureEff (runLLMScripted ["{\"n\": -1}", "{\"n\": 42}"]
+         (call (skill "s" C.str
+                  (C.object (C.field "n" Prelude.id (refine "n must be positive" (> 0) C.int)))
+                  (\x -> [text|give n for ${x}|]))
+               ("in" :: Text))))
+  , check "refine: with no retries a violation is returned"
+      True
+      (case runPureEff (runLLMScripted ["{\"n\": -1}"]
+              (call (withRetries 0 (skill "s" C.str
+                       (C.object (C.field "n" Prelude.id (refine "n must be positive" (> 0) C.int)))
+                       (\x -> [text|give n for ${x}|])))
+                    ("in" :: Text))) of
+         Left e -> T.isInfixOf "n must be positive" e.message
+         Right (_ :: Int) -> False)
+  , check "checked: a passing value wraps with all checks true"
+      (Checked ("hi" :: Text) [("nonempty", True), ("short", True)], True)
+      (let cv = either (const (Checked "" [])) Prelude.id
+                  (decodeLLM (checked [("nonempty", not . T.null), ("short", (< 10) . T.length)] C.str)
+                     "\"hi\"")
+       in (cv, allPassed cv))
+  , check "checked: a failing value preserves the value and marks the failing check"
+      (Checked ("" :: Text) [("nonempty", False), ("short", True)], False)
+      (let cv = either (const (Checked "x" [])) Prelude.id
+                  (decodeLLM (checked [("nonempty", not . T.null), ("short", (< 10) . T.length)] C.str)
+                     "\"\"")
+       in (cv, allPassed cv))
+  , check "checked: the advertised schema is the inner codec's"
+      True
+      (schemaText (checked [("nonempty", not . T.null)] C.str) == schemaText C.str)
   ]
