@@ -7,7 +7,7 @@
 module GradeSpec (main) where
 
 import Control.Monad (unless)
-import Data.Aeson (Value, decode, object, toJSON, (.=))
+import Data.Aeson (Value (..), decode, object, toJSON, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AT
 import Data.Either (isLeft)
@@ -24,7 +24,9 @@ import Manifest.Postgres (Pool)
 import Manifest.Testing (withEphemeralDb)
 
 import Crucible.LLM.Anthropic (AnthropicConfig (..), defaultAnthropicConfig)
+import Crucible.LLM.OpenAI (OpenAIConfig (..))
 import Evals.Execute (ExecError (..))
+import Evals.Execute.OpenAI (openaiCfgFromParams)
 import Evals.Grade
 import Evals.Grade.Anthropic (gradeCfg)
 import Evals.Ids
@@ -77,6 +79,16 @@ configSpec = do
        == Right [("cites a URL", 1), ("polite", 2.5)])
   expect "criteria missing is an error" (isLeft (criteriaFrom (object [])))
   expect "criteria empty is an error" (isLeft (criteriaFrom (object ["criteria" .= ([] :: [Value])])))
+  expect "provider default anthropic" (providerFrom (object []) == "anthropic")
+  expect "provider reads openai" (providerFrom (object ["provider" .= ("openai" :: Text)]) == "openai")
+  expect "provider non-object -> anthropic" (providerFrom (String "x") == "anthropic")
+  let oc = openaiCfgFromParams "k" (Just "gpt-4.1")
+            (object ["max_tokens" .= (50 :: Int), "timeout" .= (7 :: Int), "retries" .= (2 :: Int)])
+  expect "openaiCfg model override" (oc.model == "gpt-4.1")
+  expect "openaiCfg knobs" (oc.maxTokens == 50 && oc.timeoutSecs == 7 && oc.maxRetries == 2)
+  expect "openaiCfg key" (oc.apiKey == "k")
+  let od = openaiCfgFromParams "k" Nothing (object [])
+  expect "openaiCfg default model" (od.model == "gpt-4o-mini")
 
 gradeCfgSpec :: IO ()
 gradeCfgSpec = do

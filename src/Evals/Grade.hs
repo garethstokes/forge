@@ -22,6 +22,7 @@ module Evals.Grade
   , CriterionVerdict (..)
   , Graded (..)
   , votesFrom
+  , providerFrom
   , rubricFrom
   , criteriaFrom
   , gradeExact
@@ -74,6 +75,12 @@ type GradeRunner = GraderVersion -> Eval.Expectation Text -> Text -> IO (Either 
 votesFrom :: Value -> Int
 votesFrom v = maybe 1 id (AT.parseMaybe parser v)
   where parser = AT.withObject "config" (\o -> o AT..:? "votes" AT..!= 1)
+
+-- | The @provider@ key of a grader config object: "anthropic" (default) or
+-- "openai". A non-object config yields "anthropic".
+providerFrom :: Value -> Text
+providerFrom v = maybe "anthropic" id (AT.parseMaybe parser v)
+  where parser = AT.withObject "config" (\o -> o AT..:? "provider" AT..!= "anthropic")
 
 -- | The @rubric@ key of a grader config object.
 rubricFrom :: Value -> Either ExecError Text
