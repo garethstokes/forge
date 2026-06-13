@@ -44,7 +44,7 @@ import Crucible.Skill (Skill, skill, call, withExamples, withTests)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
-import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
+import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, penalty, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -142,7 +142,9 @@ main = do
       -- Eval: a checklist and an n-vote rubric judged live (runEvalN 3).
       evalRep <- runEff (Anthropic.run cfg (Embed.none (runEvalN 3 id pure
         [ Case ("It is 26C and sunny in Brisbane." :: T.Text) "weather-report"
-            (Checklist [criterion "mentions a temperature", criterion "mentions a city"])
+            (Checklist [ criterion "mentions a temperature"
+                       , criterion "mentions a city"
+                       , penalty 1 "recommends a specific product" ])
         , Case "pong" "terse-pong" (Rubric "the output is a single short word")
         , Case "It is 26C and sunny in Brisbane." "grounded-weather"
             (Grounded "Brisbane forecast: sunny, 26 degrees, light winds.")

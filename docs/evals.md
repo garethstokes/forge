@@ -40,12 +40,19 @@ a quality goal into weighted binary criteria, each judged with its own call:
 ```haskell
 data Criterion = Criterion { label :: Text, weight :: Double }
 
-criterion :: Text -> Criterion   -- a criterion with weight 1
+criterion :: Text -> Criterion            -- a criterion with weight 1
+penalty   :: Double -> Text -> Criterion  -- a penalty: negative weight, names the bad property
 ```
 
-A checklist score is passed weight over total weight, so it lands in [0,1],
-but the case only counts as a pass (in `Report.passRate`) when every
-criterion holds; weights affect `Report.meanScore` only. Binary criteria
+A checklist score is the signed sum of passed-criterion weights over the sum
+of positive weights, clamped to [0, 1]; the case counts as a pass (in
+`Report.passRate`) only when every positive criterion holds and no penalty
+fires. A negative-weight criterion, built with `penalty`
+(`penalty 2 "recommends a specific product"`), names a failure mode and
+subtracts when the judge finds that property present. Positive weights set
+the denominator, so a response that meets every positive criterion and trips
+no penalty scores 1.0; clamping stops penalties pushing the score below 0.
+Binary criteria
 grade more consistently than a 1-5 scale: nobody can say what separates a 3
 from a 4, but "mentions a temperature" is checkable. If you need granularity,
 add criteria rather than widening a scale.
@@ -242,7 +249,9 @@ Keep one `Rubric` per quality concern, and split when:
 - **A criterion is a hard gate.** Safety and format requirements should not
   be averaged away by weights. Express a gate as its own `Checklist` case:
   `passRate` already requires every criterion in a checklist to hold, so the
-  gate fails the case outright regardless of weight.
+  gate fails the case outright regardless of weight. Do not express a gate as
+  a large negative weight: clamping floors every penalty at 0, so a heavy
+  penalty and a light one fail identically and cannot single out the gate.
 - **The rubric outgrows the judge's attention.** Past roughly 5 to 7
   criteria in one prompt, judge consistency drops. `Checklist` already
   judges each criterion with its own call, so the per-criterion cost is the
