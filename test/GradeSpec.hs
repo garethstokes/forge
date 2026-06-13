@@ -12,7 +12,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AT
 import Data.Either (isLeft)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
-import Data.List (sort)
+import Data.List (sort, sortOn)
 import Data.Maybe (isJust, isNothing)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -46,6 +46,7 @@ main = do
   gradeCfgSpec
   exactSpec
   pointedPureSpec
+  dimSpec
   withEphemeralDb $ \pool -> do
     _ <- withSession pool migrateAll
     now <- getCurrentTime
@@ -585,3 +586,46 @@ pointedSpec pool now = do
     (case ms4 of [m] -> near m.mean (11.0 / 22.0); _ -> False)
   expect "pointed/4: passRate == Nothing (no verdict-bearing rows)"
     (case ms4 of [m] -> isNothing m.passRate; _ -> False)
+
+dimSpec :: IO ()
+dimSpec = do
+  expect "clip01 below" (clip01 (-0.5) == 0)
+  expect "clip01 above" (clip01 1.5 == 1)
+  expect "clip01 in-range" (clip01 0.4 == 0.4)
+  let detail = object
+        [ "achieved" .= (4 :: Double), "possible" .= (10 :: Double)
+        , "criteria" .=
+          [ object ["criterion" .= ("A"::Text), "points" .= (4::Double)
+                   , "tags" .= (["axis:accuracy"]::[Text]), "met" .= True, "explanation" .= (""::Text)]
+          , object ["criterion" .= ("B"::Text), "points" .= (6::Double)
+                   , "tags" .= (["axis:completeness"]::[Text]), "met" .= False, "explanation" .= (""::Text)]
+          ] ]
+  expect "axisScores per-tag"
+    (sortOn fst (axisScoresFromDetail detail) == [("axis:accuracy", 1.0), ("axis:completeness", 0.0)])
+  let negOnly = object ["criteria" .=
+        [ object ["criterion" .= ("X"::Text), "points" .= ((-3)::Double)
+                 , "tags" .= (["axis:safety"]::[Text]), "met" .= True, "explanation" .= (""::Text)] ]]
+  expect "axisScores skips no-positive tag" (axisScoresFromDetail negOnly == [])
+  let multi = object ["criteria" .=
+        [ object ["criterion" .= ("M"::Text), "points" .= (5::Double)
+                 , "tags" .= (["axis:accuracy","cluster:c1"]::[Text]), "met" .= True, "explanation" .= (""::Text)] ]]
+  expect "axisScores multi-tag"
+    (sortOn fst (axisScoresFromDetail multi) == [("axis:accuracy", 1.0), ("cluster:c1", 1.0)])
+  expect "axisScores malformed -> []" (axisScoresFromDetail (object ["rationale" .= ("x"::Text)]) == [])
+  expect "exampleThemes present"
+    (exampleThemes (object ["example_tags" .= (["theme:x","theme:y"]::[Text])]) == ["theme:x","theme:y"])
+  expect "exampleThemes absent -> []" (exampleThemes (object ["other" .= (1::Int)]) == [])
+  let row1 = (Just 0.4, Nothing, Just detail, Just (object ["example_tags" .= (["theme:x"]::[Text])]))
+      row2 = (Just 0.8, Nothing, Just multi,  Just (object ["example_tags" .= (["theme:x"]::[Text])]))
+      ms = dimensionalMetrics [row1, row2]
+  expect "dim overall mean = clip01 avg(0.4,0.8) = 0.6"
+    (case [ m | m <- ms, m.tag == Nothing ] of [m] -> abs (m.mean - 0.6) < 1e-9 && m.count == 2 && m.passRate == Nothing; _ -> False)
+  expect "dim theme:x mean = 0.6, count 2"
+    (case [ m | m <- ms, m.tag == Just "theme:x" ] of [m] -> abs (m.mean - 0.6) < 1e-9 && m.count == 2; _ -> False)
+  expect "dim axis:accuracy mean = 1.0, count 2"
+    (case [ m | m <- ms, m.tag == Just "axis:accuracy" ] of [m] -> abs (m.mean - 1.0) < 1e-9 && m.count == 2; _ -> False)
+  expect "dim axis:completeness only row1, count 1, mean 0.0"
+    (case [ m | m <- ms, m.tag == Just "axis:completeness" ] of [m] -> m.mean == 0.0 && m.count == 1; _ -> False)
+  let neg = (Just (-0.5), Nothing, Nothing, Nothing)
+  expect "dim overall clips negative to 0"
+    (case [ m | m <- dimensionalMetrics [neg], m.tag == Nothing ] of [m] -> m.mean == 0 && m.count == 1; _ -> False)

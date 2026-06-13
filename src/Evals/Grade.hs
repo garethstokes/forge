@@ -32,6 +32,11 @@ module Evals.Grade
   , pointedGraded
   , ScoreOutcome (..)
   , scoreRun
+  , DimMetric (..)
+  , clip01
+  , axisScoresFromDetail
+  , exampleThemes
+  , dimensionalMetrics
   ) where
 
 import Control.Concurrent.Async (forConcurrently)
@@ -42,6 +47,7 @@ import Data.Aeson (Value (..), eitherDecodeStrict, object, (.=))
 import qualified Data.Aeson.Types as AT
 import Data.Either (partitionEithers)
 import Data.List (find, nub)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -396,7 +402,8 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
         deleteWhere ([ #run ==. runId, #graderVersion ==. gv.id ] :: [Cond RunMetric])
         _ <- add (RunMetric
           { id = RunMetricId 0, run = runId, graderVersion = gv.id
-          , mean = mean, passRate = pr, count = n, computedAt = now } :: RunMetric)
+          , mean = mean, passRate = pr, count = n, computedAt = now
+          , tag = Nothing } :: RunMetric)
         pure ()
 
     -- Scores for one grader version scoped to this run: join through Output
@@ -413,3 +420,67 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
 -- | A crucible score as the @Score.detail@ jsonb.
 detailJson :: Eval.Score -> Value
 detailJson s = object (["rationale" .= s.rationale] ++ maybe [] (\(y, n) -> ["votes" .= [y, n]]) s.votes)
+
+-- ---------------------------------------------------------------------------
+-- Dimensional metrics (pure aggregator)
+-- ---------------------------------------------------------------------------
+
+-- | One emitted metric row: the overall (tag Nothing) or a per-tag breakdown.
+data DimMetric = DimMetric
+  { tag      :: Maybe Text
+  , mean     :: Double
+  , passRate :: Maybe Double
+  , count    :: Int
+  } deriving (Eq, Show)
+
+-- | Clip a mean to [0,1] (HealthBench's aggregate clip).
+clip01 :: Double -> Double
+clip01 = max 0 . min 1
+
+-- | Per-tag @achieved / possible@ over one example's pointed 'Score.detail'.
+-- A criterion with multiple tags contributes to each; a tag whose criteria
+-- have no positive points is skipped (HealthBench's @None@). A non-pointed or
+-- malformed detail yields @[]@.
+axisScoresFromDetail :: Value -> [(Text, Double)]
+axisScoresFromDetail v = case AT.parseMaybe parseCriteria v of
+  Nothing  -> []
+  Just its ->
+    [ (t, achieved / possible)
+    | t <- nub (concatMap (\(tags, _, _) -> tags) its)
+    , let tagged   = [ (pts, m) | (tags, pts, m) <- its, t `elem` tags ]
+          possible = sum [ pts | (pts, _) <- tagged, pts > 0 ]
+          achieved = sum [ pts | (pts, m) <- tagged, m ]
+    , possible > 0 ]
+  where
+    parseCriteria = AT.withObject "detail" $ \o -> do
+      arr <- o AT..: "criteria"
+      mapM (AT.withObject "criterion" $ \c ->
+              (,,) <$> c AT..: "tags" <*> c AT..: "points" <*> c AT..: "met")
+           (arr :: [Value])
+
+-- | The @example_tags@ themes from an example's meta. Absent/malformed -> [].
+exampleThemes :: Value -> [Text]
+exampleThemes v = maybe [] id (AT.parseMaybe (AT.withObject "meta" (AT..: "example_tags")) v)
+
+-- | All 'RunMetric' rows for one grader version's scored rows: the overall, a
+-- per-theme breakdown (the example's value bucketed by @example_tags@), and a
+-- per-axis breakdown (the pointed detail re-scored per criterion tag). Every
+-- mean is clipped to [0,1]; tag-row passRate is Nothing (score-derived).
+dimensionalMetrics :: [(Maybe Double, Maybe Bool, Maybe Value, Maybe Value)] -> [DimMetric]
+dimensionalMetrics rows = overall : themeMetrics ++ axisMetrics
+  where
+    graded = [ (v, p, d, m) | (Just v, p, d, m) <- rows ]
+    vals   = [ v | (v, _, _, _) <- graded ]
+    judged = [ b | (_, Just b, _, _) <- graded ]
+    overall = DimMetric
+      { tag = Nothing
+      , mean = clip01 (if null vals then 0 else avg vals)
+      , passRate = if null judged then Nothing
+                   else Just (fromIntegral (length (filter id judged)) / fromIntegral (length judged))
+      , count = length graded }
+    themePairs = [ (t, v)  | (v, _, _, Just m) <- graded, t <- exampleThemes m ]
+    axisPairs  = [ (t, sc) | (_, _, Just d, _) <- graded, (t, sc) <- axisScoresFromDetail d ]
+    themeMetrics = [ DimMetric (Just t) (clip01 (avg ss)) Nothing (length ss) | (t, ss) <- grouped themePairs ]
+    axisMetrics  = [ DimMetric (Just t) (clip01 (avg ss)) Nothing (length ss) | (t, ss) <- grouped axisPairs ]
+    avg xs = sum xs / fromIntegral (length xs)
+    grouped = Map.toList . Map.fromListWith (++) . map (\(k, x) -> (k, [x]))

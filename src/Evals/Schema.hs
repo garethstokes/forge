@@ -145,6 +145,7 @@ data RunMetricT f = RunMetric
   , passRate      :: Field f (Maybe Double)
   , count         :: Field f Int
   , computedAt    :: Field f UTCTime
+  , tag           :: Field f (Maybe Text)   -- Nothing = overall; Just t = a per-tag breakdown
   } deriving Generic
 type RunMetric = RunMetricT Identity
 
