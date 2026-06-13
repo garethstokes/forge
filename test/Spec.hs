@@ -33,7 +33,8 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
-import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith)
+import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
+import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt, ratePrompt)
 import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa)
@@ -1560,4 +1561,45 @@ main = runChecks
          (case r of
             Left (e :: SomeException) -> T.isInfixOf "Crucible.Embed.none" (T.pack (show e))
             Right s -> s.value < 0)  -- unreachable; forces the Score
+  -- crucible-ic0: rubric lint
+  , check "lintPrompt: lists labels, the four checks, and the precision rule"
+      (True, True, True, True, True, True)
+      (case lintPrompt ["a and b", "clear one"] of
+         [Message _ sys, Message _ usr] ->
+           let hay = sys <> "\n" <> usr
+           in ( T.isInfixOf "a and b" hay
+              , T.isInfixOf "conflation" hay
+              , T.isInfixOf "direction" hay
+              , T.isInfixOf "redundancy" hay
+              , T.isInfixOf "vague" hay
+              , T.isInfixOf "clear violations" sys )
+         _ -> (False, False, False, False, False, False))
+  , check "lint: a reply with findings decodes to typed findings"
+      [ Finding Conflation "mentions city and temp" "tests two things"
+      , Finding Vague "good" "unfalsifiable" ]
+      (runPureEff (runLLMScripted
+        [ "[{\"issue\":\"conflation\",\"criterion\":\"mentions city and temp\",\"note\":\"tests two things\"},{\"issue\":\"vague\",\"criterion\":\"good\",\"note\":\"unfalsifiable\"}]" ]
+        (lintChecklist [criterion "mentions city and temp", criterion "good"])))
+  , check "lint: a clean checklist yields no findings"
+      ([] :: [LintFinding])
+      (runPureEff (runLLMScripted ["[]"] (lintChecklist [criterion "avoids jargon"])))
+  , check "lint: empty checklist short-circuits with no judge call"
+      ([] :: [LintFinding])
+      (runPureEff (runLLMScripted [] (lintChecklist [])))
+  , check "lint: feeds labels not weights to the prompt"
+      (True, False)
+      (case lintPrompt (map ((.label) :: Criterion -> Text) [Criterion "alpha" 7]) of
+         [_, Message _ usr] -> (T.isInfixOf "alpha" usr, T.isInfixOf "7" usr)
+         _ -> (False, True))
+  , check "lint: unparseable reply after repair returns LintUnavailable"
+      True
+      (case runPureEff (runLLMScripted ["junk", "junk2"] (lintChecklist [criterion "x"])) of
+         [LintUnavailable m] -> not (T.null m)
+         _                   -> False)
+  , check "lint: an unknown issue tag drives the repair re-prompt"
+      [Finding Direction "x" "fixed"]
+      (runPureEff (runLLMScripted
+        [ "[{\"issue\":\"bogus\",\"criterion\":\"x\",\"note\":\"n\"}]"
+        , "[{\"issue\":\"direction\",\"criterion\":\"x\",\"note\":\"fixed\"}]" ]
+        (lintChecklist [criterion "x"])))
   ]

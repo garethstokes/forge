@@ -21,6 +21,7 @@ module Crucible.Eval
   , judgeWith, runEvalWith, scoreWith
   , runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport
   , groundingCheck
+  , LintIssue (..), LintFinding (..), lintChecklist
   ) where
 
 import Data.Text (Text)
@@ -30,6 +31,7 @@ import Effectful
 import Crucible.Embed (Embed, embed, cosine)
 import Crucible.Eval.Grounding (GroundingOutcome (..), groundingOutcome)
 import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), defaultJudgeOpts, vote, RateOutcome (..), rate)
+import Crucible.Eval.Lint (LintFinding (..), LintIssue (..), lintLabels)
 import Crucible.LLM (LLM)
 
 -- | What a case's output is checked against.
@@ -198,6 +200,14 @@ scaleScore n rubric anchors rendered
 -- aggregate). Cost: 1-2 decompose calls plus claims x votes judge calls.
 groundingCheck :: (LLM :> es) => Int -> (o -> Text) -> Text -> o -> Eff es Score
 groundingCheck n render ev o = groundingScore <$> groundingOutcome n ev (render o)
+
+-- | Advisory lint over a checklist's criterion labels: run the four
+-- documented anti-pattern checks (conflation, direction, redundancy,
+-- vague wording) as one judge call. Advisory only, never a gate. A clean
+-- checklist returns []. Coverage is not checked (it needs your observed
+-- failure modes, not the labels).
+lintChecklist :: (LLM :> es) => [Criterion] -> Eff es [LintFinding]
+lintChecklist = lintLabels . map ((.label) :: Criterion -> Text)
 
 -- | Convert a grounding outcome to a Score.
 groundingScore :: GroundingOutcome -> Score
