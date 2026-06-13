@@ -31,7 +31,7 @@ import Evals.Schema
 
 -- | Map the known LLM knobs of a params jsonb onto a config: optional model
 -- override plus max_tokens/timeout/retries. Shared by the target path
--- ('cfgFrom') and the grader path ("Evals.Grade.Anthropic").
+-- ('cfgFrom') and the grader path ("Evals.Grade.Live").
 cfgFromParams :: Text -> Maybe Text -> Value -> AnthropicConfig
 cfgFromParams key mModel paramsVal = base
   { maxTokens   = intParam "max_tokens" base.maxTokens

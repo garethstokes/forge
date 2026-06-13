@@ -143,7 +143,7 @@ data CriterionVerdict = CriterionVerdict
   { met :: Bool, explanation :: Text } deriving (Eq, Show)
 
 -- | The injected per-criterion judge for the pointed kind. Live:
--- "Evals.Grade.Anthropic". NOTE the fidelity caveat: the live judge uses
+-- "Evals.Grade.Live". NOTE the fidelity caveat: the live judge uses
 -- crucible's hardened prompt + a Claude model, not HealthBench's published
 -- GPT-4.1 grader — scores are directionally comparable, not benchmark-comparable.
 type CriterionJudge =

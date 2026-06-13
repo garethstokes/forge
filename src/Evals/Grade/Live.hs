@@ -68,6 +68,8 @@ liveGradeRunner keys gv expectation rendered =
         Left (e :: AnthropicError)  -> pure (Left (LlmError (T.pack (show e))))
   where
     Aeson cfgV = gv.config
+    -- Embed.none is safe: rubric/checklist expectations never embed; only a
+    -- SimilarTo expectation would, and no grader kind here produces one.
     act = Embed.none (Eval.scoreN (votesFrom cfgV) id expectation rendered)
 
 -- | One crucible 'Judge.vote' per criterion, dispatched to the grader's provider.
