@@ -16,6 +16,7 @@
 module Crucible.Eval.Calibrate
   ( CalibrationReport (..)
   , bootstrapKappa
+  , bootstrapStdErr
   , reportFromVerdicts
   , calibrateWith
   , calibrate
@@ -83,6 +84,22 @@ bootstrapKappa seed resamples pairs
           hiIdx = max loIdx ((resamples * 975) `div` 1000 - 1)
       in (ks !! loIdx, ks !! hiIdx)
   where k0 = kappaOf pairs
+
+-- | Bootstrap standard error of the mean: resample @xs@ with replacement to its
+-- own size @resamples@ times, take each resample's mean, return the standard
+-- deviation of those means. Deterministic per seed. 0 for <=1 value or
+-- resamples<=0 (no spread to estimate).
+bootstrapStdErr :: Int -> Int -> [Double] -> Double
+bootstrapStdErr seed resamples xs
+  | length xs <= 1 || resamples <= 0 = 0
+  | otherwise =
+      let n       = length xs
+          idxs    = map (\x -> abs x `mod` n) (xorshiftInts seed)
+          group r = [xs !! i | i <- take n (drop (r * n) idxs)]
+          means   = [ sum (group r) / fromIntegral n | r <- [0 .. resamples - 1] ]
+          mbar    = sum means / fromIntegral resamples
+          var     = sum [ (m - mbar) ** 2 | m <- means ] / fromIntegral resamples
+      in sqrt var
 
 -- | Pure metric computation from outcomes + report shape fields.
 reportFrom :: Int -> [(Text, Bool, VoteOutcome)] -> Int -> Int -> CalibrationReport

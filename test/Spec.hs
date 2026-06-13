@@ -37,7 +37,7 @@ import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penal
 import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (VerdictKind(..), Verdict(..), verdictCodec, AbstainPolicy(..), JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, VoteOutcome(..), vote, balanceExamples, judgePrompt, ratePrompt)
-import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa, reportFromVerdicts)
+import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa, reportFromVerdicts, bootstrapStdErr)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
@@ -1258,6 +1258,16 @@ main = runChecks
       (let one = bootstrapKappa 1 1000 [(True, False)]
            none = bootstrapKappa 1 1000 []
        in (fst one == snd one, none == (0, 0)))
+  , check "bootstrapStdErr: identical values -> 0"
+      0.0
+      (bootstrapStdErr 1 1000 [0.5, 0.5, 0.5, 0.5])
+  , check "bootstrapStdErr: single / empty -> 0"
+      (0.0, 0.0)
+      (bootstrapStdErr 1 1000 [0.7], bootstrapStdErr 1 1000 [])
+  , check "bootstrapStdErr: spread -> positive, deterministic per seed"
+      True
+      (let xs = [0.0, 0.25, 0.5, 0.75, 1.0, 0.1, 0.9]
+       in bootstrapStdErr 9 1000 xs > 0 && bootstrapStdErr 9 1000 xs == bootstrapStdErr 9 1000 xs)
   , check "renderCalibration: kappa line carries the CI"
       True
       (T.isInfixOf "[95% CI "
