@@ -205,6 +205,29 @@ Before trusting a checklist, walk it with four checks:
   drags the score down twice, and `meanScore` quietly overweights that
   concern. Merge them.
 
+### Automating the walk with `lintChecklist`
+
+`lintChecklist` runs these checks as a single advisory judge call and returns
+the violations it finds. It is advisory only and never acts as a gate: a clean
+checklist returns `[]`.
+
+```haskell
+lintChecklist :: (LLM :> es) => [Criterion] -> Eff es [LintFinding]
+
+data LintIssue = Conflation | Direction | Redundancy | Vague
+data LintFinding
+  = Finding { issue :: LintIssue, criterion :: Text, note :: Text }
+  | LintUnavailable Text
+```
+
+The function takes a high-precision stance: only clear violations are flagged,
+so a finding is a genuine signal rather than a speculative one. `LintUnavailable`
+distinguishes a failed lint call (the judge could not run) from a clean checklist
+(an empty list).
+
+Coverage is the one check `lintChecklist` cannot automate. It needs the failures
+you have actually observed, not the criterion labels, so it stays a manual step.
+
 ## When to split a rubric
 
 Keep one `Rubric` per quality concern, and split when:

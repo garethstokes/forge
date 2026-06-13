@@ -44,7 +44,7 @@ import Crucible.Skill (Skill, skill, call, withExamples, withTests)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str)
-import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, runEval, runEvalN, renderReport, scoreM)
+import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -148,6 +148,14 @@ main = do
             (Grounded "Brisbane forecast: sunny, 26 degrees, light winds.")
         ])))
       TIO.putStrLn (renderReport evalRep)
+      -- Rubric lint: an advisory pass over a deliberately flawed checklist.
+      let renderFinding (Finding i c n) = T.pack (show i) <> " '" <> c <> "': " <> n
+          renderFinding (LintUnavailable m) = "unavailable: " <> m
+      findings <- runEff (Anthropic.run cfg (lintChecklist
+        [ criterion "mentions the city and the temperature"
+        , criterion "uses appropriate language"
+        ]))
+      mapM_ (\f -> TIO.putStrLn ("lint: " <> renderFinding f)) findings
       -- improveSkill: one live reflection round over a deliberately weak skill.
       let weak = withTests
             [ Case ("the meeting is at 3pm tomorrow" :: T.Text) "extracts-time"
