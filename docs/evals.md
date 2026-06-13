@@ -187,7 +187,7 @@ times votes judge calls; a decompose failure surfaces as a
 
 ## Lint your rubric
 
-Before trusting a checklist, walk it with four checks:
+Before trusting a checklist, walk it with five checks:
 
 - **Coverage.** Do the criteria span the failure modes you have actually
   observed? Criteria should come from reading real failing outputs, not from
@@ -204,11 +204,15 @@ Before trusting a checklist, walk it with four checks:
   "includes the degrees") double-count under weights: one underlying failure
   drags the score down twice, and `meanScore` quietly overweights that
   concern. Merge them.
+- **Vague wording.** A criterion whose wording is unfalsifiable ("is well
+  written", "reads naturally") cannot be judged consistently: nobody could
+  agree on yes versus no. Make it concrete and observable.
 
 ### Automating the walk with `lintChecklist`
 
-`lintChecklist` runs these checks as a single advisory judge call and returns
-the violations it finds. It is advisory only and never acts as a gate: a clean
+`lintChecklist` runs the four label-readable checks (conflation, direction,
+redundancy, and vague wording) as a single advisory judge call and returns the
+violations it finds. It is advisory only and never acts as a gate: a clean
 checklist returns `[]`.
 
 ```haskell
