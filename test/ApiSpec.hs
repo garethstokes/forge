@@ -313,6 +313,8 @@ serverSpec = withEphemeralDb $ \pool -> do
     _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True, detail = Just (Aeson (object ["rationale" .= ("exact match" :: Text)])), error = Nothing, createdAt = now } :: Score)
     -- o2 has no score (errored output)
     _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now, tag = Nothing } :: RunMetric)
+    -- A per-tag breakdown row the dashboard must EXCLUDE (only the overall row is shown).
+    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Nothing, count = 1, computedAt = now, tag = Just "axis:accuracy" } :: RunMetric)
     pure (r.id, v.id)
   mgr <- newManager defaultManagerSettings
   hub <- newEventHub

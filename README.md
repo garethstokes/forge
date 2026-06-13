@@ -18,7 +18,12 @@ effectful capabilities, Anthropic interpreters, skills/tools).
   uses per-example signed-point criteria (HealthBench-style) living in
   `Example.expected` as `[{"criterion","points","tags"}]`, each judged with
   full conversation context, scored sum(met points)/sum(positive points)
-  unclipped, with grader config carrying judge knobs only.
+  unclipped, with grader config carrying judge knobs only. `RunMetric` now
+  carries an overall row (`tag` null) plus per-tag breakdowns — `theme:*` (the
+  example's score bucketed by its `example_tags`) and, for pointed graders,
+  `axis:*`/`cluster:*` (the criteria re-scored per tag from the stored verdicts,
+  with no extra judge calls); all means are clipped to [0,1]. The dashboard
+  currently shows the overall metric (tag rendering is a later slice).
 - `app/` — the `manifest-evals` CLI: `migrate`, `run <runId>`,
   `score <runId> <graderVersionId>...`, and `ingest <file.jsonl>` (env:
   `MANIFEST_DATABASE_URL`, `ANTHROPIC_API_KEY`, `EVALS_CONCURRENCY`).

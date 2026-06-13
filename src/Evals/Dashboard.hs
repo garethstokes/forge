@@ -14,6 +14,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (minimumBy, nub, sortBy, sortOn)
+import Data.Maybe (isNothing)
 import Data.Ord (comparing)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -168,7 +169,8 @@ runSummary r = do
   mt  <- maybe (pure Nothing) (\tv -> get @Target (Key tv.target)) mtv
   mdv <- get @DatasetVersion (Key r.datasetVersion)
   md  <- maybe (pure Nothing) (\dv -> get @Dataset (Key dv.dataset)) mdv
-  metrics <- selectWhere [ #run ==. r.id ] :: Db [RunMetric]
+  allMetrics <- selectWhere [ #run ==. r.id ] :: Db [RunMetric]
+  let metrics = filter (\m -> isNothing m.tag) allMetrics
   metricDtos <- mapM metricDto metrics
   let sortedMetrics = sortOn (\m -> m.graderName) metricDtos
       RunId rid = r.id
