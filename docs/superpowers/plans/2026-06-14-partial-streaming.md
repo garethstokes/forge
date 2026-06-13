@@ -21,7 +21,7 @@
 
 ### Task 1: `Crucible.Partial` (closeJson + interpreters) + tests
 
-**Files:** Create `src/Crucible/Partial.hs`; modify `test/Spec.hs`, and add the module to `zinc.toml` if the lib stanza lists modules explicitly (check; zinc usually auto-discovers `src/` â€” if so, no zinc.toml change).
+**Files:** Create `src/Crucible/Partial.hs`; modify `test/Spec.hs`, and add the module to `zinc.toml` if the lib stanza lists modules explicitly (check; zinc usually auto-discovers `src/`; if so, no zinc.toml change).
 
 - [ ] **Step 1: module skeleton + interpreters.** Create `src/Crucible/Partial.hs`:
 
@@ -116,7 +116,7 @@ Match `runRows`'s exact effect plumbing; if `reinterpret (runState ...)` returns
       ("{}", "")                  (closeJson "{}", closeJson "")
 ```
 
-The `runPartial` end-to-end contract (scripted `emit` deltas; define a partial type with a HasCodec/genericCodec instance near the other test fixtures, e.g. `data PersonP = PersonP { ppName :: Maybe Text, ppAge :: Maybe Int } deriving (Eq, Show, Generic)` with `instance HasCodec PersonP where codec = genericCodec` â€” match how Spec.hs already defines such fixtures; if genericCodec field-name handling needs specific record field names, mirror an existing generic fixture):
+The `runPartial` end-to-end contract (scripted `emit` deltas; define a partial type with a HasCodec/genericCodec instance near the other test fixtures, e.g. `data PersonP = PersonP { ppName :: Maybe Text, ppAge :: Maybe Int } deriving (Eq, Show, Generic)` with `instance HasCodec PersonP where codec = genericCodec`; match how Spec.hs already defines such fixtures; if genericCodec field-name handling needs specific record field names, mirror an existing generic fixture):
 
 ```haskell
   , check "runPartial: fields fill in across deltas; last partial is complete"
@@ -159,7 +159,7 @@ nix develop . --command bash -c 'set -a; . ./.env; set +a; timeout -s KILL 420 .
 
 Expected: lines showing a partial object's fields filling in (or a final assembled partial + a count); exit 0. REPORT the relevant output lines.
 
-- [ ] **Step 3: docs.** In `docs/streaming.md`, replace the "Incremental typed decoding of a single JSON object ... is out of scope" sentence (in "Streaming and typed skills") with a "Partial typed values" section: the caller writes an all-`Maybe` partial type and its codec; `runPartialWith` streams `Either DecodeError p` as fields arrive; `closeJson` is the kernel; one top-level object; the relationship to `runRows` (lines vs one growing object). Show a short example mirroring the `runRows` example's shape. House style STRICT: `grep -n $'â€”\|â€“' docs/streaming.md` empty; no hype; no "manifest".
+- [ ] **Step 3: docs.** In `docs/streaming.md`, replace the "Incremental typed decoding of a single JSON object ... is out of scope" sentence (in "Streaming and typed skills") with a "Partial typed values" section: the caller writes an all-`Maybe` partial type and its codec; `runPartialWith` streams `Either DecodeError p` as fields arrive; `closeJson` is the kernel; one top-level object; the relationship to `runRows` (lines vs one growing object). Show a short example mirroring the `runRows` example's shape. House style STRICT: `grep -n $'---\|---' docs/streaming.md` empty; no hype; no "manifest".
 
 - [ ] **Step 4: commit.**
 
@@ -180,8 +180,8 @@ git commit -m "$(printf 'docs(site)+demo: partial typed streaming of a growing o
 
 ## Self-Review
 
-**1. Spec coverage:** closeJson (rules + single-object scope) -> Task 1 Step 2 + the pinned matrix. runPartialWith/runPartial mirroring Rows -> Step 1. Per-delta emit, blank emits nothing -> Step 1 (T.strip guard). Caller-supplied partial codec (Option B) -> the `JSONCodec p` parameter + test fixture. Demo + streaming.md replacement of the exclusion -> Task 2. Non-goals (Option C, Option A, arrays, debounce) absent. âœ…
+**1. Spec coverage:** closeJson (rules + single-object scope) -> Task 1 Step 2 + the pinned matrix. runPartialWith/runPartial mirroring Rows -> Step 1. Per-delta emit, blank emits nothing -> Step 1 (T.strip guard). Caller-supplied partial codec (Option B) -> the `JSONCodec p` parameter + test fixture. Demo + streaming.md replacement of the exclusion -> Task 2. Non-goals (Option C, Option A, arrays, debounce) absent. -œ…
 
-**2. Placeholder scan:** the demo wiring and the runPartial test's exact intermediate assertion are left to be pinned against chosen chunk boundaries (deterministic once chosen); the closeJson matrix is fully pinned and is the contract. The genericCodec-on-all-Maybe behaviour is flagged as a verify-and-report point (a real risk for Option B). No silent gaps. âœ…
+**2. Placeholder scan:** the demo wiring and the runPartial test's exact intermediate assertion are left to be pinned against chosen chunk boundaries (deterministic once chosen); the closeJson matrix is fully pinned and is the contract. The genericCodec-on-all-Maybe behaviour is flagged as a verify-and-report point (a real risk for Option B). No silent gaps. -œ…
 
-**3. Type consistency:** `closeJson :: Text -> Text`; `runPartialWith :: JSONCodec p -> (Either DecodeError p -> Eff es ()) -> Eff (Emit : es) r -> Eff es r` and `runPartial :: JSONCodec p -> Eff (Emit : es) r -> Eff es (r, [Either DecodeError p])` mirror `runRowsWith`/`runRows` exactly with `p` in place of the row type; `decodeLLM c (closeJson buf') :: Either DecodeError p`. âœ…
+**3. Type consistency:** `closeJson :: Text -> Text`; `runPartialWith :: JSONCodec p -> (Either DecodeError p -> Eff es ()) -> Eff (Emit : es) r -> Eff es r` and `runPartial :: JSONCodec p -> Eff (Emit : es) r -> Eff es (r, [Either DecodeError p])` mirror `runRowsWith`/`runRows` exactly with `p` in place of the row type; `decodeLLM c (closeJson buf') :: Either DecodeError p`. -œ…
