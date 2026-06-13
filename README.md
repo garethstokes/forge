@@ -105,6 +105,10 @@ grader (needs `ANTHROPIC_API_KEY`); `--mode stored` reads the verdicts from a
 prior `score` of that run. The statistics are crucible's (`reportFromVerdicts` /
 `renderCalibration`).
 
+Each `metaeval report` run is also persisted as a `MetaEval` row (agreement,
+Cohen's κ + CI, fail precision/recall, measured count, mode, seed, timestamp) —
+appended as history and queryable; the printed output is unchanged.
+
 Note: re-loading the same `--slug`+`--version` is refused even with `--force`
 (the synthetic run blocks replacement) — load a new version instead.
 

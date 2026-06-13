@@ -30,7 +30,7 @@ import Evals.Grade (ScoreOutcome (..), scoreRun)
 import Evals.Grade.Live (LiveKeys (..), liveCriterionJudge, liveGradeRunner)
 import Evals.Ids (GraderVersionId (..), RunId (..))
 import Evals.Ingest (IngestOpts (..), IngestResult (..), formatFor, ingestFile, renderIngestError)
-import Evals.MetaEval (metaReport, MetaMode (..))
+import Evals.MetaEval (metaReport, MetaMode (..), saveMetaEval)
 import Evals.MetaEval.Ingest (MetaLoadOpts (..), MetaLoadResult (..), metaLoad, renderMetaLoadError)
 import Evals.Migrate (migrateAll)
 import qualified Crucible.Eval.Calibrate as Cal
@@ -109,7 +109,9 @@ main = getArgs >>= \case
       other    -> die ("unknown --mode: " <> other)
     withEnvPool $ \pool -> metaReport pool seed mode rid gvid >>= \case
       Left e  -> die (T.unpack e)
-      Right r -> putStrLn (T.unpack (Cal.renderCalibration r))
+      Right r -> do
+        _ <- saveMetaEval pool rid gvid (T.pack modeName) seed r
+        putStrLn (T.unpack (Cal.renderCalibration r))
   _ -> die usage
 
 usage :: String
