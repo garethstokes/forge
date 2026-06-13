@@ -166,6 +166,11 @@ main = do
       (_, improveSteps) <- runEff (Anthropic.run cfg (Embed.none (improveSkill 1 id weak)))
       TIO.putStrLn ("improveSkill: " <> T.pack (show (length improveSteps)) <> " step(s) "
                     <> T.pack (show [s.accepted | s <- improveSteps]))
+      -- Abstain: a criterion the output cannot speak to, to provoke cannot_assess.
+      abstainRep <- runEff (Anthropic.run cfg (Embed.none (runEval id pure
+        [ Case ("The meeting is at 3pm." :: T.Text) "off-topic-criterion"
+            (Rubric "the output correctly cites the source's publication date") ])))
+      TIO.putStrLn (renderReport abstainRep)
       -- Scale: an anchored 1-to-5 politeness rating, judged live.
       politeness <- runEff (Anthropic.run cfg (Embed.none (scoreM id
         (Scale 4 "Rate how polite this reply is"

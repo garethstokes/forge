@@ -267,9 +267,10 @@ count and any few-shot examples to show the judge:
 data JudgeOpts = JudgeOpts
   { votes    :: Int             -- samples per judgement (odd; 1 = single call)
   , examples :: [JudgeExample]  -- few-shot examples for Rubric judging
+  , abstain  :: AbstainPolicy   -- how a checklist criterion's abstention resolves
   }
 
-defaultJudgeOpts :: JudgeOpts   -- votes = 1, examples = []
+defaultJudgeOpts :: JudgeOpts   -- votes = 1, examples = [], abstain = AbstainFails
 
 judgeWith   :: (LLM :> es)
             => JudgeOpts -> (a -> Text) -> Text -> a -> Eff es Score
@@ -333,6 +334,41 @@ One limitation: crucible does not set a sampling temperature, so vote
 diversity rides entirely on the provider's default sampling. If the provider
 returns near-deterministic replies, three votes are three copies of one
 opinion and the tally will look more confident than it is.
+
+## Abstain verdicts
+
+The judge verdict is three-way: `pass`, `fail`, or `cannot_assess`. The judge
+should return `cannot_assess` when the output genuinely lacks the information
+needed to judge the criterion -- for example, a rubric that asks whether the
+output cites a publication date, applied to an output that contains no
+publication date at all. This is distinct from a considered fail: a fail
+means the judge read the output and rejected it; an abstain means the output
+does not contain enough information to reach a verdict.
+
+`AbstainPolicy` on `JudgeOpts` (the `abstain` field) controls how an
+abstained criterion is treated inside a `Checklist`:
+
+- `AbstainFails` (the default): the abstain resolves as a failing verdict, and
+  the criterion stays in the denominator. Use this when a missing answer should
+  count against the score.
+- `AbstainSkips`: the criterion is dropped from the denominator entirely. Use
+  this when a criterion is only applicable to some outputs and an inapplicable
+  one should not penalise the case.
+
+For a standalone `Rubric` or `Scale`, there is no denominator to skip from, so
+an abstain always scores 0 regardless of policy. For a penalty criterion, an
+abstain under `AbstainFails` maps to the Fail verdict; a penalty's Fail means
+the bad property is absent, so the penalty clears (does not subtract).
+
+Abstention renders as `[judge abstained]` in `renderReport`, distinct from
+`[judge error]`. An output with `[judge abstained]` reached a verdict but
+could not assess; an output with `[judge error]` produced a reply that failed
+to parse at all.
+
+`calibrate` lists abstentions separately in `CalibrationReport.abstained` and
+excludes those cases from the agreement and kappa computation, just as it does
+for judge errors. Abstentions do not count as judge-human disagreements; they
+are removed from the measurement set so they cannot distort the metrics.
 
 ## No closed-loop judging
 
