@@ -334,7 +334,7 @@ serverSpec = withEphemeralDb $ \pool -> do
     expect "runs shape" (case decode (responseBody r2) :: Maybe [RunSummaryDto] of
       Just [r] -> r.status == "succeeded" && r.model == "claude-x"
                     && r.datasetName == "demo"
-                    && (case r.metrics of [m] -> m.graderName == "exactness" && m.mean == 1.0; _ -> False)
+                    && (case r.metrics of [m] -> m.graderName == "exactness" && m.mean == 1.0 && m.passRate == Just 1.0; _ -> False)
       _ -> False)
     -- filter by datasetVersion: bogus id yields []
     r2b <- getReq "/api/runs?datasetVersion=999999"
