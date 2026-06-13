@@ -8,11 +8,17 @@ module MetaEvalSpec (main) where
 
 import Control.Monad (unless)
 import Data.Text (Text)
-import Data.Time (getCurrentTime)
+import qualified Data.Text as T
+import Data.Time (UTCTime, getCurrentTime)
 
 import Manifest
 import Manifest.Postgres (Pool)
 import Manifest.Testing (withEphemeralDb)
+
+import qualified Crucible.Eval.Calibrate as Cal
+import Data.Aeson (Value, object, toJSON, (.=))
+import Evals.Grade (Criterion' (..), CriterionJudge, CriterionVerdict (..))
+import Evals.MetaEval (metaReport, MetaMode (..))
 
 import Evals.Ids
 import Evals.Migrate (migrateAll)
@@ -26,7 +32,60 @@ main :: IO ()
 main = withEphemeralDb $ \pool -> do
   _ <- withSession pool migrateAll
   ingestSpec pool
-  putStrLn "manifest-evals MetaEvalSpec: ingest OK"
+  now <- getCurrentTime
+  storedSpec pool now
+  liveSpec pool now
+  putStrLn "manifest-evals MetaEvalSpec: ingest + stored + live OK"
+
+seedRun :: Pool -> UTCTime -> IO (RunId, GraderVersionId, OutputId)
+seedRun pool now = withSession pool $ do
+  d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "d", slug = "seed-x", createdAt = now } :: Dataset)
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e  <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "k1"
+                     , input = Aeson (object ["messages" .= ([] :: [Value])])
+                     , expected = Just (Aeson (toJSON
+                         [ object ["criterion" .= ("c-good"::Text), "points" .= (5::Double), "tags" .= ([]::[Text])]
+                         , object ["criterion" .= ("c-bad"::Text),  "points" .= (5::Double), "tags" .= ([]::[Text])] ]))
+                     , meta = Nothing } :: Example)
+  t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
+  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "", params = Aeson (object []), createdAt = now } :: TargetVersion)
+  r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+  o  <- add (Output { id = OutputId 0, run = r.id, example = e.id, response = Nothing, text = Just "ans", error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
+  g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "pg", kind = "pointed", createdAt = now } :: Grader)
+  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  _  <- add (CriterionLabel { id = CriterionLabelId 0, output = o.id, criterion = "c-good", human = True,  source = Nothing, createdAt = now } :: CriterionLabel)
+  _  <- add (CriterionLabel { id = CriterionLabelId 0, output = o.id, criterion = "c-bad",  human = False, source = Nothing, createdAt = now } :: CriterionLabel)
+  pure (r.id, gv.id, o.id)
+
+storedSpec :: Pool -> UTCTime -> IO ()
+storedSpec pool now = do
+  (rid, gvid, oid) <- seedRun pool now
+  _ <- withSession pool $ add (Score
+        { id = ScoreId 0, output = oid, graderVersion = gvid
+        , value = Just 0.5, passed = Nothing
+        , detail = Just (Aeson (object
+            [ "criteria" .= [ object ["criterion" .= ("c-good"::Text), "met" .= True]
+                            , object ["criterion" .= ("c-bad"::Text),  "met" .= True] ] ]))
+        , error = Nothing, createdAt = now } :: Score)
+  rep <- metaReport pool 0 Stored rid gvid
+  case rep of
+    Left e  -> expect ("stored metaReport: " <> T.unpack e) False
+    Right r -> do
+      expect "stored: agreement 0.5 (c-bad judge≠human)" (r.agreement == 0.5)
+      expect "stored: measured 2"    (r.measured == 2)
+      expect "stored: no judge errors" (null r.judgeErrors)
+
+liveSpec :: Pool -> UTCTime -> IO ()
+liveSpec pool now = do
+  (rid, gvid, _) <- seedRun pool now
+  let judge :: CriterionJudge
+      judge _ _ _ = pure (Right (CriterionVerdict { met = True, explanation = "" }))
+  rep <- metaReport pool 0 (Live judge) rid gvid
+  case rep of
+    Left e  -> expect ("live metaReport: " <> T.unpack e) False
+    Right r -> do
+      expect "live: agreement 0.5 (always-met judge vs mixed labels)" (r.agreement == 0.5)
+      expect "live: measured 2"    (r.measured == 2)
 
 opts :: Bool -> MetaLoadOpts
 opts skip = MetaLoadOpts
