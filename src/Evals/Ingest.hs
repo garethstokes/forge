@@ -22,6 +22,7 @@ module Evals.Ingest
   , IngestResult (..)
   , renderIngestError
   , ingestFile
+  , nonEmptyKey
   ) where
 
 import Control.Monad (foldM)
