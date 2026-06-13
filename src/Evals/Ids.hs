@@ -14,3 +14,4 @@ newtype RunId            = RunId Int            deriving stock (Eq, Ord, Show) d
 newtype OutputId         = OutputId Int         deriving stock (Eq, Ord, Show) deriving newtype DbType
 newtype ScoreId          = ScoreId Int          deriving stock (Eq, Ord, Show) deriving newtype DbType
 newtype RunMetricId      = RunMetricId Int      deriving stock (Eq, Ord, Show) deriving newtype DbType
+newtype CriterionLabelId = CriterionLabelId Int deriving stock (Eq, Ord, Show) deriving newtype DbType

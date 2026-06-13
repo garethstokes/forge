@@ -9,6 +9,7 @@ module SchemaSpec (main) where
 import Control.Exception (SomeException, try)
 import Control.Monad (join, unless)
 import Data.Aeson (Value, object, (.=))
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
 import Manifest
@@ -68,7 +69,14 @@ main = withEphemeralDb $ \pool -> do
   expect "compare: run A scored c1=1.0, c2=0.0" (cRunA cmp == [("c1", Just 1.0), ("c2", Just 0.0)])
   expect "compare: run B scored c1=0.0, c2=1.0" (cRunB cmp == [("c1", Just 0.0), ("c2", Just 1.0)])
 
-  putStrLn "manifest-evals SchemaSpec: migrate + round-trip + cascade + restrict + aggregate + compare-runs OK"
+  -- Scenario E: a human gold verdict (CriterionLabel) round-trips against an Output.
+  lab <- expectCriterionLabel pool now
+  expect "label: exactly one row for the output" (lRows lab == 1)
+  expect "label: human verdict is True"          (lHuman lab == Just True)
+  expect "label: criterion is \"is accurate\""    (lCriterion lab == Just "is accurate")
+  expect "label: source is Just \"physician\""    (lSource lab == Just (Just "physician"))
+
+  putStrLn "manifest-evals SchemaSpec: migrate + round-trip + cascade + restrict + aggregate + compare-runs + criterion-label OK"
 
 -- Scenario A ------------------------------------------------------------------
 
@@ -256,3 +264,39 @@ expectCompareRuns pool now = withSession pool $ do
   rowsA <- scoresFor rA.id
   rowsB <- scoresFor rB.id
   pure CompareResult { cRunA = rowsA, cRunB = rowsB }
+
+-- Scenario E ------------------------------------------------------------------
+
+data CriterionLabelResult = CriterionLabelResult
+  { lRows      :: Int
+  , lHuman     :: Maybe Bool
+  , lCriterion :: Maybe Text
+  , lSource    :: Maybe (Maybe Text)
+  }
+
+-- Seed the minimal graph for an Output, attach a human gold verdict
+-- (CriterionLabel) against it, then read it back by output.
+expectCriterionLabel :: Pool -> UTCTime -> IO CriterionLabelResult
+expectCriterionLabel pool now = withSession pool $ do
+  d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "lbl", slug = "lbl", createdAt = now } :: Dataset)
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  ex <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "k1"
+                     , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+  t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
+  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+                           , params = Aeson (object []), createdAt = now } :: TargetVersion)
+  r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
+                 , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+  o  <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "candidate"
+                    , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+  _  <- add (CriterionLabel { id = CriterionLabelId 0, output = o.id
+                            , criterion = "is accurate", human = True
+                            , source = Just "physician", createdAt = now } :: CriterionLabel)
+  got <- selectWhere [ #output ==. o.id ]
+  let labels = got :: [CriterionLabel]
+  pure CriterionLabelResult
+    { lRows      = length labels
+    , lHuman     = fmap (.human) (listToMaybe labels)
+    , lCriterion = fmap (.criterion) (listToMaybe labels)
+    , lSource    = fmap (.source) (listToMaybe labels)
+    }

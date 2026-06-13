@@ -149,6 +149,16 @@ data RunMetricT f = RunMetric
   } deriving Generic
 type RunMetric = RunMetricT Identity
 
+data CriterionLabelT f = CriterionLabel
+  { id        :: Field f (Pk CriterionLabelId)
+  , output    :: Field f OutputId       -- the candidate response this labels
+  , criterion :: Field f Text           -- rubric criterion text (matches Score.detail's criterion)
+  , human     :: Field f Bool           -- the gold verdict (met / not-met)
+  , source    :: Field f (Maybe Text)   -- labeller / provenance
+  , createdAt :: Field f UTCTime
+  } deriving Generic
+type CriterionLabel = CriterionLabelT Identity
+
 -- Datasets: instances -------------------------------------------------------------
 
 instance Entity Dataset where
@@ -265,3 +275,7 @@ instance HasRelation Score "grader" where
 instance Entity RunMetric where
   tableMeta     = genericTableMeta @RunMetricT "run_metrics"
   notifyChanges = True
+
+instance Entity CriterionLabel where
+  tableMeta = genericTableMeta @CriterionLabelT "criterion_labels"
+  indexes   = [ unique [#output, #criterion] ]  -- leading column also serves output lookups
