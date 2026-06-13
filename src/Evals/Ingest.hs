@@ -53,11 +53,15 @@ data IngestRow = IngestRow
 
 type Format = Value -> Either Text IngestRow
 
+-- | Reject an empty/whitespace key; the parser fails with the given context.
+nonEmptyKey :: Text -> AT.Parser Text
+nonEmptyKey k = if T.null (T.strip k) then fail "key must be non-empty" else pure k
+
 -- | Generic format: a top-level @{key, input, expected?, meta?}@ object.
 generic :: Format
 generic = first T.pack . AT.parseEither
   (AT.withObject "row" $ \o ->
-     IngestRow <$> o AT..: "key" <*> o AT..: "input"
+     IngestRow <$> (o AT..: "key" >>= nonEmptyKey) <*> o AT..: "input"
                <*> o AT..:? "expected" <*> o AT..:? "meta")
 
 -- | HealthBench format: wrap the bare @prompt@ array as @{messages: ...}@,
@@ -66,7 +70,7 @@ generic = first T.pack . AT.parseEither
 healthbench :: Format
 healthbench = first T.pack . AT.parseEither
   (AT.withObject "hb" $ \o -> do
-     k       <- o AT..: "prompt_id"
+     k       <- o AT..: "prompt_id" >>= nonEmptyKey
      prompt  <- o AT..: "prompt"  :: AT.Parser Value
      rubrics <- o AT..: "rubrics" :: AT.Parser Value
      let metaKeys = ["example_tags", "ideal_completions_data", "canary"]
@@ -128,6 +132,8 @@ ingestFile pool opts = do
     Right (rows, nSkip) -> do
       now <- getCurrentTime
       withSession pool $ do
+        -- These reads are deliberately pre-transaction; the unique index is the
+        -- race backstop (single-user CLI).
         existing <- selectWhere [ #slug ==. opts.slug ]
         case (existing :: [Dataset]) of
           (d : _) -> do
@@ -141,6 +147,9 @@ ingestFile pool opts = do
                       then pure (Left (HasRuns opts.slug opts.version))
                       else withTransaction $ do
                         delete v
+                        flush         -- the queued DELETE must hit the DB before
+                                      -- writeVersion's eager INSERT, or the
+                                      -- unique (dataset, version) index throws
                         writeVersion d.id opts rows now nSkip
               [] -> withTransaction (writeVersion d.id opts rows now nSkip)
           [] -> withTransaction $ do
@@ -158,11 +167,12 @@ writeVersion did opts rows now nSkip = do
   pure (Right (IngestResult { ingested = length rows, skipped = nSkip }))
 
 adaptAll :: Format -> Bool -> [(Int, BS.ByteString)] -> Either IngestError ([IngestRow], Int)
-adaptAll fmt skip = foldM step ([], 0)
+adaptAll fmt skip numbered =
+  fmap (\(rows, n) -> (reverse rows, n)) (foldM step ([], 0) numbered)
   where
     step (acc, nSkip) (n, ln) =
       case eitherDecodeStrict ln >>= (first T.unpack . fmt) of
-        Right r -> Right (acc ++ [r], nSkip)
+        Right r -> Right (r : acc, nSkip)
         Left err
           | skip      -> Right (acc, nSkip + 1)
           | otherwise -> Left (BadLine n (T.pack err))

@@ -58,3 +58,11 @@ adapterSpec = do
     (isLeft (healthbench (object ["prompt_id" .= ("x" :: Text), "rubrics" .= rubricsArr])))
   expect "healthbench missing rubrics -> Left"
     (isLeft (healthbench (object ["prompt_id" .= ("x" :: Text), "prompt" .= promptArr])))
+  expect "generic empty key -> Left"
+    (isLeft (generic (object ["key" .= ("" :: Text), "input" .= toJSON ("i" :: Text)])))
+  expect "generic whitespace key -> Left"
+    (isLeft (generic (object ["key" .= ("  " :: Text), "input" .= toJSON ("i" :: Text)])))
+  expect "healthbench empty prompt_id -> Left"
+    (isLeft (healthbench (object [ "prompt_id" .= ("" :: Text)
+                                 , "prompt" .= ([object ["role" .= ("user"::Text), "content" .= ("q"::Text)]] :: [Value])
+                                 , "rubrics" .= ([] :: [Value])])))
