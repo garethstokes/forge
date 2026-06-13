@@ -169,7 +169,8 @@ checked
   str
 ```
 
-The caller decides what to do with partial results. `allPassed :: Checked a ->
+The value always decodes in full; the caller decides what to do based on the
+check results. `allPassed :: Checked a ->
 Bool` tests every check at once; branch on it to accept or reject the value.
 `Checked` is transparent on the wire: the codec encodes and decodes the inner
 value as if the wrapper were not there.
