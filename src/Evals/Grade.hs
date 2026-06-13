@@ -55,6 +55,7 @@ import qualified Data.Text.Encoding as TE
 import Data.Time (getCurrentTime)
 
 import qualified Crucible.Eval as Eval
+import qualified Crucible.Eval.Calibrate as Cal
 import Crucible.LLM (Message (..), Role (..))
 import Manifest
 import Manifest.Postgres (Pool)
@@ -393,13 +394,13 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
         -- runQuery encodes the projection as right-nested pairs; flatten to the aggregator's 4-tuple.
         let unwrap (mv, (mp, (md, mm))) =
               (mv, mp, fmap (\(Aeson x) -> x) md, fmap (\(Aeson x) -> x) mm)
-            dms = dimensionalMetrics
+            dms = dimensionalMetrics 0
               (map unwrap (rows :: [(Maybe Double, (Maybe Bool, (Maybe (Aeson Value), Maybe (Aeson Value))))]))
         deleteWhere ([ #run ==. runId, #graderVersion ==. gv.id ] :: [Cond RunMetric])
         mapM_ (\dm -> add (RunMetric
           { id = RunMetricId 0, run = runId, graderVersion = gv.id
           , mean = dm.mean, passRate = dm.passRate, count = dm.count
-          , tag = dm.tag, computedAt = now } :: RunMetric)) dms
+          , tag = dm.tag, stderr = Just dm.stderr, computedAt = now } :: RunMetric)) dms
 
     -- Scores for one grader version scoped to this run: join through Output
     -- so we only fetch rows belonging to this run, not all runs. Returns
@@ -426,6 +427,7 @@ data DimMetric = DimMetric
   , mean     :: Double
   , passRate :: Maybe Double
   , count    :: Int
+  , stderr   :: Double
   } deriving (Eq, Show)
 
 -- | Clip a mean to [0,1] (HealthBench's aggregate clip).
@@ -461,21 +463,23 @@ exampleThemes v = maybe [] id (AT.parseMaybe (AT.withObject "meta" (AT..: "examp
 -- per-theme breakdown (the example's value bucketed by @example_tags@), and a
 -- per-axis breakdown (the pointed detail re-scored per criterion tag). Every
 -- mean is clipped to [0,1]; tag-row passRate is Nothing (score-derived).
-dimensionalMetrics :: [(Maybe Double, Maybe Bool, Maybe Value, Maybe Value)] -> [DimMetric]
-dimensionalMetrics rows = overall : themeMetrics ++ axisMetrics
+dimensionalMetrics :: Int -> [(Maybe Double, Maybe Bool, Maybe Value, Maybe Value)] -> [DimMetric]
+dimensionalMetrics seed rows = overall : themeMetrics ++ axisMetrics
   where
     graded = [ (v, p, d, m) | (Just v, p, d, m) <- rows ]
     vals   = [ v | (v, _, _, _) <- graded ]
     judged = [ b | (_, Just b, _, _) <- graded ]
+    stderrOf = Cal.bootstrapStdErr seed 1000
     overall = DimMetric
       { tag = Nothing
       , mean = clip01 (if null vals then 0 else avg vals)
       , passRate = if null judged then Nothing
                    else Just (fromIntegral (length (filter id judged)) / fromIntegral (length judged))
-      , count = length graded }
+      , count = length graded
+      , stderr = stderrOf vals }
     themePairs = [ (t, v)  | (v, _, _, Just m) <- graded, t <- exampleThemes m ]
     axisPairs  = [ (t, sc) | (_, _, Just d, _) <- graded, (t, sc) <- axisScoresFromDetail d ]
-    themeMetrics = [ DimMetric (Just t) (clip01 (avg ss)) Nothing (length ss) | (t, ss) <- grouped themePairs ]
-    axisMetrics  = [ DimMetric (Just t) (clip01 (avg ss)) Nothing (length ss) | (t, ss) <- grouped axisPairs ]
+    themeMetrics = [ DimMetric (Just t) (clip01 (avg ss)) Nothing (length ss) (stderrOf ss) | (t, ss) <- grouped themePairs ]
+    axisMetrics  = [ DimMetric (Just t) (clip01 (avg ss)) Nothing (length ss) (stderrOf ss) | (t, ss) <- grouped axisPairs ]
     avg xs = sum xs / fromIntegral (length xs)
     grouped = Map.toList . Map.fromListWith (++) . map (\(k, x) -> (k, [x]))

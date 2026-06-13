@@ -312,9 +312,9 @@ serverSpec = withEphemeralDb $ \pool -> do
     gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
     _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True, detail = Just (Aeson (object ["rationale" .= ("exact match" :: Text)])), error = Nothing, createdAt = now } :: Score)
     -- o2 has no score (errored output)
-    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now, tag = Nothing } :: RunMetric)
+    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
     -- A per-tag breakdown row the dashboard must EXCLUDE (only the overall row is shown).
-    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Nothing, count = 1, computedAt = now, tag = Just "axis:accuracy" } :: RunMetric)
+    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Nothing, count = 1, computedAt = now, tag = Just "axis:accuracy", stderr = Nothing } :: RunMetric)
     pure (r.id, v.id)
   mgr <- newManager defaultManagerSettings
   hub <- newEventHub
@@ -421,7 +421,7 @@ compareSpec = withEphemeralDb $ \pool -> do
     _   <- add (Score { id = ScoreId 0, output = oA2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
     -- h scores ONLY oA1 (run A, c1); must not affect grader choice.
     _   <- add (Score { id = ScoreId 0, output = oA1.id, graderVersion = hv.id, value = Just 0.25, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
-    _   <- add (RunMetric { id = RunMetricId 0, run = rA.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing } :: RunMetric)
+    _   <- add (RunMetric { id = RunMetricId 0, run = rA.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
     -- Run B (same dataset version, reversed scores; c3 and c0 have no output)
     rB  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
     oB1 <- add (Output { id = OutputId 0, run = rB.id, example = c1.id, response = Nothing, text = Just "b1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
@@ -429,7 +429,7 @@ compareSpec = withEphemeralDb $ \pool -> do
     -- c3 and c0 intentionally have NO output in run B.
     _   <- add (Score { id = ScoreId 0, output = oB1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
     _   <- add (Score { id = ScoreId 0, output = oB2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
-    _   <- add (RunMetric { id = RunMetricId 0, run = rB.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing } :: RunMetric)
+    _   <- add (RunMetric { id = RunMetricId 0, run = rB.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
     -- Run C: different dataset version (separate dataset, one example, no scores)
     d2 <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "other", slug = "other", createdAt = now } :: Dataset)
     v2 <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d2.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)

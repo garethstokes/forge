@@ -146,6 +146,7 @@ data RunMetricT f = RunMetric
   , count         :: Field f Int
   , computedAt    :: Field f UTCTime
   , tag           :: Field f (Maybe Text)   -- Nothing = overall; Just t = a per-tag breakdown
+  , stderr        :: Field f (Maybe Double)  -- bootstrap standard error of the metric's mean
   } deriving Generic
 type RunMetric = RunMetricT Identity
 

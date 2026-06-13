@@ -618,7 +618,7 @@ dimSpec = do
   expect "exampleThemes absent -> []" (exampleThemes (object ["other" .= (1::Int)]) == [])
   let row1 = (Just 0.4, Nothing, Just detail, Just (object ["example_tags" .= (["theme:x"]::[Text])]))
       row2 = (Just 0.8, Nothing, Just multi,  Just (object ["example_tags" .= (["theme:x"]::[Text])]))
-      ms = dimensionalMetrics [row1, row2]
+      ms = dimensionalMetrics 0 [row1, row2]
   expect "dim overall mean = clip01 avg(0.4,0.8) = 0.6"
     (case [ m | m <- ms, m.tag == Nothing ] of [m] -> abs (m.mean - 0.6) < 1e-9 && m.count == 2 && m.passRate == Nothing; _ -> False)
   expect "dim theme:x mean = 0.6, count 2"
@@ -629,7 +629,13 @@ dimSpec = do
     (case [ m | m <- ms, m.tag == Just "axis:completeness" ] of [m] -> m.mean == 0.0 && m.count == 1; _ -> False)
   let neg = (Just (-0.5), Nothing, Nothing, Nothing)
   expect "dim overall clips negative to 0"
-    (case [ m | m <- dimensionalMetrics [neg], m.tag == Nothing ] of [m] -> m.mean == 0 && m.count == 1; _ -> False)
+    (case [ m | m <- dimensionalMetrics 0 [neg], m.tag == Nothing ] of [m] -> m.mean == 0 && m.count == 1; _ -> False)
+  let same = [ (Just 0.5, Nothing, Nothing, Nothing), (Just 0.5, Nothing, Nothing, Nothing) ]
+  expect "dim overall stderr 0 on identical values"
+    (case [ m | m <- dimensionalMetrics 0 same, m.tag == Nothing ] of [m] -> m.stderr == 0; _ -> False)
+  let spread = [ (Just 0.0, Nothing, Nothing, Nothing), (Just 1.0, Nothing, Nothing, Nothing), (Just 0.5, Nothing, Nothing, Nothing) ]
+  expect "dim overall stderr > 0 on spread"
+    (case [ m | m <- dimensionalMetrics 0 spread, m.tag == Nothing ] of [m] -> m.stderr > 0; _ -> False)
 
 -- Dimensional engine: one tagged example with two axes + one theme drives
 -- recompute to emit overall + per-axis + per-theme RunMetric rows.
@@ -668,3 +674,5 @@ dimEngineSpec pool now = do
   expect "dim engine: theme:x 0.4 count 1"
     (case row (Just "theme:x") of [(mn, c)] -> near mn 0.4 && c == 1; _ -> False)
   expect "dim engine: exactly 4 metric rows" (length ms == 4)
+  expect "dim engine: overall stderr persisted (single output -> 0)"
+    (case [ m.stderr | m <- ms, m.tag == Nothing ] of [s] -> s == Just 0.0; _ -> False)
