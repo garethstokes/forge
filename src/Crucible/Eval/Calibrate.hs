@@ -123,7 +123,7 @@ calibrateWith seed nExamples n render rubric labelled = do
       chosenIdx = [i | (i, _) <- chosen]
       exs = [JudgeExample (render a) h Nothing | (_, (_, a, h)) <- chosen]
       holdout = [t | (i, t) <- indexed, i `notElem` chosenIdx]
-      opts = JudgeOpts { votes = n, examples = exs }
+      opts = defaultJudgeOpts { votes = n, examples = exs }
   outcomes <- mapM (\(nm, a, h) -> (nm, h,) <$> vote False opts rubric (render a)) holdout
   pure (reportFrom seed outcomes (length exs) (length holdout))
 
