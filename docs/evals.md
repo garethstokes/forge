@@ -353,8 +353,8 @@ tally :: [Either JudgeError Verdict] -> VoteOutcome
 ```
 
 It applies the same majority and dissent logic as `vote`: Pass tallies as yes,
-Fail as no, CannotAssess as an abstain (consumes a vote slot without casting a
-vote), and a JudgeError as an excluded sample. A tie resolves to fail. With no
+Fail as no, CannotAssess as an abstain (counted, but casts neither a yes nor a
+no), and a JudgeError as an excluded sample. A tie resolves to fail. With no
 yes/no votes the outcome is `AllAbstained` if any abstain was seen, otherwise
 `AllErrored`.
 
