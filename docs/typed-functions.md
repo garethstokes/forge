@@ -159,9 +159,8 @@ buildClassifier categories =
 
 The injected schema is a string enum of exactly those categories, so the
 contract the model sees follows the data: swap the list and the schema follows,
-with no recompile. This is the runtime equivalent of a generated type. Object
-field lists are values in the same way, so a schema can be assembled from runtime
-information wherever the shape is known when the codec is built.
+with no recompile. This is the runtime equivalent of a generated type, and
+`enum` over a runtime list is the common case this pattern targets.
 
 ### Constraints and refinements
 
