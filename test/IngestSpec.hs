@@ -7,6 +7,7 @@
 module IngestSpec (main) where
 
 import Control.Monad (unless)
+import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (Value, decode, encode, object, toJSON, (.=))
 import Data.Either (isLeft)
 import Data.List (sort)
@@ -175,8 +176,13 @@ driverSpec = withEphemeralDb $ \pool -> do
   now <- getCurrentTime
   dvId <- withSession pool $ do
     ds <- selectWhere [ #slug ==. ("ds4" :: Text) ]
-    vs <- selectWhere [ #dataset ==. (head (ds :: [Dataset])).id ]
-    pure ((head (vs :: [DatasetVersion])).id)
+    case (ds :: [Dataset]) of
+      (d : _) -> do
+        vs <- selectWhere [ #dataset ==. d.id ]
+        case (vs :: [DatasetVersion]) of
+          (v : _) -> pure v.id
+          []      -> liftIO (ioError (userError "scenario 5 seed missing"))
+      [] -> liftIO (ioError (userError "scenario 5 seed missing"))
   _ <- withSession pool $ do
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
     tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m"

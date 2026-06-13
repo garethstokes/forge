@@ -19,9 +19,12 @@ effectful capabilities, Anthropic interpreters, skills/tools).
   `Example.expected` as `[{"criterion","points","tags"}]`, each judged with
   full conversation context, scored sum(met points)/sum(positive points)
   unclipped, with grader config carrying judge knobs only.
-- `app/` — the `manifest-evals` CLI: `migrate`, `run <runId>`, and
-  `score <runId> <graderVersionId>...` (env: `MANIFEST_DATABASE_URL`,
-  `ANTHROPIC_API_KEY`, `EVALS_CONCURRENCY`).
+- `app/` — the `manifest-evals` CLI: `migrate`, `run <runId>`,
+  `score <runId> <graderVersionId>...`, and `ingest <file.jsonl>` (env:
+  `MANIFEST_DATABASE_URL`, `ANTHROPIC_API_KEY`, `EVALS_CONCURRENCY`).
+- `src/Evals/Ingest.hs` — the JSONL dataset loader: per-format row adapters
+  (`generic`, `healthbench`) feeding `ingestFile` (refuse-by-default driver
+  with `--force`/`--limit`/`--skip-bad`).
 - `evals-api/` — the JSON wire DTO package: request/response types shared
   between the native warp server and the wasm Miso SPA.
 - `evals-ui/` — the Miso SPA (wasm); also its own zinc workspace for wasm
@@ -45,6 +48,37 @@ nix develop -c zinc test
 
 Both `manifest` and `crucible` are git-pinned in `zinc.toml` together with
 their transitive closures (~111 packages under one lock).
+
+## Ingesting datasets
+
+Load a JSONL file as a dataset version:
+
+```bash
+manifest-evals ingest <file.jsonl> --name N --slug S \
+  [--version N] [--format generic|healthbench] [--limit N] [--skip-bad] [--force]
+```
+
+The `generic` format (default) expects one object per line shaped
+`{key, input, expected?, meta?}`. `input` must be the `{"messages":[...]}`
+conversation shape that `decodeInput` expects, or a JSON string for a single
+user turn. `expected` and `meta` are passed through verbatim.
+
+The `healthbench` format adapts HealthBench rows with three moves: it wraps the
+bare `prompt` array into the `{"messages":[...]}` conversation shape, passes
+`rubrics` straight through to `expected` (consumed by the `pointed` grader), and
+folds `example_tags`/`canary`/`ideal_completions_data` into `meta`. `prompt_id`
+becomes the example key.
+
+Ingestion refuses by default if the dataset version already exists; `--force`
+replaces it, but is blocked if any run references that version. `--limit N`
+ingests only the first `N` rows; `--skip-bad` reports the count of malformed
+lines skipped instead of aborting on the first one (without it, the first bad
+line fails the whole ingest).
+
+```bash
+manifest-evals ingest healthbench_hard.jsonl \
+  --name "HealthBench Hard" --slug healthbench-hard --format healthbench
+```
 
 ## Dashboard
 
