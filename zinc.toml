@@ -41,8 +41,9 @@ rev = "0e414c29f77fe8668daefdcbbb5af56576ff1267"
 repo = "https://github.com/garethstokes/crucible.git"
 # Pushed remote master: typed Tool overhaul, eval rubric upgrades (Score votes/dissent,
 # Checklist, judgeN, calibrate), prompt composition + withReasoning, groundingCheck,
-# Maybe fields optional in generic schemas.
-rev = "6229382b3e3252cd7a5faaadd46f316fff746823"
+# Maybe fields optional in generic schemas. Plus reportFromVerdicts (verdict-level
+# calibration report) and the new judge API (JudgeOpts, AllAbstained).
+rev = "ea618868587c68084dc2bf80ae6410c11c8f0641"
 
 # --- crucible's transitive dependency stanzas (copied verbatim) ---
 

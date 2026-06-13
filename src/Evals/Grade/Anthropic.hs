@@ -21,6 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful (runEff)
 
+import qualified Crucible.Embed as Embed
 import qualified Crucible.Eval as Eval
 import qualified Crucible.Eval.Judge as Judge
 import Crucible.LLM.Anthropic (AnthropicConfig, AnthropicError)
@@ -44,7 +45,9 @@ gradeCfg key cfgV = cfgFromParams key (modelFrom cfgV) cfgV
 liveGradeRunner :: Text -> GradeRunner
 liveGradeRunner key gv expectation rendered =
   try (runEff (Anthropic.run (gradeCfg key cfgV)
-                 (Eval.scoreN (votesFrom cfgV) id expectation rendered))) >>= \case
+      -- Embed.none is safe: rubric/checklist expectations never embed; only a
+      -- SimilarTo expectation would, and no grader kind here produces one.
+                 (Embed.none (Eval.scoreN (votesFrom cfgV) id expectation rendered)))) >>= \case
     Right s                    -> pure (Right s)
     Left (e :: AnthropicError) -> pure (Left (LlmError (T.pack (show e))))
   where Aeson cfgV = gv.config
@@ -56,11 +59,14 @@ liveGradeRunner key gv expectation rendered =
 liveCriterionJudge :: Text -> CriterionJudge
 liveCriterionJudge key gv transcriptTxt c =
   try (runEff (Anthropic.run (gradeCfg key cfgV)
-                 (Judge.vote True (votesFrom cfgV) (renderCriterion c) transcriptTxt))) >>= \case
+                 (Judge.vote True (Judge.defaultJudgeOpts { Judge.votes = votesFrom cfgV })
+                             (renderCriterion c) transcriptTxt))) >>= \case
     Right (Judge.Decided p w _ _ _) ->
       pure (Right CriterionVerdict { met = p, explanation = w })
     Right (Judge.AllErrored m) ->
       pure (Left (LlmError ("judge error: " <> m)))
+    Right (Judge.AllAbstained m) ->
+      pure (Left (LlmError ("judge abstained: " <> m)))
     Left (e :: AnthropicError) ->
       pure (Left (LlmError (T.pack (show e))))
   where Aeson cfgV = gv.config

@@ -182,8 +182,8 @@ depends = ["data-default-class"]
 [[locked]]
 name = "crucible"
 repo = "https://github.com/garethstokes/crucible.git"
-rev = "6229382b3e3252cd7a5faaadd46f316fff746823"
-sha256 = "sha256:9fb76a287fc52929633f08c2ee1e6c56b8c9b6daa1fc7fc32f18a082d96321bb"
+rev = "ea618868587c68084dc2bf80ae6410c11c8f0641"
+sha256 = "sha256:092519d205edf3d7c46a14d5301d652f7447782f40027d328fe8d09de6a2a37c"
 depends = ["aeson", "autodocodec", "autodocodec-schema", "effectful", "effectful-core", "hpke", "http-client-tls", "mlkem", "monad-control", "neat-interpolation", "ram", "retry", "strict-mutable-base"]
 
 [[locked]]
@@ -302,8 +302,9 @@ depends = ["async", "effectful-core", "strict-mutable-base", "unliftio"]
 
 [[locked]]
 name = "effectful-core"
-vendored = "2.6.1.0"
-sha256 = "sha256:340eadcad483fabcd73708b340e45f8a713f6d4591a781afb916f473bb000a5c"
+repo = "https://github.com/haskell-effectful/effectful.git#effectful-core"
+rev = "70f2b865e2f35cfd9f2e901fe5d2a9b1014c5e34"
+sha256 = "sha256:42a84deaf3a6432732cd4eca03846f277ecb6ea9b367558815ce834b4de57da7"
 depends = ["monad-control", "primitive", "strict-mutable-base", "transformers-base", "unliftio-core"]
 
 [[locked]]
@@ -437,8 +438,9 @@ depends = ["hashable", "split", "unordered-containers", "vector", "vector-algori
 
 [[locked]]
 name = "mtl-compat"
-vendored = "0.2.2"
-sha256 = "sha256:adc5872e68c23c0d147b0476764798a9088255dd3a2f3b3808e77189aa5e514f"
+repo = "https://github.com/haskell-compat/mtl-compat"
+rev = "60c10ad7b99b4660dcf35d948b1577f6c6eef2b8"
+sha256 = "sha256:754bdbf81899d29cc47241940d4fcfd8cfbefa9cd8451001bb0a097145f0da4d"
 depends = []
 
 [[locked]]
@@ -449,9 +451,8 @@ depends = ["megaparsec"]
 
 [[locked]]
 name = "network"
-repo = "https://github.com/haskell/network.git"
-rev = "86f33ca2d31221c18afc787da4d6ea718616d261"
-sha256 = "sha256:c12b93c50cf8a81620e0d7521608e29aec363808c1436d6c2c9e048a007e8a8e"
+vendored = "3.2.8.0"
+sha256 = "sha256:6b61d17403a55cf8df5ae5080e9a23a74d5a53f97730029ddfd6e387a4591fe8"
 depends = []
 
 [[locked]]
@@ -474,8 +475,8 @@ depends = ["th-compat"]
 
 [[locked]]
 name = "os-string"
-vendored = "2.0.10"
-sha256 = "sha256:b5fbc1fd0f4a06e2f561c369b13a44d243fb8659c84dae2034ab9cc6ff4b76ca"
+vendored = "2.0.11"
+sha256 = "sha256:681f0919903760def5712dc94134c9a1245e8907e8fe0ae0aef4e5a06851b213"
 depends = []
 
 [[locked]]
