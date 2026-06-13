@@ -51,7 +51,11 @@ main = do
     , mean = 0.85
     , passRate = Just 0.9
     , count = 100
+    , stderr = Just 0.02
+    , breakdowns = [ TagMetricDto { tag = "theme:x", mean = 0.7, stderr = Nothing, count = 8 } ]
     }
+  rt "TagMetricDto" TagMetricDto
+    { tag = "axis:accuracy", mean = 0.8, stderr = Just 0.03, count = 20 }
   rt "ScoreDto" ScoreDto
     { graderName = "exact-match"
     , graderVersion = 1
@@ -114,6 +118,8 @@ main = do
             , mean = 0.85
             , passRate = Just 0.9
             , count = 100
+            , stderr = Just 0.02
+            , breakdowns = [ TagMetricDto { tag = "theme:x", mean = 0.7, stderr = Nothing, count = 8 } ]
             }
         ]
     }
@@ -264,6 +270,9 @@ main = do
               , mean = 0.85
               , passRate = Just 0.9
               , count = 100
+              , stderr = Just 0.02
+              , breakdowns =
+                  [ TagMetricDto { tag = "theme:x", mean = 0.7, stderr = Nothing, count = 8 } ]
               }
         )
         :: Maybe Value
@@ -275,6 +284,15 @@ main = do
             , "mean" .= (0.85 :: Double)
             , "passRate" .= (0.9 :: Double)
             , "count" .= (100 :: Int)
+            , "stderr" .= (0.02 :: Double)
+            , "breakdowns"
+                .= [ object
+                       [ "tag" .= ("theme:x" :: Text)
+                       , "mean" .= (0.7 :: Double)
+                       , "stderr" .= Null
+                       , "count" .= (8 :: Int)
+                       ]
+                   ]
             ]
         )
   serverSpec
