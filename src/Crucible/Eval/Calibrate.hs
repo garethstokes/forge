@@ -16,6 +16,7 @@
 module Crucible.Eval.Calibrate
   ( CalibrationReport (..)
   , bootstrapKappa
+  , reportFromVerdicts
   , calibrateWith
   , calibrate
   , renderCalibration
@@ -102,6 +103,31 @@ reportFrom seed outcomes exampleCount_ measured_ =
     hFails = [(p') | (_, False, p', _, _) <- judged]
     fRec   = ratio (length (filter not hFails)) (length hFails) 1
     cont   = [nm | (nm, _, _, y, f) <- judged, y > 0, f > 0]
+    ratio :: Int -> Int -> Double -> Double
+    ratio _ 0 dflt = dflt
+    ratio num den _ = fromIntegral num / fromIntegral den
+
+-- | Build a calibration report from externally-acquired verdicts: each case is
+-- (name, human, Just judge) or (name, human, Nothing) when the judge errored or
+-- was unavailable. For callers that judge OUTSIDE crucible (a transcript-aware
+-- grader, or stored verdicts read back from a database). Tally-derived fields
+-- ('contested', 'abstained') are empty — a plain verdict carries no vote tally;
+-- 'exampleCount' is 0; 'measured' counts the non-errored cases.
+reportFromVerdicts :: Int -> [(Text, Bool, Maybe Bool)] -> CalibrationReport
+reportFromVerdicts seed cases =
+  CalibrationReport po kap fPrec fRec [] errs 0 (length judged) ci []
+  where
+    errs   = [nm | (nm, _, Nothing) <- cases]
+    judged = [(h, j) | (_, h, Just j) <- cases]
+    total  = length judged
+    agree  = length [() | (h, j) <- judged, h == j]
+    po     = ratio agree total 0
+    kap    = kappaOf judged
+    ci     = bootstrapKappa seed bootstrapResamples judged
+    jFails = [h | (h, False) <- judged]   -- judge said not-met
+    fPrec  = ratio (length (filter not jFails)) (length jFails) 1
+    hFails = [j | (False, j) <- judged]   -- human said not-met
+    fRec   = ratio (length (filter not hFails)) (length hFails) 1
     ratio :: Int -> Int -> Double -> Double
     ratio _ 0 dflt = dflt
     ratio num den _ = fromIntegral num / fromIntegral den

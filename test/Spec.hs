@@ -37,7 +37,7 @@ import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penal
 import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (VerdictKind(..), Verdict(..), verdictCodec, AbstainPolicy(..), JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, VoteOutcome(..), vote, balanceExamples, judgePrompt, ratePrompt)
-import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa)
+import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa, reportFromVerdicts)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
 import Crucible.LLM.OpenAI (OpenAIError(..), defaultOpenAIConfig)
@@ -1268,6 +1268,34 @@ main = runChecks
            withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0) []
        in ( T.isInfixOf "examples fed: 2" (renderCalibration withEx)
           , T.isInfixOf "examples fed" (renderCalibration withoutEx)))
+  , check "reportFromVerdicts: perfect agreement, kappa 1, measured 2"
+      (1.0, 1.0, 2)
+      (let r = reportFromVerdicts 0 [("a", True, Just True), ("b", False, Just False)]
+       in (r.agreement, r.kappa, r.measured))
+  , check "reportFromVerdicts: all-same class is degenerate kappa 0"
+      (1.0, 0.0)
+      (let r = reportFromVerdicts 0 [("a", True, Just True), ("b", True, Just True)]
+       in (r.agreement, r.kappa))
+  , check "reportFromVerdicts: errored case excluded from stats, listed"
+      (1.0, 1, ["b"])
+      (let r = reportFromVerdicts 0 [("a", True, Just True), ("b", False, Nothing)]
+       in (r.agreement, r.measured, r.judgeErrors))
+  , check "reportFromVerdicts: fail precision/recall on mixed verdicts"
+      (0.5, 0.5, 0.5)
+      (let r = reportFromVerdicts 0
+                 [ ("a", True,  Just True),  ("b", False, Just False)
+                 , ("c", True,  Just False), ("d", False, Just True) ]
+       in (r.agreement, r.failPrecision, r.failRecall))
+  , check "reportFromVerdicts: empty input is the degenerate report"
+      (CalibrationReport 0 0 1.0 1.0 [] [] 0 0 (0, 0) [])
+      (reportFromVerdicts 0 [])
+  , check "reportFromVerdicts: CI brackets the point estimate"
+      True
+      (let r = reportFromVerdicts 7
+                 [ ("a", True, Just True), ("b", True, Just False), ("c", False, Just False)
+                 , ("d", False, Just True), ("e", True, Just True), ("f", False, Just False) ]
+           (lo, hi) = r.kappaCI
+       in lo <= r.kappa && r.kappa <= hi)
   -- crucible-mo3: derived claim grounding
   , check "groundingCheck: all claims supported -> 1.0 with lines in order"
       (1.0, True)
