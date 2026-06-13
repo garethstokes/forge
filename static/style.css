@@ -93,6 +93,20 @@ td.key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; 
 .chip.fail { background: var(--fail-bg); color: var(--fail-fg); }
 .chip.muted { background: var(--muted-bg); color: var(--muted); }
 .chip.metric { background: #e8eefb; color: #1e3a8a; }
+.chip.theme   { background:#fdf0e3; color:#9a5b13; }
+.chip.axis    { background:#e3f5f4; color:#0f6e69; }
+.chip.cluster { background:#efe7fb; color:#5b21b6; }
+.metric-block { display:inline-block; vertical-align:top; }
+.brk { margin:6px 0 2px; padding:7px 0 2px; border-top:1px dashed var(--line); max-width:440px; }
+.grp-label { font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:5px 0 2px; }
+.brk .row { display:grid; grid-template-columns:120px 1fr 96px 30px; align-items:center; gap:8px; padding:1px 0; }
+.brk .bar { height:7px; background:var(--muted-bg); border-radius:4px; overflow:hidden; }
+.brk .bar > span { display:block; height:100%; background:var(--accent); }
+.brk .bar.theme > span { background:#d08023; }
+.brk .bar.axis > span { background:#13a59c; }
+.brk .bar.cluster > span { background:#7c3aed; }
+.brk .num { font-variant-numeric:tabular-nums; text-align:right; font-size:12px; }
+.brk .n { color:var(--muted); text-align:right; font-size:12px; }
 
 /* output cells: CSS truncation, click-to-expand */
 td.out { max-width: 420px; cursor: pointer; }

@@ -8,10 +8,12 @@ module Evals.Ui.View (viewModel) where
 import Data.List (nub)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import Numeric (showFFloat)
 
-import Miso (View, text)
+import Miso (Attribute, View, text)
+import Miso.CSS (styleInline_)
 import Miso.Event.Types (Options (..))
 import Miso.Html
 import qualified Miso.Html.Property as P
@@ -142,12 +144,12 @@ detailView m _ =
     div_
       [ P.class_ "detail" ]
       [ backLink
-      , runHeader d.run
+      , runHeader (_expandedM m) d.run
       , outputsTable (_expandedM m) d.outputs
       ]
 
-runHeader :: RunSummaryDto -> View Model Action
-runHeader r =
+runHeader :: [MisoString] -> RunSummaryDto -> View Model Action
+runHeader expanded r =
   div_
     [ P.class_ "run-header" ]
     [ h2_ [] [ text ("run #" <> msShow r.runId <> " — " <> ms r.datasetName <> " · v" <> msShow r.datasetVersion) ]
@@ -157,7 +159,7 @@ runHeader r =
         , statusChip r.status
         , span_ [] [ text ("started " <> fmtMaybeTime r.startedAt <> " · finished " <> fmtMaybeTime r.finishedAt) ]
         ]
-    , div_ [ P.class_ "metrics" ] (map metricChip r.metrics)
+    , div_ [ P.class_ "metrics" ] (map (metricChipDetail expanded r.runId) r.metrics)
     ]
 
 outputsTable :: [MisoString] -> [OutputRowDto] -> View Model Action
@@ -291,12 +293,67 @@ statusChip s = span_ [ P.class_ ("chip " <> cls) ] [ text (ms s) ]
       _ -> "muted"
 
 metricChip :: MetricDto -> View Model Action
-metricChip mc =
-  span_
-    [ P.class_ "chip metric" ]
-    [ text (ms mc.graderName <> " v" <> msShow mc.graderVersion <> " · μ " <> fmtD mc.mean <> passTxt) ]
+metricChip mc = span_ [ P.class_ "chip metric" ] [ text (chipText mc) ]
+
+chipText :: MetricDto -> MisoString
+chipText mc = ms mc.graderName <> " v" <> msShow mc.graderVersion
+            <> " · μ " <> fmtD mc.mean <> ciTxt mc.stderr <> passTxt mc.passRate
+
+-- | 95% CI half-width (1.96·stderr), blank when no stderr.
+ciTxt :: Maybe Double -> MisoString
+ciTxt = maybe "" (\s -> " ±" <> fmtD (1.96 * s))
+
+passTxt :: Maybe Double -> MisoString
+passTxt = maybe "" (\p -> " · pass " <> msShow (round (p * 100) :: Int) <> "%")
+
+-- | A grader chip for the run-detail header: clickable (toggling an expand key)
+-- when it has breakdowns, revealing a grouped bar panel below.
+metricChipDetail :: [MisoString] -> Int -> MetricDto -> View Model Action
+metricChipDetail expanded rid mc =
+  div_ [ P.class_ "metric-block" ]
+    ( span_ chipAttrs [ text (chipText mc <> caret) ]
+      : [ breakdownPanel mc | hasBrk && isOpen ] )
   where
-    passTxt = maybe "" (\p -> " · pass " <> msShow (round (p * 100) :: Int) <> "%") mc.passRate
+    hasBrk  = not (null mc.breakdowns)
+    key     = "m:" <> msShow rid <> ":" <> ms mc.graderName <> "v" <> msShow mc.graderVersion
+    isOpen  = key `elem` expanded
+    caret   = if hasBrk then (if isOpen then " ▾" else " ▸") else ""
+    chipAttrs = P.class_ "chip metric" : [ onClick (ToggleExpand key) | hasBrk ]
+
+-- | The grouped per-tag breakdown: namespace label (theme/axis/cluster, then
+-- any other), then a bar row per tag.
+breakdownPanel :: MetricDto -> View Model Action
+breakdownPanel mc = div_ [ P.class_ "brk" ] (concatMap grp nsOrder)
+  where
+    nss     = nub (map (namespace . (.tag)) mc.breakdowns)
+    known   = filter (`elem` nss) ["theme", "axis", "cluster"]
+    nsOrder = known <> filter (`notElem` ["theme", "axis", "cluster"]) nss
+    grp n   = div_ [ P.class_ "grp-label" ] [ text (ms n) ]
+            : [ brkRow n b | b <- mc.breakdowns, namespace b.tag == n ]
+    brkRow n b =
+      div_ [ P.class_ "row" ]
+        [ span_ [ P.class_ ("chip " <> ms n) ] [ text (ms (labelOf b.tag)) ]
+        , div_ [ P.class_ ("bar " <> ms n) ] [ span_ [ widthStyle b.mean ] [] ]
+        , span_ [ P.class_ "num" ] [ text (fmtD b.mean <> ciTxt b.stderr) ]
+        , span_ [ P.class_ "n" ] [ text (msShow b.count) ]
+        ]
+
+-- | "theme:cardiology" -> "theme"; no colon -> "".
+namespace :: Text -> Text
+namespace = T.takeWhile (/= ':')
+
+-- | "theme:cardiology" -> "cardiology"; no colon -> the whole tag.
+labelOf :: Text -> Text
+labelOf t = case T.dropWhile (/= ':') t of
+  "" -> t
+  d  -> T.drop 1 d
+
+-- | Inline @width:NN%@ style clamped to [0,100] for a bar fill.
+widthStyle :: Double -> Attribute Action
+widthStyle m = styleInline_ ("width:" <> pct m)
+
+pct :: Double -> MisoString
+pct m = msShow (max 0 (min 100 (round (m * 100) :: Int))) <> "%"
 
 thTxt :: MisoString -> View Model Action
 thTxt s = th_ [] [ text s ]
