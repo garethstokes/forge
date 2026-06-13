@@ -335,6 +335,62 @@ diversity rides entirely on the provider's default sampling. If the provider
 returns near-deterministic replies, three votes are three copies of one
 opinion and the tally will look more confident than it is.
 
+## Cross-model judge panels
+
+Rule 13 recommends judging with a different model family than the system under
+test: judges measurably prefer outputs from their own family. Same-family votes
+avoid that bias only partially, because sampling the same model repeatedly
+(without temperature control) can return near-identical replies. Three votes
+from one model are effectively one opinion counted three times.
+
+A panel assigns one vote to each member and sources each from a distinct model
+family, so the votes are structurally independent.
+
+Two primitives support this. `tally` is the pure combination step:
+
+```haskell
+tally :: [Either JudgeError Verdict] -> VoteOutcome
+```
+
+It applies the same majority and dissent logic as `vote`: Pass tallies as yes,
+Fail as no, CannotAssess as an abstain (consumes a vote slot without casting a
+vote), and a JudgeError as an excluded sample. A tie resolves to fail. With no
+yes/no votes the outcome is `AllAbstained` if any abstain was seen, otherwise
+`AllErrored`.
+
+`votePanel` runs the members and feeds them to `tally`:
+
+```haskell
+votePanel :: Monad m
+          => [Text -> Text -> m (Either JudgeError Verdict)]
+          -> Text -> Text -> m VoteOutcome
+```
+
+Each member is `judgeOnce` run under its own interpreter. The Anthropic and
+OpenAI interpreters each close over their own config, so wiring a two-member
+panel is straightforward:
+
+```haskell
+panelOut <- votePanel
+  [ \r g -> runEff (Anthropic.run cfg  (judgeOnce [] r g))
+  , \r g -> runEff (OpenAI.run   ocfg (judgeOnce [] r g)) ]
+  "the output is a friendly greeting" "Hello there, lovely to meet you!"
+TIO.putStrLn ("panel: " <> T.pack (show panelOut))
+-- panel: Decided {pass = True, why = "...", dissent = Nothing, yes = 2, no = 0}
+```
+
+`votePanel` is polymorphic in `m` so it is testable with `Identity`; each
+member produces `IO (Either JudgeError Verdict)` here because `runEff` runs
+the effect stack down to `IO`, and `votePanel [...] r g :: IO VoteOutcome`
+binds directly in the outer `do`-block.
+
+A panel of two model families gives one independent opinion per family. It does
+not guarantee agreement: a 1-1 tie resolves to fail by the same rule as an
+even `vote`. A three-member panel (odd count) avoids ties. Each member is still
+a single `judgeOnce` call (no internal voting), keeping the cost fixed per
+member and the protocol open-loop: every member receives the original output
+and rubric directly, not a summary or another member's reply.
+
 ## Abstain verdicts
 
 The judge verdict is three-way: `pass`, `fail`, or `cannot_assess`. The judge

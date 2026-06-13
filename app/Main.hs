@@ -45,6 +45,7 @@ import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str, int, object, field, refine)
 import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, penalty, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
+import Crucible.Eval.Judge (judgeOnce, votePanel)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
@@ -248,6 +249,11 @@ main = do
             [ Case ("The capital of France is Paris." :: T.Text) "similar-capital"
                 (SimilarTo 0.6 "Paris is France's capital city.") ])))
           TIO.putStrLn (renderReport simRep)
+          panelOut <- votePanel
+            [ \r g -> runEff (Anthropic.run cfg (judgeOnce [] r g))
+            , \r g -> runEff (OpenAI.run ocfg (judgeOnce [] r g)) ]
+            "the output is a friendly greeting" "Hello there, lovely to meet you!"
+          TIO.putStrLn ("panel: " <> T.pack (show panelOut))
       mVoyKey <- lookupEnv "VOYAGE_API_KEY"
       case mVoyKey of
         Nothing -> TIO.putStrLn "VOYAGE_API_KEY not set; skipping Voyage demo"
