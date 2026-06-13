@@ -119,6 +119,9 @@ the facade combinators from `Crucible.Codec`:
 | `object`   | `ObjectCodec a a -> JSONCodec a` |
 | `field`    | `Text -> (o -> f) -> JSONCodec f -> ObjectCodec o f` |
 | `anyValue` | `JSONCodec Value` |
+| `refine`   | `Text -> (a -> Bool) -> JSONCodec a -> JSONCodec a` |
+| `checked`  | `[(Text, a -> Bool)] -> JSONCodec a -> JSONCodec (Checked a)` |
+| `describe` | `JSONCodec a -> Text -> JSONCodec a` |
 
 An `enum` example: a classifier whose output is one of three variants, without a
 `data` type.
@@ -139,6 +142,45 @@ classify = skill "classify-polarity" str polarityCodec
 
 The codec provides both the JSON encode/decode path and the JSON Schema that is
 injected into the system prompt.
+
+### Constraints and refinements
+
+`refine` attaches a hard constraint to any codec. When the decoded value fails
+the predicate, decoding fails and `call` re-prompts the model with the violation
+message. The message is also surfaced as the schema description, so the model
+sees the constraint before it generates a single token:
+
+```haskell
+refine "age must be 0..130" (\a -> a >= 0 && a <= 130) int
+```
+
+A violation is handled inside the retry loop, not raised to the caller. With
+the default two retries, an out-of-range value rarely survives to `Left`.
+
+`checked` is the soft variant. Decoding never fails; instead the value comes
+back wrapped in `Checked { value, checks }`, where `checks` is a per-check
+pass list:
+
+```haskell
+checked
+  [ ("non-empty",   not . T.null)
+  , ("short enough", \t -> T.length t <= 280)
+  ]
+  str
+```
+
+The caller decides what to do with partial results. `allPassed :: Checked a ->
+Bool` tests every check at once; branch on it to accept or reject the value.
+`Checked` is transparent on the wire: the codec encodes and decodes the inner
+value as if the wrapper were not there.
+
+`describe` attaches a free-form description to any codec, which appears in the
+generated JSON Schema. Use it to guide the model without adding a hard
+constraint:
+
+```haskell
+str `describe` "ISO 8601 date, e.g. 2024-03-15"
+```
 
 ## Writing instructions
 

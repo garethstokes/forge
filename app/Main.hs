@@ -43,7 +43,7 @@ import NeatInterpolation (text)
 import Crucible.Skill (Skill, skill, call, withExamples, withTests)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
-import Crucible.Codec (str)
+import Crucible.Codec (str, int, object, field, refine)
 import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, penalty, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
@@ -96,6 +96,13 @@ main = do
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
         Left e   -> TIO.putStrLn ("typed fn decode error: " <> e.message)
+      let ageFn :: Skill T.Text Int
+          ageFn = skill "extract-age" str
+            (object (field "age" Prelude.id
+               (refine "age must be between 0 and 130" (\a -> a >= 0 && a <= 130) int)))
+            (\s -> [text|Extract the person's age from: ${s}|])
+      ageRes <- runEff (Anthropic.run cfg (call ageFn "Maria is 34 years old."))
+      TIO.putStrLn ("refine: extracted age " <> either (.message) (T.pack . show) ageRes)
       (toolAns, usage) <- runEff (Anthropic.usageChat cfg (runToolAgent (tools weatherBox) "Use the tool to get the weather in Brisbane, then tell me."))
       case toolAns of
         Right a  -> TIO.putStrLn ("tool agent: " <> a)
