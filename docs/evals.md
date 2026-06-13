@@ -52,10 +52,9 @@ fires. A negative-weight criterion, built with `penalty`
 subtracts when the judge finds that property present. Positive weights set
 the denominator, so a response that meets every positive criterion and trips
 no penalty scores 1.0; clamping stops penalties pushing the score below 0.
-Binary criteria
-grade more consistently than a 1-5 scale: nobody can say what separates a 3
-from a 4, but "mentions a temperature" is checkable. If you need granularity,
-add criteria rather than widening a scale.
+Binary criteria grade more consistently than a 1-5 scale: nobody can say what
+separates a 3 from a 4, but "mentions a temperature" is checkable. If you need
+granularity, add criteria rather than widening a scale.
 
 Run a dataset with `runEval`:
 
@@ -248,10 +247,11 @@ Keep one `Rubric` per quality concern, and split when:
   its own line in the report rather than a blended score.
 - **A criterion is a hard gate.** Safety and format requirements should not
   be averaged away by weights. Express a gate as its own `Checklist` case:
-  `passRate` already requires every criterion in a checklist to hold, so the
-  gate fails the case outright regardless of weight. Do not express a gate as
-  a large negative weight: clamping floors every penalty at 0, so a heavy
-  penalty and a light one fail identically and cannot single out the gate.
+  `passRate` already requires every positive criterion to hold and no penalty
+  to fire, so the gate fails the case outright regardless of weight. Do not
+  express a gate as a large negative weight: clamping floors every penalty at
+  0, so a heavy penalty and a light one fail identically and cannot single out
+  the gate.
 - **The rubric outgrows the judge's attention.** Past roughly 5 to 7
   criteria in one prompt, judge consistency drops. `Checklist` already
   judges each criterion with its own call, so the per-criterion cost is the
