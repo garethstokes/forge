@@ -120,9 +120,11 @@ buildClosed t stk inStr esc inKey
         -- Mid KEY string: drop the partial key back to its opening '"'
         -- and any preceding comma, then close brackets.
         then dropPartialKey t stk
-        -- Mid VALUE string: optionally drop a trailing backslash, close
-        -- the string, then close brackets.
-        else let t' = if esc then T.dropEnd 1 t else t
+        -- Mid VALUE string: optionally drop a trailing backslash or partial
+        -- \uXXXX escape (fewer than 4 hex digits), close the string, then
+        -- close brackets.
+        else let t1 = if esc then T.dropEnd 1 t else t
+                 t' = dropPartialUnicode t1
              in  t' <> "\"" <> closers stk
 
   -- Not in a string
@@ -137,8 +139,18 @@ buildClosed t stk inStr esc inKey
           t4 = if not (T.null t3) && T.last t3 == ':'
                then dropColonAndKey t3
                else t3
-          -- 5. Drop a trailing comma again (in case step 4 exposed one)
-          t5 = dropIf ',' (T.stripEnd t4)
+          -- 4b. If we are in key position and the text ends with a complete
+          -- key string (closing '"'), drop it (no colon yet, so the key is
+          -- dangling).  This handles e.g. {"name"} -> {}.
+          t4b = if inKey && not (null stk) && head stk == '{'
+                   && not (T.null t4) && T.last t4 == '"'
+                then let idx     = findStringOpen t4
+                         without  = T.take idx t4
+                         trimmed  = dropIf ',' (T.stripEnd without)
+                     in  trimmed
+                else t4
+          -- 5. Drop a trailing comma again (in case step 4/4b exposed one)
+          t5 = dropIf ',' (T.stripEnd t4b)
       in  t5 <> closers stk
 
 -- | Drop the last character if it equals the given char, then strip trailing
@@ -158,6 +170,34 @@ dropPartialKey t stk =
       without  = T.take idx t
       trimmed  = dropIf ',' (T.stripEnd without)
   in  trimmed <> closers stk
+
+-- | Drop a trailing incomplete \\uXXXX escape sequence from a value string
+-- that is being closed.  A complete escape (\\uHHHH with exactly 4 hex digits)
+-- is kept; \\u, \\uH, \\uHH, \\uHHH are stripped.  A lone backslash (already
+-- consumed by the caller's 'esc'-state drop) is NOT handled here.
+-- We only strip when the backslash is an escape opener, i.e. when an odd
+-- number of backslashes precede the 'u'.
+dropPartialUnicode :: Text -> Text
+dropPartialUnicode t
+  | T.null t  = t
+  | otherwise =
+      -- Find the length of a hex-digit run at the end of t.
+      let hexSuffix = T.length (T.takeWhileEnd isHexDigit t)
+          -- After the hex run, is there a 'u' followed by a backslash that is
+          -- an escape opener?
+          checkAt hexLen =
+            let afterHex = T.length t - hexLen
+            in  afterHex >= 2
+                && T.index t (afterHex - 1) == 'u'
+                && T.index t (afterHex - 2) == '\\'
+                && odd (countBack t (afterHex - 2))   -- backslash IS escape opener
+      in  if hexSuffix < 4 && checkAt hexSuffix
+          then T.dropEnd (hexSuffix + 2) t   -- drop \u + hex digits
+          else t
+  where
+    isHexDigit c = (c >= '0' && c <= '9')
+                || (c >= 'a' && c <= 'f')
+                || (c >= 'A' && c <= 'F')
 
 -- | Find the index of the opening (unescaped) '"' for the string we are
 -- currently inside (i.e., the last unescaped '"' in the text).

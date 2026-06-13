@@ -1868,6 +1868,16 @@ main = runChecks
       "{\"a\":1,\"b\":{\"c\":\"x\"}}" (closeJson "{\"a\":1,\"b\":{\"c\":\"x")
   , check "closeJson: already-closed and trivial inputs"
       ("{}", "")                  (closeJson "{}", closeJson "")
+  , check "closeJson: drops a partial unicode escape in a value string"
+      ("{\"a\":\"x\"}", "{\"a\":\"x\"}")
+      (closeJson "{\"a\":\"x\\u00", closeJson "{\"a\":\"x\\u")
+  , check "closeJson: keeps a complete unicode escape"
+      "{\"a\":\"x\\u00e9\"}"      (closeJson "{\"a\":\"x\\u00e9")
+  , check "closeJson: drops a complete key with no colon"
+      ("{}", "{\"a\":1}")
+      (closeJson "{\"name\"", closeJson "{\"a\":1,\"b\"")
+  , check "closeJson: keeps an escaped backslash then closes"
+      "{\"a\":\"x\\\\\"}"         (closeJson "{\"a\":\"x\\\\")
   -- crucible-2ey: runPartial end-to-end
   , check "runPartial: the final partial has all fields; a leading blank emits nothing"
       (Just (Just "Alice", Just 30))
