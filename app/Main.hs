@@ -1,9 +1,11 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | M8 smoke executable. Proves the effectful substrate talks to the real
 -- Anthropic provider end-to-end, and that the record/cassette slider works:
@@ -19,7 +21,7 @@ import qualified Data.Text.IO as TIO
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
 
-import Effectful (Eff, runEff)
+import Effectful (Eff, runEff, liftIO)
 import Crucible.Tool.Generic (tools)
 
 import Crucible.LLM (Message (..), Role (..), complete)
@@ -51,10 +53,17 @@ import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
+import Crucible.Partial (runPartialWith)
 import System.IO (hFlush, stdout)
+import Data.IORef (newIORef, modifyIORef', readIORef)
 
 data Sentiment = Sentiment { sentLabel :: T.Text } deriving (Show, Generic)
 instance HasCodec Sentiment where codec = genericCodec
+
+-- | All-Maybe partial type for the runPartialWith demo.
+data Weather = Weather { wCity :: Maybe T.Text, wTempC :: Maybe Int }
+  deriving (Show, Generic)
+instance HasCodec Weather where codec = genericCodec
 
 data WeatherQ = WeatherQ { city :: T.Text } deriving (Show, Generic)
 instance HasCodec WeatherQ where codec = genericCodec
@@ -136,6 +145,19 @@ main = do
         Right a  -> TIO.putStrLn ("stream tool result: " <> a)
         Left err -> TIO.putStrLn ("stream tool error: " <> T.pack (show err))
       TIO.putStrLn ("stream tool usage: " <> T.pack (show (usTotalTokens tUsage)) <> " tokens")
+      -- Partial typed streaming: decode a growing JSON object as deltas arrive.
+      let weatherPrompt =
+            [ Message System "You are a terse assistant. Reply with ONLY JSON, no markdown."
+            , Message User "Reply with ONLY a JSON object: {\"wCity\": <city>, \"wTempC\": <int>} for the weather in Brisbane. No markdown."
+            ]
+      ref <- newIORef (0 :: Int, Nothing :: Maybe Weather)
+      _ <- runEff (runPartialWith (codec @Weather)
+             (\case
+               Right w -> liftIO (modifyIORef' ref (\(n, _) -> (n + 1, Just w)))
+               Left _  -> pure ())
+             (Anthropic.stream cfg (complete weatherPrompt)))
+      (n, mw) <- readIORef ref
+      TIO.putStrLn ("partial: " <> T.pack (show n) <> " partials, final " <> T.pack (show mw))
       -- Chat cassette: record a live tool-agent run, then replay it (no network).
       let chatCassette = "/tmp/crucible-chat-cassette.jsonl"
           toolQuestion = "Use the tool to get the weather in Brisbane, then tell me."

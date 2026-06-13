@@ -106,9 +106,9 @@ result is returned exactly as it would be from `Anthropic.runChat`.
 Typed skills (`call`) run under the `LLM` effect, so they compose with the
 streaming path without changes: pass `call classify input` where you would pass
 `complete prompt`. The token chunks are emitted as they arrive; the assembled
-text is decoded through the output codec at the end. Incremental typed decoding
-of a single JSON object (decoding partial JSON as chunks arrive) is out of
-scope; for row-based data there is a supported middle ground below.
+text is decoded through the output codec at the end. For incremental typed
+decoding of a single JSON object as chunks arrive, see "Partial typed values"
+below. For row-based data see "Row-based data (JSONL)" below.
 
 ## Row-based data (JSONL)
 
@@ -136,6 +136,46 @@ Each row arrives as `Either DecodeError City`: a line that does not parse
 decode. A non-blank trailing line without a final newline is flushed as the
 last row. `runRows` is the collecting variant (rows returned alongside the
 result), useful in tests and batch jobs.
+
+## Partial typed values
+
+For a single JSON object that grows across many deltas, `Crucible.Partial`
+decodes a partial buffer after each arriving chunk. The caller writes an
+all-`Maybe` version of the target type and its codec; `genericCodec` works
+directly because missing fields decode as `Nothing`.
+
+```haskell
+import Crucible.Partial (runPartialWith)
+
+data Weather = Weather { wCity :: Maybe Text, wTempC :: Maybe Int }
+  deriving (Show, Generic)
+instance HasCodec Weather where codec = genericCodec
+
+ref <- newIORef (0 :: Int, Nothing :: Maybe Weather)
+_ <- runEff
+  ( runPartialWith (codec @Weather)
+      (\case
+        Right w -> liftIO (modifyIORef' ref (\(n, _) -> (n + 1, Just w)))
+        Left _  -> pure ())
+      (Anthropic.stream cfg
+        (complete [Message User "Reply with ONLY a JSON object: {\"wCity\": <city>, \"wTempC\": <int>}. No markdown."])) )
+(n, mw) <- readIORef ref
+-- n partials decoded, mw is the last Right partial
+```
+
+`runPartialWith codec sink stream` reinterprets `Emit`: each delta is
+appended to a buffer, the buffer is closed to valid JSON by `closeJson` (the
+pure kernel), and the result is decoded and handed to the sink immediately. A
+blank buffer produces no callback. One partial arrives per delta; fields fill
+in as the object grows.
+
+`closeJson` is the pure function that makes an incomplete JSON buffer valid:
+it closes open strings, drops dangling keys, trims trailing commas, and closes
+open brackets.
+
+This covers one top-level object. For a stream of many complete objects use
+`runRows` (JSONL). `runPartial` is the collecting variant (partials returned
+alongside the result), useful in tests and batch jobs.
 
 ## Further reading
 
