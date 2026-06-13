@@ -143,6 +143,26 @@ classify = skill "classify-polarity" str polarityCodec
 The codec provides both the JSON encode/decode path and the JSON Schema that is
 injected into the system prompt.
 
+### Dynamic codecs
+
+A codec is an ordinary runtime value, so a schema that depends on data known
+only at runtime needs no special machinery. To classify into a set of categories
+fetched from a database, zip the labels into an `enum`:
+
+```haskell
+-- categories known only at runtime (e.g. fetched from a database)
+buildClassifier :: [Text] -> Skill Text Text
+buildClassifier categories =
+  skill "classify" str (enum (zip categories categories))
+    (\s -> [text|Classify into exactly one category: ${s}|])
+```
+
+The injected schema is a string enum of exactly those categories, so the
+contract the model sees follows the data: swap the list and the schema follows,
+with no recompile. This is the runtime equivalent of a generated type. Object
+field lists are values in the same way, so a schema can be assembled from runtime
+information wherever the shape is known when the codec is built.
+
 ### Constraints and refinements
 
 `refine` attaches a hard constraint to any codec. When the decoded value fails

@@ -1796,4 +1796,14 @@ main = runChecks
   , check "checked: the advertised schema is the inner codec's"
       True
       (schemaText (checked [("nonempty", not . T.null)] C.str) == schemaText C.str)
+  -- crucible-n0p: dynamic codec from a runtime list (schema follows the data)
+  , check "dynamic enum: schema lists the runtime categories; decode honours them"
+      (True, True, Right ("urgent" :: Text), True)
+      (let cats = ["urgent", "normal", "low"] :: [Text]
+           c    = C.enum (zip cats cats)
+           sch  = schemaText c
+       in ( T.isInfixOf "urgent" sch
+          , T.isInfixOf "low" sch
+          , decodeLLM c "\"urgent\""
+          , case decodeLLM c "\"bogus\"" of Left _ -> True; Right (_ :: Text) -> False ) )
   ]
