@@ -1286,6 +1286,10 @@ main = runChecks
                  [ ("a", True,  Just True),  ("b", False, Just False)
                  , ("c", True,  Just False), ("d", False, Just True) ]
        in (r.agreement, r.failPrecision, r.failRecall))
+  , check "reportFromVerdicts: fail precision and recall are distinct"
+      (1.0, 0.5)
+      (let r = reportFromVerdicts 0 [("a", False, Just False), ("b", False, Just True)]
+       in (r.failPrecision, r.failRecall))
   , check "reportFromVerdicts: empty input is the degenerate report"
       (CalibrationReport 0 0 1.0 1.0 [] [] 0 0 (0, 0) [])
       (reportFromVerdicts 0 [])
