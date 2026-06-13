@@ -80,6 +80,7 @@ groundingOutcome n evidence rendered = do
       pure $ case out of
         Decided p w _ _ _ -> (claim, p, w)
         AllErrored m      -> (claim, False, "judge error: " <> m)
+        AllAbstained m    -> (claim, False, "judge abstained: " <> m)
     line (c, p, w) =
       (if p then "[supported] " else "[unsupported] ") <> c <> ": " <> w
 

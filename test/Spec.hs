@@ -33,7 +33,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
-import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penalty, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
+import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penalty, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, scoreWith, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
 import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (VerdictKind(..), Verdict(..), verdictCodec, AbstainPolicy(..), JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, VoteOutcome(..), vote, balanceExamples, judgePrompt, ratePrompt)
@@ -1678,4 +1678,36 @@ main = runChecks
         [ "[{\"issue\":\"bogus\",\"criterion\":\"x\",\"note\":\"n\"}]"
         , "[{\"issue\":\"direction\",\"criterion\":\"x\",\"note\":\"fixed\"}]" ]
         (lintChecklist [criterion "x"])))
+  , check "abstain: a standalone rubric abstain scores 0 with the abstained tag"
+      (0.0, True)
+      (let s = runPureEff (runLLMScripted ["{\"why\":\"no info\",\"verdict\":\"cannot_assess\"}"]
+                 (judge id "r" ("out" :: Text)))
+       in (s.value, T.isInfixOf "judge abstained: " s.rationale))
+  , check "abstain: AbstainFails keeps an abstained positive criterion in the denominator"
+      True
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"y\",\"verdict\":\"pass\"}"
+                 , "{\"why\":\"no info\",\"verdict\":\"cannot_assess\"}" ]
+                 (Embed.none (scoreM id (Checklist [criterion "a", criterion "b"]) ("out" :: Text))))
+       in abs (s.value - 0.5) < 1e-9)
+  , check "abstain: AbstainSkips drops an abstained criterion from the denominator"
+      (1.0, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"y\",\"verdict\":\"pass\"}"
+                 , "{\"why\":\"no info\",\"verdict\":\"cannot_assess\"}" ]
+                 (Embed.none (scoreWith (defaultJudgeOpts { abstain = AbstainSkips }) id
+                    (Checklist [criterion "a", criterion "b"]) ("out" :: Text))))
+       in (s.value, T.isInfixOf "[skip] b" s.rationale))
+  , check "abstain: a penalty abstain clears under AbstainFails"
+      1.0
+      ((runPureEff (runLLMScripted
+         [ "{\"why\":\"y\",\"verdict\":\"pass\"}"
+         , "{\"why\":\"no info\",\"verdict\":\"cannot_assess\"}" ]
+         (Embed.none (scoreM id (Checklist [criterion "a", penalty 1 "recommends a product"]) ("out" :: Text))))).value)
+  , check "renderReport: abstained case is annotated distinctly from judge error"
+      (True, False)
+      (let rep = runPureEff (runLLMScripted ["{\"why\":\"no info\",\"verdict\":\"cannot_assess\"}"]
+                   (Embed.none (runEval id pure [Case ("x" :: Text) "a" (Rubric "r")])))
+           t = renderReport rep
+       in (T.isInfixOf "[judge abstained]" t, T.isInfixOf "[judge error]" t))
   ]

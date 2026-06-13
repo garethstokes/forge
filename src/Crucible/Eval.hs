@@ -30,7 +30,7 @@ import Effectful
 
 import Crucible.Embed (Embed, embed, cosine)
 import Crucible.Eval.Grounding (GroundingOutcome (..), groundingOutcome)
-import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), defaultJudgeOpts, vote, RateOutcome (..), rate)
+import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), AbstainPolicy (..), defaultJudgeOpts, vote, RateOutcome (..), rate)
 import Crucible.Eval.Lint (LintFinding (..), LintIssue (..), lintLabels)
 import Crucible.LLM (LLM)
 
@@ -126,6 +126,7 @@ judgeN n = judgeWith defaultJudgeOpts { votes = n }
 -- single-sample judging.
 voteScore :: Bool -> VoteOutcome -> Score
 voteScore _      (AllErrored m)      = score 0.0 ("judge error: " <> m)
+voteScore _      (AllAbstained m)    = score 0.0 ("judge abstained: " <> m)
 voteScore single (Decided p w d y f) =
   Score (if p then 1.0 else 0.0) w
     (if single then Nothing else Just (y, f))
@@ -139,7 +140,7 @@ scoreWith opts render exp_ actual = case exp_ of
   Exactly e    -> pure (score (ind (actual == e)) (if actual == e then "exact match" else "mismatch"))
   Predicate p  -> pure (score (ind (p actual)) (if p actual then "predicate held" else "predicate failed"))
   Rubric r     -> judgeWith opts render r actual
-  Checklist cs -> checklistScore opts.votes render cs actual
+  Checklist cs -> checklistScore opts.votes opts.abstain render cs actual
   Grounded ev  -> groundingScore <$> groundingOutcome opts.votes ev (render actual)
   Metric _ f   -> let v = max 0.0 (min 1.0 (f actual))
                   in pure (score v ("metric = " <> T.pack (show v)))
@@ -160,32 +161,35 @@ scoreM = scoreWith defaultJudgeOpts
 scoreN :: (Eq a, LLM :> es, Embed :> es) => Int -> (a -> Text) -> Expectation a -> a -> Eff es Score
 scoreN n = scoreWith defaultJudgeOpts { votes = n }
 
--- | Judge each criterion with its own binary call. The score is the signed
--- sum of passed-criterion weights over the sum of POSITIVE weights, clamped
--- to [0,1]: positive criteria reward, negative (penalty) criteria subtract,
--- and a perfect response scores 1.0 (penalties are not in the denominator).
--- value reaches 1.0 only when every positive criterion passes and no penalty
--- fires. A judge error on a criterion fails that criterion with a tagged line.
-checklistScore :: (LLM :> es) => Int -> (a -> Text) -> [Criterion] -> a -> Eff es Score
-checklistScore _ _ [] _ = pure (score 1.0 "empty checklist")
-checklistScore n render cs actual = do
+-- | Judge each criterion with its own binary call; positive weights set the
+-- denominator, penalties subtract, the score clamps to [0,1]. An abstained
+-- criterion fails (and stays in the denominator) under 'AbstainFails', or
+-- drops from the denominator under 'AbstainSkips'. A judge error fails the
+-- criterion. value reaches 1.0 only when every positive criterion passes
+-- and no penalty fires.
+checklistScore :: (LLM :> es) => Int -> AbstainPolicy -> (a -> Text) -> [Criterion] -> a -> Eff es Score
+checklistScore _ _ _ [] _ = pure (score 1.0 "empty checklist")
+checklistScore n pol render cs actual = do
   rs <- mapM judge1 cs
-  let posTotal = sum [c.weight | c <- cs, c.weight > 0]
-      got      = sum [c.weight | (c, passed, _) <- rs, passed]
+  let posTotal = sum [c.weight | (c, m, _) <- rs, c.weight > 0, m /= Nothing]
+      got      = sum [c.weight | (c, Just True, _) <- rs]
       clamp    = max 0.0 . min 1.0
       val | posTotal > 0 = clamp (got / posTotal)
           | got < 0      = 0.0
           | otherwise    = 1.0
-      ln (c, p, w)
-        | c.weight < 0 = (if p then "[penalty] " else "[clear] ") <> c.label <> ": " <> w
-        | otherwise    = (if p then "[pass] "    else "[fail] ")  <> c.label <> ": " <> w
-  pure (score val (T.intercalate "\n" (map ln rs)))
+  pure (score val (T.intercalate "\n" [ l | (_, _, l) <- rs ]))
   where
     judge1 c = do
       out <- vote True defaultJudgeOpts { votes = n } ("the output must satisfy: " <> c.label) (render actual)
       pure $ case out of
-        AllErrored m      -> (c, False, "judge error: " <> m)
-        Decided p w _ _ _ -> (c, p, w)
+        Decided p w _ _ _ -> (c, Just p,     decidedLine c p w)
+        AllErrored m      -> (c, Just False, "[fail] "    <> c.label <> ": judge error: " <> m)
+        AllAbstained m    -> case pol of
+          AbstainFails -> (c, Just False, "[abstain] " <> c.label <> ": judge abstained: " <> m)
+          AbstainSkips -> (c, Nothing,    "[skip] "    <> c.label <> ": judge abstained: " <> m)
+    decidedLine c p w
+      | c.weight < 0 = (if p then "[penalty] " else "[clear] ") <> c.label <> ": " <> w
+      | otherwise    = (if p then "[pass] "    else "[fail] ")  <> c.label <> ": " <> w
 
 -- | Rate the rendered output on an anchored 1..k scale; the median level
 -- normalizes to (level-1)/(k-1). Single-vote keeps votes/dissent Nothing,
@@ -288,7 +292,7 @@ renderReport Report{results = rs, passRate = pr, meanScore = ms} =
     body s = case s.votes of
       Just _  -> "majority-side rationale: " <> s.rationale
       Nothing -> s.rationale
-    annot s = tally s <> uncertain s <> jerr s
+    annot s = tally s <> uncertain s <> jerr s <> jabs s
     tally s = case s.votes of
       Just (y, f) -> "  [votes " <> tshow y <> "-" <> tshow f <> "]"
       Nothing     -> ""
@@ -299,3 +303,4 @@ renderReport Report{results = rs, passRate = pr, meanScore = ms} =
           <> "]"
       _ -> ""
     jerr s = if "judge error: " `T.isInfixOf` s.rationale then "  [judge error]" else ""
+    jabs s = if "judge abstained: " `T.isInfixOf` s.rationale then "  [judge abstained]" else ""
