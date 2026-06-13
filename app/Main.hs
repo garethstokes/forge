@@ -66,9 +66,12 @@ main = getArgs >>= \case
     name <- reqFlag "--name" flags
     slug <- reqFlag "--slug" flags
     ver  <- maybe (pure 1) parseIntFlag (lookupFlag "--version" flags)
-    fmtN <- pure (maybe "generic" id (lookupFlag "--format" flags))
+    let fmtN = maybe "generic" id (lookupFlag "--format" flags)
     fmt  <- maybe (die ("unknown --format: " <> fmtN)) pure (formatFor (T.pack fmtN))
     lim  <- traverse parseIntFlag (lookupFlag "--limit" flags)
+    case lim of
+      Just n | n < 1 -> die "--limit must be at least 1"
+      _              -> pure ()
     let opts = IngestOpts
           { file = fileArg, name = T.pack name, slug = T.pack slug, version = ver
           , format = fmt, limit = lim
