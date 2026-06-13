@@ -36,7 +36,8 @@ import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penalty, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, scoreWith, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
 import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
-import Crucible.Eval.Judge (VerdictKind(..), Verdict(..), verdictCodec, AbstainPolicy(..), JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, VoteOutcome(..), vote, balanceExamples, judgePrompt, ratePrompt)
+import Crucible.Eval.Judge (VerdictKind(..), Verdict(..), verdictCodec, AbstainPolicy(..), JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, VoteOutcome(..), vote, tally, votePanel, balanceExamples, judgePrompt, ratePrompt, JudgeError(..))
+import Data.Functor.Identity (Identity (..))
 import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa, reportFromVerdicts)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
@@ -1045,6 +1046,34 @@ main = runChecks
                  , "{\"why\":\"a\",\"pass\":true}", "{\"why\":\"b\",\"pass\":true}" ]
                  (judgeN 3 id "r" ("out" :: Text)))
        in (s.value, s.votes))
+  -- crucible-ymh: cross-model judge panels
+  , check "tally: unanimous pass decides true; tie resolves to fail"
+      ((True, 2, 0), (False, 1, 1))
+      ( case tally [Right (Verdict "a" Pass), Right (Verdict "b" Pass)] of
+          Decided p _ _ y f -> (p, y, f); _ -> (False, -1, -1)
+      , case tally [Right (Verdict "a" Pass), Right (Verdict "b" Fail)] of
+          Decided p _ _ y f -> (p, y, f); _ -> (False, -1, -1) )
+  , check "tally: majority decides and records the first dissent"
+      (False, Just "yo")
+      (case tally [Right (Verdict "yo" Pass), Right (Verdict "n1" Fail), Right (Verdict "n2" Fail)] of
+         Decided p _ d _ _ -> (p, d); _ -> (True, Nothing))
+  , check "tally: all abstain -> AllAbstained; all error -> AllErrored; errors excluded"
+      (True, True, (True, 1, 0))
+      ( case tally [Right (Verdict "x" CannotAssess)] of AllAbstained _ -> True; _ -> False
+      , case tally [Left (JudgeError "down")] of AllErrored m -> T.isInfixOf "down" m; _ -> False
+      , case tally [Left (JudgeError "e"), Right (Verdict "y" Pass)] of
+          Decided p _ _ y f -> (p, y, f); _ -> (False, -1, -1) )
+  , check "votePanel: combines member verdicts via tally (pure Identity)"
+      (True, 2, 0)
+      (case runIdentity (votePanel
+              [ \_ _ -> Identity (Right (Verdict "a" Pass))
+              , \_ _ -> Identity (Right (Verdict "b" Pass)) ] "r" "out") of
+         Decided p _ _ y f -> (p, y, f); _ -> (False, -1, -1))
+  , check "votePanel: each member receives the rubric and output"
+      "r|out"
+      (case runIdentity (votePanel
+              [ \r g -> Identity (Right (Verdict (r <> "|" <> g) Pass)) ] "r" "out") of
+         Decided _ w _ _ _ -> w; _ -> "")
   -- eval rubric upgrades: checklists
   , check "checklist: weighted scoring + per-criterion rationale"
       (True, True)

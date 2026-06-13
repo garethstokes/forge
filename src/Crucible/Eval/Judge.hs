@@ -26,6 +26,8 @@ module Crucible.Eval.Judge
   , judgeOnce
   , VoteOutcome (..)
   , vote
+  , tally
+  , votePanel
   , Rating (..)
   , ratingCodec
   , ratePrompt
@@ -37,7 +39,7 @@ module Crucible.Eval.Judge
 import Control.Applicative ((<|>))
 import Data.Bits (shiftL, shiftR, xor)
 import Data.List (partition, sort, sortOn)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
@@ -239,6 +241,42 @@ vote earlyStop opts rubric graded = go n' (0, 0) (Nothing, Nothing) Nothing ""
               Pass         -> go (k - 1) (y + 1, f) (fy <|> Just v.why, fn) firstAbs lastErr
               Fail         -> go (k - 1) (y, f + 1) (fy, fn <|> Just v.why) firstAbs lastErr
               CannotAssess -> go (k - 1) tally firsts (firstAbs <|> Just v.why) lastErr
+
+-- | Pure mechanical combination of independent verdicts (no LLM). Same
+-- resolution as 'vote' with no early stop: Pass tallies as yes, Fail as
+-- no, CannotAssess as an abstain, a 'JudgeError' as an excluded sample.
+-- With no yes/no votes the outcome is 'AllAbstained' if any sample
+-- abstained, else 'AllErrored'; otherwise the majority decides (a tie
+-- resolves to fail, matching 'vote'); 'why' is the first winning-side
+-- rationale and 'dissent' the first losing-side one.
+tally :: [Either JudgeError Verdict] -> VoteOutcome
+tally rs =
+  let verdicts = [v | Right v <- rs]
+      yesWhys  = [v.why | v <- verdicts, v.kind == Pass]
+      noWhys   = [v.why | v <- verdicts, v.kind == Fail]
+      absWhys  = [v.why | v <- verdicts, v.kind == CannotAssess]
+      errs     = [m | Left (JudgeError m) <- rs]
+      y = length yesWhys
+      f = length noWhys
+  in if y == 0 && f == 0
+       then case absWhys of
+              (w : _) -> AllAbstained w
+              []      -> AllErrored (if null errs then "" else last errs)
+       else if y > f
+              then Decided True  (head yesWhys) (listToMaybe noWhys)  y f
+              else Decided False (head noWhys)  (listToMaybe yesWhys) y f
+
+-- | Run a panel of judges over one (rubric, output) and combine with
+-- 'tally'. Each member is 'judgeOnce' run under its own interpreter, e.g.
+-- @\\r g -> runEff (Anthropic.run cfg (judgeOnce exs r g))@ and an OpenAI
+-- twin. A panel of distinct model families gives independent opinions,
+-- unlike repeated sampling of one model. 'Monad' m so it is pure-testable
+-- with 'Identity'.
+votePanel :: Monad m
+          => [Text -> Text -> m (Either JudgeError Verdict)]
+          -> Text -> Text -> m VoteOutcome
+votePanel judges rubric graded =
+  tally <$> traverse (\j -> j rubric graded) judges
 
 -- | The judge's structured ordinal rating. Same field order rationale as
 -- 'Verdict': "why" first so the level is conditioned on the reasoning.
