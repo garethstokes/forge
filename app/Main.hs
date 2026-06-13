@@ -27,7 +27,7 @@ import Manifest.Postgres (Pool, closePool, newPool)
 import Evals.Execute (RunOutcome (..), executeRun)
 import Evals.Execute.Anthropic (liveAnthropicRunner)
 import Evals.Grade (ScoreOutcome (..), scoreRun)
-import Evals.Grade.Anthropic (liveCriterionJudge, liveGradeRunner)
+import Evals.Grade.Live (LiveKeys (..), liveCriterionJudge, liveGradeRunner)
 import Evals.Ids (GraderVersionId (..), RunId (..))
 import Evals.Ingest (IngestOpts (..), IngestResult (..), formatFor, ingestFile, renderIngestError)
 import Evals.MetaEval (metaReport, MetaMode (..))
@@ -58,10 +58,10 @@ main = getArgs >>= \case
       else do
         rid  <- maybe (die ("not a run id: " <> ridStr)) pure (readMaybe ridStr)
         gvs  <- mapM (\s -> maybe (die ("not a grader version id: " <> s)) (pure . GraderVersionId) (readMaybe s)) gvStrs
-        key  <- requireEnv "ANTHROPIC_API_KEY"
+        ks   <- liveKeys
         conc <- concurrencyFrom flags
         withEnvPool $ \pool -> do
-          o <- scoreRun pool conc (liveGradeRunner (T.pack key)) (liveCriterionJudge (T.pack key)) (RunId rid) gvs
+          o <- scoreRun pool conc (liveGradeRunner ks) (liveCriterionJudge ks) (RunId rid) gvs
           putStrLn $ "score " <> ridStr <> ": "
             <> show o.total <> " pairs, "
             <> show o.scored <> " scored, "
@@ -105,7 +105,7 @@ main = getArgs >>= \case
     let modeName = maybe "live" id (lookupFlag "--mode" flags)
     mode <- case modeName of
       "stored" -> pure Stored
-      "live"   -> Live . liveCriterionJudge . T.pack <$> requireEnv "ANTHROPIC_API_KEY"
+      "live"   -> Live . liveCriterionJudge <$> liveKeys
       other    -> die ("unknown --mode: " <> other)
     withEnvPool $ \pool -> metaReport pool seed mode rid gvid >>= \case
       Left e  -> die (T.unpack e)
@@ -122,6 +122,14 @@ usage = "usage: manifest-evals migrate | run <runId> [--concurrency N] | "
 requireEnv :: String -> IO String
 requireEnv name =
   lookupEnv name >>= maybe (die (name <> " is not set")) pure
+
+-- | The live-edge API keys: Anthropic is required; OpenAI is optional and only
+-- consulted when a grader's config selects @provider: openai@.
+liveKeys :: IO LiveKeys
+liveKeys = do
+  a <- requireEnv "ANTHROPIC_API_KEY"
+  o <- lookupEnv "OPENAI_API_KEY"
+  pure (LiveKeys { anthropic = T.pack a, openai = T.pack <$> o })
 
 -- | The value following @flag@ in the arg list (@--name foo@), if present.
 lookupFlag :: String -> [String] -> Maybe String

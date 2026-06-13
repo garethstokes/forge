@@ -28,7 +28,7 @@ import Crucible.LLM.OpenAI (OpenAIConfig (..))
 import Evals.Execute (ExecError (..))
 import Evals.Execute.OpenAI (openaiCfgFromParams)
 import Evals.Grade
-import Evals.Grade.Anthropic (gradeCfg)
+import Evals.Grade.Live (gradeCfg)
 import Evals.Ids
 import Evals.Migrate (migrateAll)
 import Evals.Schema

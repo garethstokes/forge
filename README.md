@@ -14,11 +14,16 @@ effectful capabilities, Anthropic interpreters, skills/tools).
   `Evals.Execute.Anthropic` (the live crucible-backed runner) — plus the
   scorer (sub-project: scoring): `Evals.Grade` (grader config → crucible
   `Expectation`, `scoreRun` with resume + per-grader `RunMetric` recompute)
-  and `Evals.Grade.Anthropic` (the live judge edge); the `pointed` grader kind
+  and `Evals.Grade.Live` (the live judge edge); the `pointed` grader kind
   uses per-example signed-point criteria (HealthBench-style) living in
   `Example.expected` as `[{"criterion","points","tags"}]`, each judged with
   full conversation context, scored sum(met points)/sum(positive points)
-  unclipped, with grader config carrying judge knobs only. `RunMetric` now
+  unclipped, with grader config carrying judge knobs only. A grader config
+  jsonb may set `"provider": "openai"` (default `"anthropic"`) to route
+  judging through crucible's OpenAI interpreter instead of Anthropic; set
+  `OPENAI_API_KEY` when any grader uses it (`ANTHROPIC_API_KEY` is always
+  required). The model/knob keys (`model`/`max_tokens`/`timeout`/`retries`/
+  `votes`) apply to either provider. `RunMetric` now
   carries an overall row (`tag` null) plus per-tag breakdowns — `theme:*` (the
   example's score bucketed by its `example_tags`) and, for pointed graders,
   `axis:*`/`cluster:*` (the criteria re-scored per tag from the stored verdicts,
