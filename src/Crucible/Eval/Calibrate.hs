@@ -41,6 +41,7 @@ data CalibrationReport = CalibrationReport
   , exampleCount  :: Int     -- ^ number of examples fed to the judge
   , measured      :: Int     -- ^ number of holdout cases metrics are computed over
   , kappaCI       :: (Double, Double)  -- ^ 95% bootstrap interval for kappa
+  , abstained     :: [Text]            -- ^ case names where the judge abstained
   }
   deriving (Eq, Show)
 
@@ -85,9 +86,10 @@ bootstrapKappa seed resamples pairs
 -- | Pure metric computation from outcomes + report shape fields.
 reportFrom :: Int -> [(Text, Bool, VoteOutcome)] -> Int -> Int -> CalibrationReport
 reportFrom seed outcomes exampleCount_ measured_ =
-  CalibrationReport po kap fPrec fRec cont errs exampleCount_ measured_ ci
+  CalibrationReport po kap fPrec fRec cont errs exampleCount_ measured_ ci abst
   where
     errs   = [nm | (nm, _, AllErrored _) <- outcomes]
+    abst   = [nm | (nm, _, AllAbstained _) <- outcomes]
     judged = [(nm, h, p, y, f) | (nm, h, Decided p _ _ y f) <- outcomes]
     pairs  = [(h, p) | (_, h, p, _, _) <- judged]
     total  = length judged
@@ -146,6 +148,7 @@ renderCalibration r = T.intercalate "\n" $
   ]
   ++ [ "contested (label these next): " <> T.intercalate ", " r.contested | not (null r.contested) ]
   ++ [ "judge errors: " <> T.intercalate ", " r.judgeErrors | not (null r.judgeErrors) ]
+  ++ [ "judge abstained: " <> T.intercalate ", " r.abstained | not (null r.abstained) ]
   ++ [ "examples fed: " <> tshowI r.exampleCount <> "  measured on: " <> tshowI r.measured
      | r.exampleCount > 0 ]
   where

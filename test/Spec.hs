@@ -1157,7 +1157,7 @@ main = runChecks
           , r.contested, r.judgeErrors, r.exampleCount, r.measured
           , lo <= r.kappa && r.kappa <= hi ))
   , check "calibrate: degenerate denominators are defined"
-      (CalibrationReport 1.0 0 1.0 1.0 [] [] 0 2 (0, 0))
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 0 2 (0, 0) [])
       (runPureEff (runLLMScripted
          [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}" ]
          (calibrate 1 id "r" [("c1", "o" :: Text, True), ("c2", "o", True)])))
@@ -1168,6 +1168,13 @@ main = runChecks
                  , "j1", "j2", "j3", "j4", "j5", "j6" ]
                  (calibrate 3 id "r" [("split", "o" :: Text, True), ("broken", "o", True)]))
        in (r.contested, r.judgeErrors, r.agreement))
+  , check "calibrate: an abstained case is listed separately and excluded from kappa"
+      ["b"]
+      ((runPureEff (runLLMScripted
+         [ "{\"why\":\"\",\"verdict\":\"pass\"}"
+         , "{\"why\":\"\",\"verdict\":\"cannot_assess\"}" ]
+         (calibrate 0 id "r"
+            [ ("a", "o1" :: Text, True), ("b", "o2", True) ]))).abstained)
   -- crucible-tfu: few-shot calibrated judging
   , check "balanceExamples: deterministic and balanced"
       (True, [True, False, True, False])
@@ -1217,7 +1224,7 @@ main = runChecks
             [ Case ("x" :: Text) "rub" (Rubric "r")
             , Case "y" "chk" (Checklist [criterion "c"]) ])))).passRate)
   , check "calibrateWith: examples held out of measurement"
-      (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2 (0, 0), "leftover")
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2 (0, 0) [], "leftover")
       (runPureEff (runLLMScripted
         [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}", "leftover" ]
         (do r <- calibrateWith 42 2 1 id "rubric"
@@ -1254,11 +1261,11 @@ main = runChecks
   , check "renderCalibration: kappa line carries the CI"
       True
       (T.isInfixOf "[95% CI "
-        (renderCalibration (CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0))))
+        (renderCalibration (CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0) [])))
   , check "renderCalibration: examples line only when used"
       (True, False)
-      (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2 (0, 0)
-           withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0)
+      (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2 (0, 0) []
+           withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0) []
        in ( T.isInfixOf "examples fed: 2" (renderCalibration withEx)
           , T.isInfixOf "examples fed" (renderCalibration withoutEx)))
   -- crucible-mo3: derived claim grounding
