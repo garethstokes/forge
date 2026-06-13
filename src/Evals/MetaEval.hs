@@ -15,12 +15,14 @@
 module Evals.MetaEval
   ( MetaMode (..)
   , metaReport
+  , saveMetaEval
   ) where
 
-import Data.Aeson (Value (..))
+import Data.Aeson (Value (..), toJSON)
 import qualified Data.Aeson.Types as AT
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
+import Data.Time (getCurrentTime)
 
 import qualified Crucible.Eval.Calibrate as Cal
 import Manifest
@@ -84,6 +86,19 @@ caseTuples mode gv mtv (out, mExample, lbls, mScore) = mapM one lbls
             case transcript sysPrompt (aesonOrNull e.input) (fromMaybe "" out.text) of
               Left _   -> pure Nothing
               Right tx -> either (const Nothing) (Just . (\v -> v.met)) <$> judge gv tx c
+
+-- | Persist a calibration report as a 'MetaEval' row (append/history).
+saveMetaEval :: Pool -> RunId -> GraderVersionId -> Text -> Int
+             -> Cal.CalibrationReport -> IO MetaEval
+saveMetaEval pool rid gvid modeT seed rep = do
+  now <- getCurrentTime
+  withSession pool $ add (MetaEval
+    { id = MetaEvalId 0, run = rid, graderVersion = gvid, mode = modeT, seed = seed
+    , agreement = rep.agreement, kappa = rep.kappa
+    , kappaLow = fst rep.kappaCI, kappaHigh = snd rep.kappaCI
+    , failPrecision = rep.failPrecision, failRecall = rep.failRecall
+    , measured = rep.measured, judgeErrors = Aeson (toJSON rep.judgeErrors)
+    , computedAt = now } :: MetaEval)
 
 aesonV :: Maybe (Aeson Value) -> Maybe Value
 aesonV = fmap (\(Aeson x) -> x)

@@ -160,6 +160,24 @@ data CriterionLabelT f = CriterionLabel
   } deriving Generic
 type CriterionLabel = CriterionLabelT Identity
 
+data MetaEvalT f = MetaEval
+  { id            :: Field f (Pk MetaEvalId)
+  , run           :: Field f RunId
+  , graderVersion :: Field f GraderVersionId
+  , mode          :: Field f Text          -- "live" | "stored"
+  , seed          :: Field f Int
+  , agreement     :: Field f Double
+  , kappa         :: Field f Double
+  , kappaLow      :: Field f Double
+  , kappaHigh     :: Field f Double
+  , failPrecision :: Field f Double
+  , failRecall    :: Field f Double
+  , measured      :: Field f Int
+  , judgeErrors   :: Field f (Aeson Value)
+  , computedAt    :: Field f UTCTime
+  } deriving Generic
+type MetaEval = MetaEvalT Identity
+
 -- Datasets: instances -------------------------------------------------------------
 
 instance Entity Dataset where
@@ -280,3 +298,7 @@ instance Entity RunMetric where
 instance Entity CriterionLabel where
   tableMeta = genericTableMeta @CriterionLabelT "criterion_labels"
   indexes   = [ unique [#output, #criterion] ]  -- leading column also serves output lookups
+
+instance Entity MetaEval where
+  tableMeta = genericTableMeta @MetaEvalT "meta_evals"
+  indexes   = [ btree #run ]

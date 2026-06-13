@@ -18,7 +18,7 @@ import Manifest.Testing (withEphemeralDb)
 import qualified Crucible.Eval.Calibrate as Cal
 import Data.Aeson (Value, object, toJSON, (.=))
 import Evals.Grade (Criterion' (..), CriterionJudge, CriterionVerdict (..))
-import Evals.MetaEval (metaReport, MetaMode (..))
+import Evals.MetaEval (metaReport, MetaMode (..), saveMetaEval)
 
 import Evals.Ids
 import Evals.Migrate (migrateAll)
@@ -35,7 +35,8 @@ main = withEphemeralDb $ \pool -> do
   now <- getCurrentTime
   storedSpec pool now
   liveSpec pool now
-  putStrLn "manifest-evals MetaEvalSpec: ingest + stored + live OK"
+  persistSpec pool now
+  putStrLn "manifest-evals MetaEvalSpec: ingest + stored + live + persist OK"
 
 seedRun :: Pool -> UTCTime -> IO (RunId, GraderVersionId, OutputId)
 seedRun pool now = withSession pool $ do
@@ -86,6 +87,34 @@ liveSpec pool now = do
     Right r -> do
       expect "live: agreement 0.5 (always-met judge vs mixed labels)" (r.agreement == 0.5)
       expect "live: measured 2"    (r.measured == 2)
+
+persistSpec :: Pool -> UTCTime -> IO ()
+persistSpec pool now = do
+  (rid, gvid, oid) <- seedRun pool now
+  _ <- withSession pool $ add (Score
+        { id = ScoreId 0, output = oid, graderVersion = gvid
+        , value = Just 0.5, passed = Nothing
+        , detail = Just (Aeson (object
+            [ "criteria" .= [ object ["criterion" .= ("c-good"::Text), "met" .= True]
+                            , object ["criterion" .= ("c-bad"::Text),  "met" .= True] ] ]))
+        , error = Nothing, createdAt = now } :: Score)
+  rep <- metaReport pool 0 Stored rid gvid
+  case rep of
+    Left e  -> expect ("persist metaReport: " <> T.unpack e) False
+    Right r -> do
+      _ <- saveMetaEval pool rid gvid "stored" 0 r
+      rows <- withSession pool (selectWhere [ #run ==. rid ]) :: IO [MetaEval]
+      expect "persist: one row" (length rows == 1)
+      case rows of
+        [m] -> do
+          expect "persist: agreement matches" (m.agreement == r.agreement)
+          expect "persist: kappa matches"     (m.kappa == r.kappa)
+          expect "persist: measured matches"  (m.measured == r.measured)
+          expect "persist: mode/seed"         (m.mode == "stored" && m.seed == 0)
+        _ -> expect "persist: exactly one" False
+      _ <- saveMetaEval pool rid gvid "stored" 0 r
+      rows2 <- withSession pool (selectWhere [ #run ==. rid ]) :: IO [MetaEval]
+      expect "persist: append -> two rows" (length rows2 == 2)
 
 opts :: Bool -> MetaLoadOpts
 opts skip = MetaLoadOpts

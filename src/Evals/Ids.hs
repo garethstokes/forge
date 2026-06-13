@@ -15,3 +15,4 @@ newtype OutputId         = OutputId Int         deriving stock (Eq, Ord, Show) d
 newtype ScoreId          = ScoreId Int          deriving stock (Eq, Ord, Show) deriving newtype DbType
 newtype RunMetricId      = RunMetricId Int      deriving stock (Eq, Ord, Show) deriving newtype DbType
 newtype CriterionLabelId = CriterionLabelId Int deriving stock (Eq, Ord, Show) deriving newtype DbType
+newtype MetaEvalId       = MetaEvalId Int       deriving stock (Eq, Ord, Show) deriving newtype DbType

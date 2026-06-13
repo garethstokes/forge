@@ -13,7 +13,7 @@ schema =
   , managed (Proxy @Target),  managed (Proxy @TargetVersion)
   , managed (Proxy @Grader),  managed (Proxy @GraderVersion)
   , managed (Proxy @Run),     managed (Proxy @Output), managed (Proxy @Score), managed (Proxy @RunMetric)
-  , managed (Proxy @CriterionLabel) ]
+  , managed (Proxy @CriterionLabel), managed (Proxy @MetaEval) ]
 
 migrateAll :: Db MigrationPlan
 migrateAll = migrateUp schema
