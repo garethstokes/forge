@@ -50,6 +50,7 @@ import Crucible.Chat
   (converse, runChatScripted, runToolAgent, runToolAgentN, Turn(..), Block(..), ToolUse(..), ChatError(..))
 import Crucible.Emit (emit, runEmitList, ignoreEmit)
 import Crucible.Rows (splitRows, runRows)
+import Crucible.Partial (closeJson, runPartial)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import Control.Concurrent (threadDelay)
@@ -92,6 +93,11 @@ instance HasCodec Station where codec = genericCodec
 data OptRec = OptRec { reqF :: Text, optF :: Maybe Int }
   deriving (Eq, Show, Generic)
 instance HasCodec OptRec where codec = genericCodec
+
+-- crucible-2ey: all-optional partial type for runPartial tests
+data PersonP = PersonP { ppName :: Maybe Text, ppAge :: Maybe Int }
+  deriving (Eq, Show, Generic)
+instance HasCodec PersonP where codec = genericCodec
 
 stationVal :: Station
 stationVal = Station "Eagle Farm" (Forecast "Brisbane" 26.0 False) Cloudy
@@ -1845,4 +1851,34 @@ main = runChecks
           , T.isInfixOf "low" sch
           , decodeLLM c "\"urgent\""
           , case decodeLLM c "\"bogus\"" of Left _ -> True; Right (_ :: Text) -> False ) )
+  -- crucible-2ey: closeJson (partial JSON completion)
+  , check "closeJson: closes a partial value string"
+      "{\"name\":\"Ali\"}"        (closeJson "{\"name\":\"Ali")
+  , check "closeJson: complete-but-unclosed object"
+      "{\"name\":\"Bob\",\"age\":3}" (closeJson "{\"name\":\"Bob\",\"age\":3")
+  , check "closeJson: drops a trailing comma"
+      "{\"a\":1}"                 (closeJson "{\"a\":1,")
+  , check "closeJson: drops a key with no value"
+      "{}"                        (closeJson "{\"a\":")
+  , check "closeJson: drops an incomplete key"
+      "{}"                        (closeJson "{\"na")
+  , check "closeJson: drops a partial literal"
+      "{}"                        (closeJson "{\"a\":tr")
+  , check "closeJson: nested object, value string and stack closed in order"
+      "{\"a\":1,\"b\":{\"c\":\"x\"}}" (closeJson "{\"a\":1,\"b\":{\"c\":\"x")
+  , check "closeJson: already-closed and trivial inputs"
+      ("{}", "")                  (closeJson "{}", closeJson "")
+  -- crucible-2ey: runPartial end-to-end
+  , check "runPartial: the final partial has all fields; a leading blank emits nothing"
+      (Just (Just "Alice", Just 30))
+      (let (_, ps) = runPureEff (runPartial (codec @PersonP)
+                       (mapM_ emit ["", "{\"ppName\": \"Al", "ice\", \"ppAge\": 3", "0}"]))
+           lastRight xs = case [a | Right a <- xs] of [] -> Nothing; rs -> Just (last rs)
+       in fmap (\p -> (ppName p, ppAge p)) (lastRight ps))
+  , check "runPartial: an intermediate partial shows the arrived field only"
+      (Just (Just "Al", Nothing))
+      (let (_, ps) = runPureEff (runPartial (codec @PersonP)
+                       (mapM_ emit ["{\"ppName\": \"Al", "ice\", \"ppAge\": 3", "0}"]))
+           rights' = [a | Right a <- ps]
+       in case rights' of (p : _) -> Just (ppName p, ppAge p); [] -> Nothing)
   ]
