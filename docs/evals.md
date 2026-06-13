@@ -355,8 +355,10 @@ abstained criterion is treated inside a `Checklist`:
   this when a criterion is only applicable to some outputs and an inapplicable
   one should not penalise the case.
 
-For a standalone `Rubric` or `Scale`, there is no denominator to skip from, so
-an abstain always scores 0 regardless of policy. For a penalty criterion, an
+For a standalone `Rubric`, there is no denominator to skip from, so an abstain
+always scores 0 regardless of policy. (`Scale` ratings have no abstain level;
+the verdict kinds apply to `Rubric`, `Checklist`, and grounded claims.) For a
+penalty criterion, an
 abstain under `AbstainFails` maps to the Fail verdict; a penalty's Fail means
 the bad property is absent, so the penalty clears (does not subtract).
 
@@ -592,8 +594,9 @@ The `CalibrationReport` carries raw `agreement`, Cohen's `kappa` (agreement
 corrected for chance; raw agreement flatters the judge when most cases pass),
 `failPrecision` (of the judge's fails, how many a human also failed) and
 `failRecall` (of the human fails, how many the judge caught), plus the
-`contested` case names where the vote split and any `judgeErrors`. When
-examples were used, two additional fields record how many: `exampleCount`
+`contested` case names where the vote split, any `judgeErrors`, and any
+`abstained` cases (excluded from agreement and kappa, counted separately).
+When examples were used, two additional fields record how many: `exampleCount`
 and `measured` (the holdout size). `renderCalibration` prints the report;
 the examples line appears only when `exampleCount > 0`:
 
