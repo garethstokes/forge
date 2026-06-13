@@ -59,6 +59,7 @@ main = do
     missingRunSpec pool now
     dedupeSpec pool now
     pointedSpec pool now
+    dimEngineSpec pool now
   putStrLn "manifest-evals GradeSpec: config + exact + pointed + engine + checklist + resume + metrics + edge-cases OK"
 
 configSpec :: IO ()
@@ -629,3 +630,41 @@ dimSpec = do
   let neg = (Just (-0.5), Nothing, Nothing, Nothing)
   expect "dim overall clips negative to 0"
     (case [ m | m <- dimensionalMetrics [neg], m.tag == Nothing ] of [m] -> m.mean == 0 && m.count == 1; _ -> False)
+
+-- Dimensional engine: one tagged example with two axes + one theme drives
+-- recompute to emit overall + per-axis + per-theme RunMetric rows.
+dimEngineSpec :: Pool -> UTCTime -> IO ()
+dimEngineSpec pool now = do
+  sd <- withSession pool $ do
+    d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "dim", slug = "dim", createdAt = now } :: Dataset)
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1"
+                       , input = Aeson (toJSON ("q" :: Text))
+                       , expected = Just (Aeson (toJSON
+                           [ object ["criterion" .= ("A"::Text), "points" .= (4::Double), "tags" .= (["axis:accuracy"]::[Text])]
+                           , object ["criterion" .= ("B"::Text), "points" .= (6::Double), "tags" .= (["axis:completeness"]::[Text])] ]))
+                       , meta = Just (Aeson (object ["example_tags" .= (["theme:x"]::[Text])])) } :: Example)
+    t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
+    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "SYS"
+                             , params = Aeson (object []), createdAt = now } :: TargetVersion)
+    r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded"
+                   , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    _  <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "ans"
+                      , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
+    g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "pg", kind = "pointed", createdAt = now } :: Grader)
+    gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    pure (r.id, gv.id)
+  let (rid, gvid) = sd
+      judge _ _ c = pure (Right (CriterionVerdict { met = c.criterion == "A", explanation = "" }))
+  _ <- scoreRun pool 1 noRunner judge rid [gvid]
+  ms <- withSession pool (selectWhere [ #run ==. rid, #graderVersion ==. gvid ]) :: IO [RunMetric]
+  let row t = [ (m.mean, m.count) | m <- ms, m.tag == t ]
+  expect "dim engine: overall 0.4 count 1"
+    (case row Nothing of [(mn, c)] -> near mn 0.4 && c == 1; _ -> False)
+  expect "dim engine: axis:accuracy 1.0 count 1"
+    (case row (Just "axis:accuracy") of [(mn, c)] -> near mn 1.0 && c == 1; _ -> False)
+  expect "dim engine: axis:completeness 0.0 count 1"
+    (case row (Just "axis:completeness") of [(mn, c)] -> near mn 0.0 && c == 1; _ -> False)
+  expect "dim engine: theme:x 0.4 count 1"
+    (case row (Just "theme:x") of [(mn, c)] -> near mn 0.4 && c == 1; _ -> False)
+  expect "dim engine: exactly 4 metric rows" (length ms == 4)

@@ -386,25 +386,20 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
       withSession pool $ do
         rows <- runQuery $ do
           s <- from @Score
-          o <- innerJoin @Output (\o -> o ?. #id .== s ?. #output)
+          o <- innerJoin @Output  (\o -> o ?. #id .== s ?. #output)
+          e <- innerJoin @Example (\e -> e ?. #id .== o ?. #example)
           where_ (o ?. #run .== val runId .&& s ?. #graderVersion .== val gv.id)
-          pure (s ?. #value, s ?. #passed)
-        let rows' = rows :: [(Maybe Double, Maybe Bool)]
-            graded = [ (v, p) | (Just v, p) <- rows' ]
-            n = length graded
-            mean = if n == 0 then 0 else sum (map fst graded) / fromIntegral n
-            -- passRate is over rows carrying a pass/fail verdict only;
-            -- pointed rows carry passed = Nothing so they do not contribute.
-            judged = [ b | (_, Just b) <- graded ]
-            pr     = if null judged then Nothing
-                     else Just (fromIntegral (length (filter id judged))
-                                  / fromIntegral (length judged))
+          pure (s ?. #value, (s ?. #passed, (s ?. #detail, e ?. #meta)))
+        -- runQuery encodes the projection as right-nested pairs; flatten to the aggregator's 4-tuple.
+        let unwrap (mv, (mp, (md, mm))) =
+              (mv, mp, fmap (\(Aeson x) -> x) md, fmap (\(Aeson x) -> x) mm)
+            dms = dimensionalMetrics
+              (map unwrap (rows :: [(Maybe Double, (Maybe Bool, (Maybe (Aeson Value), Maybe (Aeson Value))))]))
         deleteWhere ([ #run ==. runId, #graderVersion ==. gv.id ] :: [Cond RunMetric])
-        _ <- add (RunMetric
+        mapM_ (\dm -> add (RunMetric
           { id = RunMetricId 0, run = runId, graderVersion = gv.id
-          , mean = mean, passRate = pr, count = n, computedAt = now
-          , tag = Nothing } :: RunMetric)
-        pure ()
+          , mean = dm.mean, passRate = dm.passRate, count = dm.count
+          , tag = dm.tag, computedAt = now } :: RunMetric)) dms
 
     -- Scores for one grader version scoped to this run: join through Output
     -- so we only fetch rows belonging to this run, not all runs. Returns
