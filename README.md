@@ -109,8 +109,9 @@ Each `metaeval report` run is also persisted as a `MetaEval` row (agreement,
 Cohen's κ + CI, fail precision/recall, measured count, mode, seed, timestamp) —
 appended as history and queryable; the printed output is unchanged.
 
-Note: re-loading the same `--slug`+`--version` is refused even with `--force`
-(the synthetic run blocks replacement) — load a new version instead.
+Note: re-loading the same `--slug`+`--version` is refused by default. Pass
+`--force` to replace it: the prior labelled run graph (examples, outputs, scores,
+labels) is deleted and the version is re-seeded from the file.
 
 ## Dashboard
 

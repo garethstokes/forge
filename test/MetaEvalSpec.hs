@@ -147,5 +147,10 @@ ingestSpec pool = do
       forced <- metaLoad pool (MetaLoadOpts
         { file = "test/fixtures/metaeval.jsonl", name = "Meta", slug = "meta"
         , version = 1, skipBad = True, force = True })
-      expect "metaLoad --force is blocked by the synthetic run (HasRuns)"
-        (case forced of Left (HasRuns "meta" 1) -> True; _ -> False)
+      case forced of
+        Left e   -> expect ("metaLoad --force should replace, got: " <> show e) False
+        Right r2 -> do
+          expect "force: replaced run id differs from the original" (r2.runId /= r.runId)
+          expect "force: examples replaced (2, not 4)" (r2.examples == 2)
+          lbls2 <- withSession pool (selectWhere ([] :: [Cond CriterionLabel])) :: IO [CriterionLabel]
+          expect "force: labels replaced not accumulated (3, not 6)" (length lbls2 == 3)

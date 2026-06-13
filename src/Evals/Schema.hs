@@ -262,7 +262,8 @@ instance HasRelation Run "datasetVersion" where
 
 instance Entity Output where
   tableMeta     = genericTableMeta @OutputT "outputs"
-  cascadeRules  = [ cascade (Proxy @Score) (Proxy @"output") Cascade ]
+  cascadeRules  = [ cascade (Proxy @Score) (Proxy @"output") Cascade
+                  , cascade (Proxy @CriterionLabel) (Proxy @"output") Cascade ]
   indexes       = [ gin #response, btree #run ]
   notifyChanges = True
 

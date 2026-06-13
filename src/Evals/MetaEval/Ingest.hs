@@ -54,7 +54,6 @@ data MetaLoadError
   = BadLine Int Text             -- malformed JSON / shape
   | NoSuchCriterion Int Text     -- a label references a criterion absent from the row's rubric
   | AlreadyExists Text Int
-  | HasRuns Text Int
   deriving (Eq, Show)
 
 data MetaLoadResult = MetaLoadResult
@@ -66,7 +65,6 @@ renderMetaLoadError = \case
   BadLine n e         -> "line " <> tshow n <> ": " <> e
   NoSuchCriterion n c -> "line " <> tshow n <> ": label criterion not in rubric: " <> c
   AlreadyExists s v   -> "dataset " <> s <> " v" <> tshow v <> " already exists (use --force to replace)"
-  HasRuns s v         -> "dataset " <> s <> " v" <> tshow v <> " has runs; delete them before --force"
   where tshow = T.pack . show
 
 -- | The criterion texts present in a rubric array (anything malformed -> []).
@@ -105,14 +103,13 @@ metaLoad pool opts = do
             case (vers :: [DatasetVersion]) of
               (v : _)
                 | not opts.force -> pure (Left (AlreadyExists opts.slug opts.version))
-                | otherwise -> do
-                    runs <- selectWhere [ #datasetVersion ==. v.id ]
-                    if not (null (runs :: [Run]))
-                      then pure (Left (HasRuns opts.slug opts.version))
-                      else withTransaction $ do
-                        delete v
-                        flush   -- queued DELETE before the eager INSERTs (unique index)
-                        Right <$> seedGraph d.id opts rows now nSkip
+                | otherwise -> withTransaction $ do
+                    runs <- selectWhere [ #datasetVersion ==. v.id ] :: Db [Run]
+                    mapM_ delete runs   -- cascades Run -> Output -> {Score, CriterionLabel}
+                    flush               -- runs + subtree gone before deleting the version
+                    delete v            -- no runs reference it now (Restrict ok); cascades Examples
+                    flush               -- version gone before seedGraph's eager inserts
+                    Right <$> seedGraph d.id opts rows now nSkip
               [] -> withTransaction (Right <$> seedGraph d.id opts rows now nSkip)
           [] -> withTransaction $ do
             d <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = opts.name
