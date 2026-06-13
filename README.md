@@ -85,6 +85,24 @@ manifest-evals ingest healthbench_hard.jsonl \
   --name "HealthBench Hard" --slug healthbench-hard --format healthbench
 ```
 
+## Meta-evaluation (grader calibration)
+
+`manifest-evals metaeval load <file.jsonl> --name N --slug S` seeds a labelled
+run from records `{key, input, completion, rubric:[{criterion,points,tags}],
+labels:[{criterion,met}]}` — each `labels` entry is a human verdict for a rubric
+criterion; a label naming a criterion absent from its rubric is refused (or
+skipped with `--skip-bad`).
+
+`manifest-evals metaeval report <runId> <graderVersionId> [--mode live|stored]
+[--seed N]` prints agreement, Cohen's κ (+95% CI), and fail-class
+precision/recall: `--mode live` re-judges each labelled criterion with the real
+grader (needs `ANTHROPIC_API_KEY`); `--mode stored` reads the verdicts from a
+prior `score` of that run. The statistics are crucible's (`reportFromVerdicts` /
+`renderCalibration`).
+
+Note: re-loading the same `--slug`+`--version` is refused even with `--force`
+(the synthetic run blocks replacement) — load a new version instead.
+
 ## Dashboard
 
 A read-only eval dashboard: browse runs, drill into per-example outputs and

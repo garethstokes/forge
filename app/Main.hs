@@ -1,3 +1,5 @@
+{-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -28,7 +30,10 @@ import Evals.Grade (ScoreOutcome (..), scoreRun)
 import Evals.Grade.Anthropic (liveCriterionJudge, liveGradeRunner)
 import Evals.Ids (GraderVersionId (..), RunId (..))
 import Evals.Ingest (IngestOpts (..), IngestResult (..), formatFor, ingestFile, renderIngestError)
+import Evals.MetaEval (metaReport, MetaMode (..))
+import Evals.MetaEval.Ingest (MetaLoadOpts (..), MetaLoadResult (..), metaLoad, renderMetaLoadError)
 import Evals.Migrate (migrateAll)
+import qualified Crucible.Eval.Calibrate as Cal
 
 main :: IO ()
 main = getArgs >>= \case
@@ -80,12 +85,39 @@ main = getArgs >>= \case
       Left e  -> die (T.unpack (renderIngestError e))
       Right r -> putStrLn $ "ingested " <> slug <> " v" <> show ver <> ": "
                    <> show r.ingested <> " examples (" <> show r.skipped <> " skipped)"
+  ("metaeval" : "load" : fileArg : flags) -> do
+    name <- reqFlag "--name" flags
+    slug <- reqFlag "--slug" flags
+    ver  <- maybe (pure 1) parseIntFlag (lookupFlag "--version" flags)
+    let opts = MetaLoadOpts
+          { file = fileArg, name = T.pack name, slug = T.pack slug, version = ver
+          , skipBad = "--skip-bad" `elem` flags, force = "--force" `elem` flags }
+    withEnvPool $ \pool -> metaLoad pool opts >>= \case
+      Left e  -> die (T.unpack (renderMetaLoadError e))
+      Right r -> let RunId rid = r.runId in
+        putStrLn $ "loaded " <> slug <> " v" <> show ver <> ": run " <> show rid
+          <> ", " <> show r.examples <> " examples, " <> show r.labels <> " labels ("
+          <> show r.skipped <> " skipped)"
+  ("metaeval" : "report" : ridStr : gvStr : flags) -> do
+    rid  <- maybe (die ("not a run id: " <> ridStr)) (pure . RunId) (readMaybe ridStr)
+    gvid <- maybe (die ("not a grader version id: " <> gvStr)) (pure . GraderVersionId) (readMaybe gvStr)
+    seed <- maybe (pure 0) parseIntFlag (lookupFlag "--seed" flags)
+    let modeName = maybe "live" id (lookupFlag "--mode" flags)
+    mode <- case modeName of
+      "stored" -> pure Stored
+      "live"   -> Live . liveCriterionJudge . T.pack <$> requireEnv "ANTHROPIC_API_KEY"
+      other    -> die ("unknown --mode: " <> other)
+    withEnvPool $ \pool -> metaReport pool seed mode rid gvid >>= \case
+      Left e  -> die (T.unpack e)
+      Right r -> putStrLn (T.unpack (Cal.renderCalibration r))
   _ -> die usage
 
 usage :: String
 usage = "usage: manifest-evals migrate | run <runId> [--concurrency N] | "
      <> "score <runId> <graderVersionId>... [--concurrency N] | "
      <> "ingest <file.jsonl> --name N --slug S [--version N] [--format generic|healthbench] [--limit N] [--skip-bad] [--force]"
+     <> " | metaeval load <file.jsonl> --name N --slug S [--version N] [--skip-bad] [--force]"
+     <> " | metaeval report <runId> <graderVersionId> [--mode live|stored] [--seed N]"
 
 requireEnv :: String -> IO String
 requireEnv name =
