@@ -1,0 +1,1 @@
+{"prompt_id":"hb-1","prompt":[{"role":"user","content":"q"}],"rubrics":[{"criterion":"cites","points":7,"tags":["axis:accuracy"]}],"example_tags":["theme:hedging"],"canary":"healthbench:abc"}

@@ -1,0 +1,2 @@
+{"key":"a","input":"first","expected":{"v":1},"meta":{"src":"t"}}
+{"key":"b","input":{"messages":[{"role":"user","content":"hi"}]},"expected":["x"]}
