@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -16,7 +15,6 @@ import qualified Data.Vector as V
 import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText, refine, checked, Checked (..), allPassed)
-import NeatInterpolation (text)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
 import Crucible.Skill (Skill (..), Instruction (..), skill, skillWith, withPreamble, withConstraints, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, call, testSkill)
 import Data.Text (Text)
@@ -1772,14 +1770,14 @@ main = runChecks
       (runPureEff (runLLMScripted ["{\"n\": -1}", "{\"n\": 42}"]
          (call (skill "s" C.str
                   (C.object (C.field "n" Prelude.id (refine "n must be positive" (> 0) C.int)))
-                  (\x -> [text|give n for ${x}|]))
+                  (\x -> "give n for " <> x))
                ("in" :: Text))))
   , check "refine: with no retries a violation is returned"
       True
       (case runPureEff (runLLMScripted ["{\"n\": -1}"]
               (call (withRetries 0 (skill "s" C.str
                        (C.object (C.field "n" Prelude.id (refine "n must be positive" (> 0) C.int)))
-                       (\x -> [text|give n for ${x}|])))
+                       (\x -> "give n for " <> x)))
                     ("in" :: Text))) of
          Left e -> T.isInfixOf "n must be positive" e.message
          Right (_ :: Int) -> False)
