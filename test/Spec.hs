@@ -36,7 +36,7 @@ import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penalty, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
 import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
-import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt, ratePrompt)
+import Crucible.Eval.Judge (VerdictKind(..), Verdict(..), verdictCodec, AbstainPolicy(..), JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, VoteOutcome(..), vote, balanceExamples, judgePrompt, ratePrompt)
 import Crucible.Eval.Calibrate (CalibrationReport (..), calibrate, renderCalibration, calibrateWith, bootstrapKappa)
 import Crucible.LLM.Anthropic (AnthropicConfig(..), AnthropicError(..), isRetryable, defaultAnthropicConfig, chatRequestJson, parseTurn, parseUsage, turnContentJson)
 import qualified Crucible.LLM.Anthropic as Anthropic
@@ -981,10 +981,33 @@ main = runChecks
          [_, t] -> schemaType t.schema
          _      -> Nothing)
   -- eval rubric upgrades: verdict order, repair, voting
-  , check "judge verdict: decodes why-first and legacy field order"
-      (Right True, Right True)
-      ( ( fmap (.pass) (decodeLLM verdictCodec "{\"why\":\"w\",\"pass\":true}")
-        , fmap (.pass) (decodeLLM verdictCodec "{\"pass\":true,\"why\":\"w\"}") ) )
+  , check "verdict codec: new enum, legacy pass bool, and cannot_assess decode"
+      (Right Pass, Right Pass, Right Fail, Right CannotAssess)
+      ( fmap (.kind) (decodeLLM verdictCodec "{\"why\":\"w\",\"verdict\":\"pass\"}")
+      , fmap (.kind) (decodeLLM verdictCodec "{\"pass\":true,\"why\":\"w\"}")
+      , fmap (.kind) (decodeLLM verdictCodec "{\"why\":\"w\",\"pass\":false}")
+      , fmap (.kind) (decodeLLM verdictCodec "{\"why\":\"w\",\"verdict\":\"cannot_assess\"}") )
+  , check "verdict codec: a reply with neither verdict nor pass fails to parse"
+      True
+      (case decodeLLM verdictCodec "{\"why\":\"w\"}" of
+         Left _ -> True
+         Right (_ :: Verdict) -> False)
+  , check "vote: all samples abstain yields AllAbstained"
+      True
+      (case runPureEff (runLLMScripted
+              (replicate 3 "{\"why\":\"cant tell\",\"verdict\":\"cannot_assess\"}")
+              (vote False (JudgeOpts 3 [] AbstainFails) "r" "out")) of
+         AllAbstained m -> T.isInfixOf "cant tell" m
+         _              -> False)
+  , check "vote: a yes/no majority amid abstains still decides"
+      (True, 2, 0)
+      (case runPureEff (runLLMScripted
+              [ "{\"why\":\"a\",\"verdict\":\"pass\"}"
+              , "{\"why\":\"b\",\"verdict\":\"cannot_assess\"}"
+              , "{\"why\":\"c\",\"verdict\":\"pass\"}" ]
+              (vote False (JudgeOpts 3 [] AbstainFails) "r" "out")) of
+         Decided p _ _ y f -> (p, y, f)
+         _                 -> (False, 0, 0))
   , check "judge: repair recovers from one malformed verdict"
       (1.0, Nothing)
       (let s = runPureEff (runLLMScripted
@@ -1182,7 +1205,7 @@ main = runChecks
   , check "judgeWith: examples change no call accounting"
       (1.0, "leftover")
       (runPureEff (runLLMScripted ["{\"why\":\"y\",\"pass\":true}", "leftover"]
-        (do s <- judgeWith (JudgeOpts 1 [JudgeExample "e" True Nothing])
+        (do s <- judgeWith (JudgeOpts 1 [JudgeExample "e" True Nothing] AbstainFails)
                    id "r" ("out" :: Text)
             extra <- complete []
             pure (s.value, extra))))
@@ -1190,7 +1213,7 @@ main = runChecks
       1.0
       ((runPureEff (runLLMScripted
          [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"y\",\"pass\":true}" ]
-         (Embed.none (runEvalWith (JudgeOpts 1 [JudgeExample "e" True Nothing]) id pure
+         (Embed.none (runEvalWith (JudgeOpts 1 [JudgeExample "e" True Nothing] AbstainFails) id pure
             [ Case ("x" :: Text) "rub" (Rubric "r")
             , Case "y" "chk" (Checklist [criterion "c"]) ])))).passRate)
   , check "calibrateWith: examples held out of measurement"

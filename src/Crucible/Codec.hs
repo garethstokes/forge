@@ -3,7 +3,8 @@
 module Crucible.Codec
   ( JSONCodec, ObjectCodec
   , str, int, bool, float, list', nullable', enum
-  , object, field, anyValue
+  , object, field, optField, anyValue
+  , bimapCodec
   , schemaValue, schemaText
   ) where
 
@@ -17,8 +18,8 @@ import qualified Data.Text.Encoding as TE
 import Data.Scientific (fromFloatDigits)
 import Autodocodec
   ( JSONCodec, ObjectCodec, codec, textCodec, boolCodec, valueCodec
-  , scientificCodec, dimapCodec
-  , listCodec, maybeCodec, stringConstCodec, requiredFieldWith', (.=) )
+  , scientificCodec, dimapCodec, bimapCodec
+  , listCodec, maybeCodec, stringConstCodec, requiredFieldWith', optionalFieldWith', (.=) )
 import qualified Autodocodec as AC
 import Autodocodec.Schema (jsonSchemaVia)
 
@@ -45,6 +46,10 @@ enum pairs = stringConstCodec (NE.fromList [ (a, t) | (t, a) <- pairs ])
 -- | A single object field bundling its getter (crucible's old @field@).
 field :: Text -> (o -> f) -> JSONCodec f -> ObjectCodec o f
 field k getter c = requiredFieldWith' k c .= getter
+
+-- | An optional object field (crucible's optional field), on autodocodec.
+optField :: Text -> (o -> Maybe f) -> JSONCodec f -> ObjectCodec o (Maybe f)
+optField k getter c = optionalFieldWith' k c .= getter
 
 -- | Close an applicative object codec (crucible's old @object@).
 object :: ObjectCodec a a -> JSONCodec a

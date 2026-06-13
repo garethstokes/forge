@@ -11,8 +11,10 @@
 -- hardened grader prompt, validate-and-repair on the judge's own JSON, and
 -- the sequential majority-vote loop. 'Crucible.Eval' builds 'Score's on top.
 module Crucible.Eval.Judge
-  ( Verdict (..)
+  ( VerdictKind (..)
+  , Verdict (..)
   , verdictCodec
+  , AbstainPolicy (..)
   , JudgeError (..)
   , JudgeExample (..)
   , JudgeOpts (..)
@@ -41,19 +43,42 @@ import qualified Data.Text as T
 import Effectful
 import NeatInterpolation (text)
 
-import Crucible.Codec (JSONCodec, object, field, str, bool, int)
+import Crucible.Codec (JSONCodec, object, field, optField, str, bool, int, enum, bimapCodec)
 import Crucible.Decode (DecodeError (..), decodeLLM)
 import Crucible.LLM (LLM, Message (..), Role (..), complete)
 
--- | The judge's structured verdict. Field order is deliberate: the codec
--- encodes and the prompt requests "why" first, so the verdict token is
--- conditioned on the reasoning (the CoT-before-verdict effect). Decoding is
--- order-insensitive; legacy {"pass", "why"} JSON still parses.
-data Verdict = Verdict { why :: Text, pass :: Bool } deriving (Eq, Show)
+-- | A three-way grader verdict. CannotAssess lets the judge abstain when
+-- the output lacks the information to judge the criterion, distinct from a
+-- considered pass or fail. "why" is first so the verdict is conditioned on
+-- the reasoning. Decoding accepts the new {"why","verdict"} shape and
+-- legacy {"why","pass"} (true->Pass, false->Fail); a reply with neither
+-- fails to parse and drives the repair re-prompt.
+data VerdictKind = Pass | Fail | CannotAssess deriving (Eq, Show)
+
+data Verdict = Verdict { why :: Text, kind :: VerdictKind } deriving (Eq, Show)
+
+-- | Intermediate for tolerant decode: a new verdict enum or a legacy pass
+-- boolean, resolved to a 'VerdictKind'.
+data RawVerdict = RawVerdict
+  { why     :: Text
+  , verdict :: Maybe VerdictKind
+  , pass    :: Maybe Bool
+  }
+
+kindCodec :: JSONCodec VerdictKind
+kindCodec = enum [("pass", Pass), ("fail", Fail), ("cannot_assess", CannotAssess)]
 
 verdictCodec :: JSONCodec Verdict
-verdictCodec = object (Verdict <$> field "why"  (.why)  str
-                               <*> field "pass" (.pass) bool)
+verdictCodec = bimapCodec toV fromV $
+  object (RawVerdict <$> field    "why"     ((.why)     :: RawVerdict -> Text)          str
+                     <*> optField "verdict" ((.verdict) :: RawVerdict -> Maybe VerdictKind) kindCodec
+                     <*> optField "pass"    ((.pass)    :: RawVerdict -> Maybe Bool)     bool)
+  where
+    toV r = case r.verdict <|> fmap boolKind r.pass of
+      Just k  -> Right (Verdict r.why k)
+      Nothing -> Left "verdict: expected a \"verdict\" or \"pass\" field"
+    fromV (Verdict w k) = RawVerdict w (Just k) Nothing
+    boolKind b = if b then Pass else Fail
 
 -- | The judge's own reply failed to parse, even after one repair attempt.
 newtype JudgeError = JudgeError Text deriving (Eq, Show)
@@ -68,16 +93,21 @@ data JudgeExample = JudgeExample
   }
   deriving (Eq, Show)
 
--- | Knobs for a judged evaluation. Future judge options (abstain policy,
--- panels) extend this record rather than adding function variants.
+-- | How an all-abstain judgement resolves in a checklist: fail the
+-- criterion (the strict default) or drop it from the denominator.
+data AbstainPolicy = AbstainFails | AbstainSkips deriving (Eq, Show)
+
+-- | Knobs for a judged evaluation. Future judge options (panels) extend
+-- this record rather than adding function variants.
 data JudgeOpts = JudgeOpts
   { votes    :: Int             -- ^ samples per judgement (odd; 1 = single call)
   , examples :: [JudgeExample]  -- ^ few-shot examples for Rubric judging
+  , abstain  :: AbstainPolicy   -- ^ how a checklist criterion's abstention resolves
   }
   deriving (Eq, Show)
 
 defaultJudgeOpts :: JudgeOpts
-defaultJudgeOpts = JudgeOpts { votes = 1, examples = [] }
+defaultJudgeOpts = JudgeOpts { votes = 1, examples = [], abstain = AbstainFails }
 
 -- | An infinite deterministic Int stream from the xorshift step. Exported
 -- for the calibration bootstrap and for tests; not cryptographic.
@@ -144,7 +174,9 @@ judgeSystem = Message System [text|
   the output that satisfies or violates it, then give the verdict.
   Length and style are not criteria unless the rubric says so.
   If a requirement is not demonstrably met, fail it.
-  Respond ONLY with JSON {"why": <string>, "pass": <bool>}.|]
+  Use "cannot_assess" only when the output genuinely lacks the information to
+  judge the criterion, never to avoid a hard call.
+  Respond ONLY with JSON {"why": <string>, "verdict": "pass" | "fail" | "cannot_assess"}.|]
 
 -- | One judge call with validate-and-repair: on a verdict decode failure,
 -- re-prompt once with the raw reply and the parse error (the same idiom as
@@ -167,47 +199,46 @@ judgeOnce exs rubric graded = do
         Right v -> pure (Right v)
         Left e2 -> pure (Left (JudgeError e2.message))
 
--- | The result of an n-sample majority vote. 'why' is a SAMPLE from the
--- winning side, not the reason the vote went that way (a rationale attached
--- to a vote outcome is not causal); 'dissent' keeps the first rationale from
--- the losing side, when one was cast.
 data VoteOutcome
   = Decided { pass :: Bool, why :: Text, dissent :: Maybe Text, yes :: Int, no :: Int }
-  | AllErrored Text
+  | AllErrored   Text
+  | AllAbstained Text   -- ^ no yes/no cast and at least one abstain
   deriving (Eq, Show)
 
--- | Sample the judge up to @n@ times (sequentially) and majority-vote.
--- With early stopping on, the loop ends as soon as one side holds a strict
--- majority of n (at n=3, two agreeing votes settle it). An errored sample
--- consumes an attempt without casting a vote; if every attempt errors, the
--- outcome is 'AllErrored'. A tie on an exhausted budget (possible only via
--- errors) resolves to fail. The rationale kept is the first vote on the
--- winning side; the first losing-side rationale is kept as 'dissent'.
--- Callers should use odd n; n <= 1 is a single sample.
+-- | Sample the judge up to @n@ times and majority-vote. Pass/Fail tally as
+-- yes/no; CannotAssess consumes an attempt without casting a vote (like an
+-- error, but recorded honestly), as does a judge error. Early stopping
+-- counts only yes/no. On an exhausted budget with no yes/no votes the
+-- outcome is 'AllAbstained' if any sample abstained, else 'AllErrored'. A
+-- reached majority is 'Decided', with abstains and errors ignored in the
+-- tally. Callers should use odd n; n <= 1 is a single sample.
 vote :: (LLM :> es) => Bool -> JudgeOpts -> Text -> Text -> Eff es VoteOutcome
-vote earlyStop opts rubric graded = go n' (0, 0) (Nothing, Nothing) ""
+vote earlyStop opts rubric graded = go n' (0, 0) (Nothing, Nothing) Nothing ""
   where
     n'   = max 1 opts.votes
     need = n' `div` 2 + 1
 
-    decideYes (firstYes, firstNo) y f = Decided True  (fromMaybe "" firstYes) firstNo  y f
-    decideNo  (firstYes, firstNo) y f = Decided False (fromMaybe "" firstNo)  firstYes y f
+    decideYes (fy, fn) y f = Decided True  (fromMaybe "" fy) fn y f
+    decideNo  (fy, fn) y f = Decided False (fromMaybe "" fn) fy y f
 
-    go :: (LLM :> es) => Int -> (Int, Int) -> (Maybe Text, Maybe Text) -> Text -> Eff es VoteOutcome
-    go 0 (y, f) firsts lastErr
-      | y == 0 && f == 0 = pure (AllErrored lastErr)
+    go :: (LLM :> es)
+       => Int -> (Int, Int) -> (Maybe Text, Maybe Text) -> Maybe Text -> Text
+       -> Eff es VoteOutcome
+    go 0 (y, f) firsts firstAbs lastErr
+      | y == 0 && f == 0 = pure (maybe (AllErrored lastErr) AllAbstained firstAbs)
       | y > f            = pure (decideYes firsts y f)
       | otherwise        = pure (decideNo firsts y f)
-    go k tally@(y, f) firsts@(firstYes, firstNo) lastErr
+    go k tally@(y, f) firsts@(fy, fn) firstAbs lastErr
       | earlyStop && y >= need = pure (decideYes firsts y f)
       | earlyStop && f >= need = pure (decideNo firsts y f)
       | otherwise = do
           r <- judgeOnce opts.examples rubric graded
           case r of
-            Left (JudgeError m) -> go (k - 1) tally firsts m
-            Right v
-              | v.pass    -> go (k - 1) (y + 1, f) (firstYes <|> Just v.why, firstNo) lastErr
-              | otherwise -> go (k - 1) (y, f + 1) (firstYes, firstNo <|> Just v.why) lastErr
+            Left (JudgeError m) -> go (k - 1) tally firsts firstAbs m
+            Right v -> case v.kind of
+              Pass         -> go (k - 1) (y + 1, f) (fy <|> Just v.why, fn) firstAbs lastErr
+              Fail         -> go (k - 1) (y, f + 1) (fy, fn <|> Just v.why) firstAbs lastErr
+              CannotAssess -> go (k - 1) tally firsts (firstAbs <|> Just v.why) lastErr
 
 -- | The judge's structured ordinal rating. Same field order rationale as
 -- 'Verdict': "why" first so the level is conditioned on the reasoning.
