@@ -33,7 +33,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
-import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
+import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penalty, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
 import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (Verdict(..), verdictCodec, JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, balanceExamples, judgePrompt, ratePrompt)
@@ -1047,6 +1047,59 @@ main = runChecks
                  [ "junk", "junk2", "{\"why\":\"y\",\"pass\":true}" ]
                  (Embed.none (scoreM id (Checklist [criterion "a", criterion "b"]) ("out" :: Text))))
        in (s.value, T.isInfixOf "judge error: " s.rationale))
+  -- crucible-nwa: penalty criteria (negative weights)
+  , check "checklist: a fired penalty subtracts; positives set the denominator"
+      True
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"y\",\"pass\":true}"
+                 , "{\"why\":\"fired\",\"pass\":true}" ]
+                 (Embed.none (scoreM id
+                    (Checklist [Criterion "helpful" 2, penalty 1 "recommends a product"]) ("out" :: Text))))
+       in abs (s.value - 0.5) < 1e-9)
+  , check "checklist: a heavy penalty clamps the score at 0"
+      0.0
+      ((runPureEff (runLLMScripted
+         [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"fired\",\"pass\":true}" ]
+         (Embed.none (scoreM id
+            (Checklist [Criterion "helpful" 2, penalty 5 "recommends a product"]) ("out" :: Text))))).value)
+  , check "checklist: a penalty present but not fired keeps the case perfect"
+      (1.0, 1.0)
+      (let rep = runPureEff (runLLMScripted
+                   [ "{\"why\":\"y\",\"pass\":true}"
+                   , "{\"why\":\"absent\",\"pass\":false}" ]
+                   (Embed.none (runEval id pure
+                      [Case ("in" :: Text) "c" (Checklist [Criterion "helpful" 2, penalty 3 "recommends a product"])])))
+       in (rep.passRate, rep.meanScore))
+  , check "checklist: a fired penalty drops the case out of passRate"
+      (0.0, True)
+      (let rep = runPureEff (runLLMScripted
+                   [ "{\"why\":\"y\",\"pass\":true}", "{\"why\":\"fired\",\"pass\":true}" ]
+                   (Embed.none (runEval id pure
+                      [Case ("in" :: Text) "c" (Checklist [Criterion "helpful" 2, penalty 1 "recommends a product"])])))
+       in (rep.passRate, abs (rep.meanScore - 0.5) < 1e-9))
+  , check "checklist: a penalty-only checklist scores 1.0 clear, 0.0 fired"
+      (1.0, 0.0)
+      ( (runPureEff (runLLMScripted ["{\"why\":\"absent\",\"pass\":false}"]
+          (Embed.none (scoreM id (Checklist [penalty 2 "recommends a product"]) ("out" :: Text))))).value
+      , (runPureEff (runLLMScripted ["{\"why\":\"fired\",\"pass\":true}"]
+          (Embed.none (scoreM id (Checklist [penalty 2 "recommends a product"]) ("out" :: Text))))).value )
+  , check "checklist: rationale uses [penalty]/[clear] for negatives, [pass]/[fail] for positives"
+      (True, True, True)
+      (let s = runPureEff (runLLMScripted
+                 [ "{\"why\":\"y\",\"pass\":true}"
+                 , "{\"why\":\"fired\",\"pass\":true}"
+                 , "{\"why\":\"absent\",\"pass\":false}" ]
+                 (Embed.none (scoreM id (Checklist
+                    [ Criterion "helpful" 1
+                    , penalty 1 "recommends a product"
+                    , penalty 1 "uses slang" ]) ("out" :: Text))))
+       in ( T.isInfixOf "[pass] helpful" s.rationale
+          , T.isInfixOf "[penalty] recommends a product" s.rationale
+          , T.isInfixOf "[clear] uses slang" s.rationale ))
+  , check "penalty: builds a negative-weight criterion; abs guards a negative arg"
+      (-2.0, -2.0)
+      (let a = penalty 2 "x"; b = penalty (-2) "x"
+       in (a.weight, b.weight))
   -- eval rubric upgrades: runEvalN + report annotations
   , check "runEvalN: votes thread to rubric cases"
       (Just (2, 0))

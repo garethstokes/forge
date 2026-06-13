@@ -14,7 +14,7 @@
 -- anchored ordinal scale; 'SimilarTo' compares embeddings by cosine. The
 -- judge plumbing (prompt, repair, voting) lives in "Crucible.Eval.Judge".
 module Crucible.Eval
-  ( Case(..), Expectation(..), Criterion(..), criterion
+  ( Case(..), Expectation(..), Criterion(..), criterion, penalty
   , Score(..), score, Verdict(..)
   , Result(..), Report(..)
   , JudgeExample (..), JudgeOpts (..), defaultJudgeOpts
@@ -63,13 +63,22 @@ data Expectation a
 
 -- | One checklist item: a concrete, observable requirement and its weight.
 -- Write observable criteria ("cites a source URL"), not aspirational ones
--- ("is trustworthy"). Weights affect 'Report.meanScore' only: a checklist
--- case passes (counts in 'Report.passRate') only when every criterion holds.
+-- ("is trustworthy"). A positive weight rewards; a negative weight (build
+-- it with 'penalty') subtracts for a failure mode. A checklist case passes
+-- (counts in 'Report.passRate') only when every positive criterion holds
+-- and no penalty fires.
 data Criterion = Criterion { label :: Text, weight :: Double }
 
 -- | A criterion with weight 1.
 criterion :: Text -> Criterion
 criterion l = Criterion l 1
+
+-- | A penalty criterion: a failure mode to subtract for. Give a positive
+-- magnitude; the stored weight is negative. The label names the BAD
+-- property ("recommends a specific product"), so the judge fires the
+-- penalty when that property is present, lowering the score.
+penalty :: Double -> Text -> Criterion
+penalty w l = Criterion l (negate (abs w))
 
 -- | One dataset row.
 data Case i a = Case { input :: i, name :: Text, expect :: Expectation a }
@@ -151,19 +160,25 @@ scoreM = scoreWith defaultJudgeOpts
 scoreN :: (Eq a, LLM :> es, Embed :> es) => Int -> (a -> Text) -> Expectation a -> a -> Eff es Score
 scoreN n = scoreWith defaultJudgeOpts { votes = n }
 
--- | Judge each criterion with its own binary call; score = passed weight /
--- total weight. value reaches 1.0 only when every criterion passes. A judge
--- error on a criterion fails that criterion with a tagged rationale line.
+-- | Judge each criterion with its own binary call. The score is the signed
+-- sum of passed-criterion weights over the sum of POSITIVE weights, clamped
+-- to [0,1]: positive criteria reward, negative (penalty) criteria subtract,
+-- and a perfect response scores 1.0 (penalties are not in the denominator).
+-- value reaches 1.0 only when every positive criterion passes and no penalty
+-- fires. A judge error on a criterion fails that criterion with a tagged line.
 checklistScore :: (LLM :> es) => Int -> (a -> Text) -> [Criterion] -> a -> Eff es Score
 checklistScore _ _ [] _ = pure (score 1.0 "empty checklist")
 checklistScore n render cs actual = do
   rs <- mapM judge1 cs
-  let total   = sum [c.weight | c <- cs]
-      got     = sum [c.weight | (c, passed, _) <- rs, passed]
-      allPass = and [p | (_, p, _) <- rs]
-      val | total <= 0 = if allPass then 1.0 else 0.0
-          | otherwise  = got / total
-      ln (c, p, w) = (if p then "[pass] " else "[fail] ") <> c.label <> ": " <> w
+  let posTotal = sum [c.weight | c <- cs, c.weight > 0]
+      got      = sum [c.weight | (c, passed, _) <- rs, passed]
+      clamp    = max 0.0 . min 1.0
+      val | posTotal > 0 = clamp (got / posTotal)
+          | got < 0      = 0.0
+          | otherwise    = 1.0
+      ln (c, p, w)
+        | c.weight < 0 = (if p then "[penalty] " else "[clear] ") <> c.label <> ": " <> w
+        | otherwise    = (if p then "[pass] "    else "[fail] ")  <> c.label <> ": " <> w
   pure (score val (T.intercalate "\n" (map ln rs)))
   where
     judge1 c = do
