@@ -159,7 +159,8 @@ runHeader expanded r =
         , statusChip r.status
         , span_ [] [ text ("started " <> fmtMaybeTime r.startedAt <> " · finished " <> fmtMaybeTime r.finishedAt) ]
         ]
-    , div_ [ P.class_ "metrics" ] (map (metricChipDetail expanded r.runId) r.metrics)
+    , div_ [ P.class_ "metrics" ] (map (graderPill expanded r.runId) r.metrics)
+    , div_ [ P.class_ "grader-details" ] [ graderDetailSection mc | mc <- r.metrics, gKey r.runId mc `elem` expanded ]
     ]
 
 outputsTable :: [MisoString] -> [OutputRowDto] -> View Model Action
@@ -293,7 +294,10 @@ statusChip s = span_ [ P.class_ ("chip " <> cls) ] [ text (ms s) ]
       _ -> "muted"
 
 metricChip :: MetricDto -> View Model Action
-metricChip mc = span_ [ P.class_ "chip metric" ] [ text (chipText mc) ]
+metricChip mc = span_ [ P.class_ "chip metric" ] [ text (chipText mc), kindTag mc.graderKind ]
+
+kindTag :: Text -> View Model Action
+kindTag k = span_ [ P.class_ "kind" ] [ text (ms k) ]
 
 chipText :: MetricDto -> MisoString
 chipText mc = ms mc.graderName <> " v" <> msShow mc.graderVersion
@@ -306,37 +310,68 @@ ciTxt = maybe "" (\s -> " ±" <> fmtD (1.96 * s))
 passTxt :: Maybe Double -> MisoString
 passTxt = maybe "" (\p -> " · pass " <> msShow (round (p * 100) :: Int) <> "%")
 
--- | A grader chip for the run-detail header: clickable (toggling an expand key)
--- when it has breakdowns, revealing a grouped bar panel below.
-metricChipDetail :: [MisoString] -> Int -> MetricDto -> View Model Action
-metricChipDetail expanded rid mc =
-  div_ [ P.class_ "metric-block" ]
-    ( span_ chipAttrs [ text (chipText mc <> caret) ]
-      : [ breakdownPanel mc | hasBrk && isOpen ] )
-  where
-    hasBrk  = not (null mc.breakdowns)
-    key     = "m:" <> msShow rid <> ":" <> ms mc.graderName <> "v" <> msShow mc.graderVersion
-    isOpen  = key `elem` expanded
-    caret   = if hasBrk then (if isOpen then " ▾" else " ▸") else ""
-    chipAttrs = P.class_ "chip metric" : [ onClick (ToggleExpand key) | hasBrk ]
+-- | A run-detail grader pill: always clickable, opens the grader-detail section.
+graderPill :: [MisoString] -> Int -> MetricDto -> View Model Action
+graderPill expanded rid mc =
+  span_ [ P.class_ "chip metric expandable", onClick (ToggleExpand (gKey rid mc)) ]
+    [ text (chipText mc), kindTag mc.graderKind
+    , span_ [ P.class_ "caret" ] [ text (if gKey rid mc `elem` expanded then " ▾" else " ▸") ] ]
 
--- | The grouped per-tag breakdown: namespace label (theme/axis/cluster, then
--- any other), then a bar row per tag.
-breakdownPanel :: MetricDto -> View Model Action
-breakdownPanel mc = div_ [ P.class_ "brk" ] (concatMap grp nsOrder)
+gKey :: Int -> MetricDto -> MisoString
+gKey rid mc = "m:" <> msShow rid <> ":" <> ms mc.graderName <> "v" <> msShow mc.graderVersion
+
+-- | Full-width run-level grader detail: how it scores + the charted breakdown.
+graderDetailSection :: MetricDto -> View Model Action
+graderDetailSection mc =
+  div_ [ P.class_ "gdetail" ]
+    ( div_ [ P.class_ "gdetail-head" ]
+        [ strong_ [] [ text (ms mc.graderName) ], text (" v" <> msShow mc.graderVersion)
+        , span_ [ P.class_ "kind big" ] [ text (ms mc.graderKind) ]
+        , span_ [ P.class_ "gdesc" ] [ text (methodLine mc.graderKind) ] ]
+      : [ breakdownChart mc | not (null mc.breakdowns) ]
+      ++ [ span_ [ P.class_ "gnote" ] [ text "criteria vary per example — open an example to see its criteria" ]
+         | mc.graderKind == "pointed" ] )
+
+methodLine :: Text -> MisoString
+methodLine k = case k of
+  "pointed"   -> "An LLM judges each criterion; score = points met ÷ points possible (partial credit, no pass/fail)."
+  "exact"     -> "Compares the answer to the expected value — all-or-nothing."
+  "rubric"    -> "An LLM judges the answer pass/fail against a rubric."
+  "checklist" -> "A weighted yes/no checklist; score = the weighted fraction satisfied."
+  _           -> "Scores each answer in this run."
+
+-- | The tag breakdown as a labeled horizontal bar chart.
+breakdownChart :: MetricDto -> View Model Action
+breakdownChart mc =
+  div_ [ P.class_ "chart" ]
+    ( div_ [ P.class_ "chart-head" ]
+        [ span_ [] [], span_ [] []
+        , span_ [ P.class_ "r" ] [ text "score" ], span_ [ P.class_ "r" ] [ text "95% CI" ], span_ [ P.class_ "r" ] [ text "n" ] ]
+      : concatMap grp nsOrder
+      ++ [ div_ [ P.class_ "scale" ] [ span_ [] [], div_ [ P.class_ "ticks" ] [ span_ [] [text "0"], span_ [] [text "0.5"], span_ [] [text "1.0"] ], span_ [] [] ]
+         , div_ [ P.class_ "legend" ] [ text "μ mean · ± 95% CI (bootstrap) · n = examples" ] ] )
   where
     nss     = nub (map (namespace . (.tag)) mc.breakdowns)
     known   = filter (`elem` nss) ["theme", "axis", "cluster"]
     nsOrder = known <> filter (`notElem` ["theme", "axis", "cluster"]) nss
-    grp n   = div_ [ P.class_ "grp-label" ] [ text (ms n) ]
-            : [ brkRow n b | b <- mc.breakdowns, namespace b.tag == n ]
-    brkRow n b =
-      div_ [ P.class_ "row" ]
-        [ span_ [ P.class_ ("chip " <> ms n) ] [ text (ms (labelOf b.tag)) ]
-        , div_ [ P.class_ ("bar " <> ms n) ] [ span_ [ widthStyle b.mean ] [] ]
-        , span_ [ P.class_ "num" ] [ text (fmtD b.mean <> ciTxt b.stderr) ]
-        , span_ [ P.class_ "n" ] [ text (msShow b.count) ]
-        ]
+    grp n   = div_ [ P.class_ "grp-label" ] [ text (ms n), span_ [ P.class_ "muted" ] [ text (nsHint n) ] ]
+            : [ brow n b | b <- mc.breakdowns, namespace b.tag == n ]
+    brow n b = div_ [ P.class_ ("brow " <> ms n) ]
+      [ span_ [ P.class_ ("tag " <> ms n) ] [ text (ms (labelOf b.tag)) ]
+      , div_ [ P.class_ "track" ] [ span_ [ widthStyle b.mean ] [] ]
+      , span_ [ P.class_ "val" ] [ text (fmtD b.mean) ]
+      , span_ [ P.class_ "ci" ]  [ text (ciCol b.stderr) ]
+      , span_ [ P.class_ "n" ]   [ text (msShow b.count) ] ]
+
+nsHint :: Text -> MisoString
+nsHint n = case n of
+  "axis"  -> " — criteria, grouped by what they measure"
+  "theme" -> " — each example's score, grouped by topic"
+  _       -> ""
+
+-- | CI column: "±X" (95% half-width) or an em-dash when no stderr.
+ciCol :: Maybe Double -> MisoString
+ciCol = maybe "—" (\s -> "±" <> fmtD (1.96 * s))
 
 -- | "theme:cardiology" -> "theme"; no colon -> "".
 namespace :: Text -> Text
