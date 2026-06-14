@@ -179,6 +179,9 @@ relevantTo route table =
     RunR _ -> table `elem` detailTables
     CompareR _ _ -> table `elem` detailTables
     ExampleR _ _ -> table `elem` detailTables
+    -- meta_evals has no notifyChanges trigger, so the SSE feed never emits it;
+    -- this clause is forward-looking and never actually fires today (the
+    -- calibration page is static once loaded).
     CalibrationR -> table == "meta_evals"
   where
     detailTables = ["runs", "outputs", "scores", "run_metrics"]

@@ -298,3 +298,4 @@ td.pick input { cursor: pointer; }
 .calib-band { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
 .nav-link { color: var(--accent); text-decoration: none; font-size: .9rem; }
 .nav-link:hover { text-decoration: underline; }
+.calib-page .empty { color: var(--muted); padding: .5rem 0; font-size: .9rem; }
