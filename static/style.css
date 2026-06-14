@@ -296,6 +296,7 @@ td.pick input { cursor: pointer; }
 .calib-spark .pt.cur { fill: #1a7f4b; }
 .calib-sub { font-size: .8rem; color: var(--muted); }
 .calib-band { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
+.calib-f1 { font-size: .82rem; color: var(--fg); margin: .15rem 0 .35rem; font-variant-numeric: tabular-nums; }
 .nav-link { color: var(--accent); text-decoration: none; font-size: .9rem; }
 .nav-link:hover { text-decoration: underline; }
 .calib-page .empty { color: var(--muted); padding: .5rem 0; font-size: .9rem; }

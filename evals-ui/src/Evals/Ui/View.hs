@@ -476,6 +476,10 @@ calibCard s =
         , span_ [ P.class_ "mode" ] [ text (ms s.mode) ]
         ]
     , kappaBar s.latest
+    , div_ [ P.class_ "calib-f1" ]
+        [ text ("balanced-F1 " <> fmtD s.latest.balancedF1
+                <> " (met " <> fmtD s.latest.passF1
+                <> " \183 not-met " <> fmtD s.latest.failF1 <> ")") ]
     , calibSpark s.trend
     , div_ [ P.class_ "calib-sub" ]
         [ text ("fail precision " <> fmtD s.latest.failPrecision
