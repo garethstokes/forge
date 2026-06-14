@@ -69,6 +69,7 @@ import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
 import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
+import Crucible.Memory.Eval (renderMemories, withMemories)
 import System.IO (openTempFile, hClose)
 import System.Directory (removeFile)
 
@@ -2024,4 +2025,33 @@ main = runChecks
                         ["[{\"op\":\"merge\",\"ids\":[0,1],\"kind\":\"semantic\",\"content\":\"merged\"}]"]
                         (runMemoryPure prog))
        in map (.content) out)
+  -- Memory.Eval renderMemories/withMemories
+  , let mi c = MemoryItem (MemoryId 0) Semantic c [] Curated 0
+        m1 = mi "The user prefers dark mode."
+        m2 = mi "The user's name is Gareth."
+    in check "renderMemories: lists content with a header, in order"
+         "Relevant memories from past sessions:\n- The user prefers dark mode.\n- The user's name is Gareth.\n"
+         (renderMemories [m1, m2])
+  , check "renderMemories: empty list is empty string"
+      ""
+      (renderMemories [])
+  , let mi c = MemoryItem (MemoryId 0) Semantic c [] Curated 0
+        m1 = mi "The user prefers dark mode."
+        sk  = skill "s" C.str C.str (const "do it")
+        sk' = withMemories [m1] sk
+    in check "withMemories: appends to an empty preamble"
+         (renderMemories [m1])
+         (sk'.instruction :: Instruction Text).preamble
+  , let mi c = MemoryItem (MemoryId 0) Semantic c [] Curated 0
+        m1 = mi "The user prefers dark mode."
+        sk  = withPreamble "BASE" (skill "s" C.str C.str (const "do it"))
+        sk' = withMemories [m1] sk
+    in check "withMemories: appends after an existing preamble"
+         ("BASE\n\n" <> renderMemories [m1])
+         (sk'.instruction :: Instruction Text).preamble
+  , let sk  = withPreamble "BASE" (skill "s" C.str C.str (const "do it"))
+        sk' = withMemories ([] :: [MemoryItem]) sk
+    in check "withMemories: empty list leaves the preamble unchanged"
+         "BASE"
+         (sk'.instruction :: Instruction Text).preamble
   ]
