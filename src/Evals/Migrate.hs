@@ -9,7 +9,8 @@ import Evals.Schema
 
 schema :: [ManagedTable]
 schema =
-  [ managed (Proxy @Dataset), managed (Proxy @DatasetVersion), managed (Proxy @Example)
+  [ managed (Proxy @Org)
+  , managed (Proxy @Dataset), managed (Proxy @DatasetVersion), managed (Proxy @Example)
   , managed (Proxy @Target),  managed (Proxy @TargetVersion)
   , managed (Proxy @Grader),  managed (Proxy @GraderVersion)
   , managed (Proxy @Run),     managed (Proxy @Output), managed (Proxy @Score), managed (Proxy @RunMetric)

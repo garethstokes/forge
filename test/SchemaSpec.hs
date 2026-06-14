@@ -29,6 +29,15 @@ main = withEphemeralDb $ \pool -> do
   p2 <- withSession pool migrateAll
   expect "second migrate is a no-op (empty additive plan)" (null (planAdditive p2))
   now <- getCurrentTime
+
+  -- Org round-trip
+  orgResult <- withSession pool $ do
+    o  <- add (Org { id = OrgId 0, slug = "acme", name = "Acme Corp", createdAt = now } :: Org)
+    got <- get @Org (Key o.id)
+    pure (fmap (.slug) got, fmap (.name) got)
+  expect "org round-trips: slug" (fst orgResult == Just "acme")
+  expect "org round-trips: name" (snd orgResult == Just "Acme Corp")
+
   result <- withSession pool $ do
     d <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "demo", slug = "demo", createdAt = now } :: Dataset)
     v <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
@@ -76,7 +85,7 @@ main = withEphemeralDb $ \pool -> do
   expect "label: criterion is \"is accurate\""    (lCriterion lab == Just "is accurate")
   expect "label: source is Just \"physician\""    (lSource lab == Just (Just "physician"))
 
-  putStrLn "manifest-evals SchemaSpec: migrate + round-trip + cascade + restrict + aggregate + compare-runs + criterion-label OK"
+  putStrLn "manifest-evals SchemaSpec: migrate + org + round-trip + cascade + restrict + aggregate + compare-runs + criterion-label OK"
 
 -- Scenario A ------------------------------------------------------------------
 

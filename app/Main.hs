@@ -21,18 +21,22 @@ import System.Environment (getArgs, lookupEnv)
 import System.Exit (die)
 import Text.Read (readMaybe)
 
-import Manifest (withSession)
+import Control.Monad.IO.Class (liftIO)
+import Data.Time (getCurrentTime)
+
+import Manifest (Cond, add, selectWhere, withSession)
 import Manifest.Postgres (Pool, closePool, newPool)
 
 import Evals.Execute (RunOutcome (..), executeRun)
 import Evals.Execute.Anthropic (liveAnthropicRunner)
 import Evals.Grade (ScoreOutcome (..), scoreRun)
 import Evals.Grade.Live (LiveKeys (..), liveCriterionJudge, liveGradeRunner)
-import Evals.Ids (GraderVersionId (..), RunId (..))
+import Evals.Ids (GraderVersionId (..), OrgId (..), RunId (..))
 import Evals.Ingest (IngestOpts (..), IngestResult (..), formatFor, ingestFile, renderIngestError)
 import Evals.MetaEval (metaReport, MetaMode (..), saveMetaEval)
 import Evals.MetaEval.Ingest (MetaLoadOpts (..), MetaLoadResult (..), metaLoad, renderMetaLoadError)
 import Evals.Migrate (migrateAll)
+import Evals.Schema (Org (..))
 import qualified Crucible.Eval.Calibrate as Cal
 
 main :: IO ()
@@ -113,6 +117,18 @@ main = getArgs >>= \case
       Right r -> do
         _ <- saveMetaEval pool rid gvid (T.pack modeName) seed r
         putStrLn (T.unpack (Cal.renderCalibration r))
+  ("org" : "create" : flags) -> do
+    slug <- reqFlag "--slug" flags
+    name <- reqFlag "--name" flags
+    now  <- getCurrentTime
+    withEnvPool $ \pool -> withSession pool $ do
+      o <- add (Org { id = OrgId 0, slug = T.pack slug, name = T.pack name, createdAt = now } :: Org)
+      let OrgId n = o.id in liftIO (putStrLn ("created org " <> show n <> " (" <> slug <> ")"))
+  ("org" : "list" : _) -> do
+    withEnvPool $ \pool -> withSession pool $ do
+      os <- selectWhere ([] :: [Cond Org])
+      liftIO (mapM_ (\o -> let OrgId n = o.id
+                           in putStrLn (show n <> "  " <> T.unpack o.slug <> "  " <> T.unpack o.name)) os)
   _ -> die usage
 
 usage :: String
@@ -121,6 +137,7 @@ usage = "usage: manifest-evals migrate | run <runId> [--concurrency N] | "
      <> "ingest <file.jsonl> --name N --slug S [--version N] [--format generic|healthbench] [--limit N] [--skip-bad] [--force]"
      <> " | metaeval load <file.jsonl> --name N --slug S [--version N] [--format generic|healthbench] [--skip-bad] [--force]"
      <> " | metaeval report <runId> <graderVersionId> [--mode live|stored] [--seed N]"
+     <> " | org create --slug S --name N | org list"
 
 requireEnv :: String -> IO String
 requireEnv name =

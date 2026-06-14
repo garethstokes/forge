@@ -26,6 +26,22 @@ import GHC.Generics (Generic)
 import Manifest
 import Evals.Ids
 
+-- Orgs (tenant registry) -------------------------------------------------------
+
+data OrgT f = Org
+  { id        :: Field f (Pk OrgId)
+  , slug      :: Field f Text
+  , name      :: Field f Text
+  , createdAt :: Field f UTCTime
+  } deriving Generic
+type Org = OrgT Identity
+
+instance Entity Org where
+  tableMeta = genericTableMeta @OrgT "orgs"
+  indexes   = [ unique [#slug] ]
+  -- intentionally NO rlsPolicies: the tenant registry is readable so the app
+  -- can resolve a slug -> org id before setting tenant context.
+
 -- Datasets (inputs) -------------------------------------------------------------
 
 data DatasetT f = Dataset
