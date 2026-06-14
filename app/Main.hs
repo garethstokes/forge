@@ -36,7 +36,7 @@ import Evals.Ingest (IngestOpts (..), IngestResult (..), formatFor, ingestFile, 
 import Evals.MetaEval (metaReport, MetaMode (..), saveMetaEval)
 import Evals.MetaEval.Ingest (MetaLoadOpts (..), MetaLoadResult (..), metaLoad, renderMetaLoadError)
 import Evals.Migrate (migrateAll)
-import Evals.Schema (Org (..))
+import Evals.Schema
 import qualified Crucible.Eval.Calibrate as Cal
 
 main :: IO ()
