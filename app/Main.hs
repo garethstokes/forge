@@ -60,6 +60,7 @@ import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
 import qualified Crucible.Ledger as Ledger
 import qualified Crucible.Research as Research
+import Crucible.Research.Grounded (writeGrounded, defaultGroundGate, GroundingOutcome (..))
 import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
 import Crucible.Memory.Eval (memoryLift, liftDelta)
@@ -356,6 +357,23 @@ main = do
         pure (i, h)))
       TIO.putStrLn ("research: index = " <> T.pack (show (map (\(Research.Slug s) -> s) researchIdx))
                     <> ", search 'extends' = " <> T.pack (show (map (\(Research.Slug s) -> s) researchHits)))
+      -- Grounding-gated writes: a page lands only if its body is supported by
+      -- the evidence. One grounded page commits; one ungrounded page is rejected.
+      let groundDir = "/tmp/crucible-research-grounded-demo"
+          evidence = "Brisbane recorded 26C and sunny skies today."
+          grounded   = Research.Page (Research.Slug "weather-ok") "Weather"
+                         [] "Brisbane reached 26C and was sunny." ("" :: T.Text)
+          ungrounded = Research.Page (Research.Slug "weather-bad") "Weather"
+                         [] "Brisbane reached 40C and it snowed." ("" :: T.Text)
+      (okRes, badRes) <- runEff (Anthropic.run cfg (Research.runResearchDir str groundDir (do
+        a <- writeGrounded defaultGroundGate evidence grounded
+        b <- writeGrounded defaultGroundGate evidence ungrounded
+        pure (a, b))))
+      let render r = case r of
+            Right () -> "committed"
+            Left o   -> "rejected (" <> T.pack (show o) <> ")"
+      TIO.putStrLn ("grounded write (supported): " <> render okRes)
+      TIO.putStrLn ("grounded write (unsupported): " <> render badRes)
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
