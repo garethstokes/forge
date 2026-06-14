@@ -365,15 +365,18 @@ main = do
                          [] "Brisbane reached 26C and was sunny." ("" :: T.Text)
           ungrounded = Research.Page (Research.Slug "weather-bad") "Weather"
                          [] "Brisbane reached 40C and it snowed." ("" :: T.Text)
-      (okRes, badRes) <- runEff (Anthropic.run cfg (Research.runResearchDir str groundDir (do
+      (okRes, badRes, okOnDisk, badOnDisk) <- runEff (Anthropic.run cfg (Research.runResearchDir str groundDir (do
         a <- writeGrounded defaultGroundGate evidence grounded
         b <- writeGrounded defaultGroundGate evidence ungrounded
-        pure (a, b))))
+        onOk  <- Research.readPage (Research.Slug "weather-ok")
+        onBad <- Research.readPage (Research.Slug "weather-bad")
+        pure (a, b, onOk, onBad))))
       let render r = case r of
             Right () -> "committed"
             Left o   -> "rejected (" <> T.pack (show o) <> ")"
-      TIO.putStrLn ("grounded write (supported): " <> render okRes)
-      TIO.putStrLn ("grounded write (unsupported): " <> render badRes)
+          onDisk m = maybe "absent" (const "present") (m :: Maybe (Research.Page T.Text))
+      TIO.putStrLn ("grounded write (supported): " <> render okRes <> "; on disk: " <> onDisk okOnDisk)
+      TIO.putStrLn ("grounded write (unsupported): " <> render badRes <> "; on disk: " <> onDisk badOnDisk)
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of

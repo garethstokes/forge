@@ -32,10 +32,11 @@ data NoClaimsPolicy = CommitNoClaims | RejectNoClaims
   deriving (Eq, Show)
 
 data GroundGate = GroundGate
-  { threshold  :: Double          -- ^ min fraction of claims supported to commit (1.0 = all)
+  { threshold  :: Double          -- ^ min fraction of claims supported to commit (1.0 = all; a value above 1 always rejects, below 0 always commits)
   , votes      :: Int             -- ^ judge votes per claim (odd; <=1 means one judge call)
   , onNoClaims :: NoClaimsPolicy  -- ^ commit or reject when the body makes no claims
   }
+  deriving (Eq, Show)
 
 -- | All claims supported, one vote per claim, commit when there are no claims.
 defaultGroundGate :: GroundGate
