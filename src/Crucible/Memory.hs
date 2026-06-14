@@ -45,8 +45,7 @@ import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
 import Effectful.State.Static.Local (evalState, get, modify, put, runState)
 
-import Crucible.Codec (JSONCodec, object, field, optField, enum, str, int, list', bimapCodec, encodeText)
-import Autodocodec (dimapCodec)
+import Crucible.Codec (JSONCodec, object, field, optField, enum, str, int, list', bimapCodec, dimapCodec, encodeText)
 import Crucible.Decode (DecodeError, decodeLLM)
 
 data MemoryKind = Episodic | Semantic | Procedural
@@ -229,7 +228,9 @@ appendEntry path e = TIO.appendFile path (encodeText entryCodec e <> "\n")
 -- | A JSONL log at the path. Remember/Forget append one line; Recall reads,
 -- folds, filters, budgets. id = count of prior Remembered entries;
 -- createdAt = the same ordinal (a uniform counter, not wall-clock).
--- git-diffable, lexical + tag matching.
+-- git-diffable, lexical + tag matching. Single-writer: each Remember does a
+-- read-count-append, which is not atomic, so concurrent Remember calls from
+-- separate threads or processes can assign duplicate ids or interleave lines.
 runMemoryFile :: (IOE :> es) => FilePath -> Eff (Memory : es) a -> Eff es a
 runMemoryFile path = interpret $ \_ -> \case
   Remember d -> liftIO $ do

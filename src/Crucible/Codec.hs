@@ -7,7 +7,7 @@ module Crucible.Codec
   ( JSONCodec, ObjectCodec
   , str, int, bool, float, list', nullable', enum
   , object, field, optField, anyValue
-  , bimapCodec
+  , bimapCodec, dimapCodec
   , schemaValue, schemaText, encodeText
   , refine, checked, Checked (..), allPassed, describe
   ) where

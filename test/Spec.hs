@@ -1968,7 +1968,7 @@ main = runChecks
          (["beta"], True, True)
          ( map (.content) items
          , T.isInfixOf "alpha" raw
-         , T.isInfixOf "forgot" raw )
+         , T.isInfixOf "\"forgot\"" raw )
   , do (path, h) <- openTempFile "/tmp" "crucible-mem-prov.jsonl"
        hClose h
        items <- runEff (runMemoryFile path (do
