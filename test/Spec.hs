@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Crucible.Decode (stripToJson, decodeLLM, DecodeError (..))
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
-import Effectful (Eff, runEff, runPureEff, liftIO)
+import Effectful (Eff, IOE, runEff, runPureEff, liftIO)
 import qualified Data.Text.IO as TIO
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text.Encoding as TE
@@ -77,7 +77,7 @@ import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
 import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
 import qualified Data.ByteString as BSTEST
-import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), spawn, workerPrompt, runAgentsScripted)
+import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), spawn, workerPrompt, runAgentsScripted, runAgents)
 
 -- Sample types for codec tests
 
@@ -2214,4 +2214,7 @@ main = runChecks
        in T.isInfixOf "double the input" p && T.isInfixOf "<input>\n7" p && T.isInfixOf "\"n\"" p)
   , check "AgentFailure Eq/Show round value"
       (SpawnBudgetExceeded 3) (SpawnBudgetExceeded 3)
+  , do let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[Chat.Chat, IOE]])
+       r <- runEff (runChatScripted [Turn "{\"n\": 42}" []] (runAgents 5 (spawn w 21)))
+       check "runAgents (scripted Chat): worker answer decodes to typed output" (Right (42 :: Int)) r
   ]
