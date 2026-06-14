@@ -7,6 +7,7 @@
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -15,10 +16,11 @@
 -- | Typed orchestrator-worker spawn. A 'SubAgent' is a worker: a 'Skill' whose
 -- body is a tool loop. The 'Agents' effect's 'spawn' runs the worker as a fresh
 -- transcript (the parent never sees it) and decodes its final answer through the
--- worker's output codec, the typed handoff no surveyed harness has. This release
--- is one level (workers are leaf, cannot spawn) and synchronous, with a built-in
--- spawn cap. 'runAgents' is the live interpreter; 'runAgentsScripted' is a
--- model-free interpreter for testing parent logic.
+-- worker's output codec, the typed handoff no surveyed harness has. A worker's
+-- tools run in a row that can 'spawn', so a worker can spawn sub-workers (an
+-- arbitrary-depth tree); 'runAgents' threads one spawn budget across the whole
+-- tree. Spawn is synchronous. 'runAgents' is the live interpreter;
+-- 'runAgentsScripted' is a model-free interpreter for testing parent logic.
 module Crucible.Agents
   ( SubAgent (..)
   , subAgent
@@ -43,19 +45,20 @@ import Crucible.Codec (JSONCodec, schemaText, encodeText)
 import Crucible.Decode (DecodeError (..), decodeLLM)
 import Crucible.Tool (Tool)
 
--- | A spawnable worker. @es@ is the base effect row the worker runs in (it has
--- 'Chat' and whatever its tools need, not 'Agents', which keeps spawn one level).
+-- | A spawnable worker. @es@ is the base effect row; the worker's tools run in
+-- @Agents es : es@, so a tool handler may call 'spawn' (this is how a worker
+-- spawns sub-workers).
 data SubAgent es i o = SubAgent
   { name     :: Text
   , input    :: JSONCodec i
   , output   :: JSONCodec o
   , system   :: Text
-  , tools    :: [Tool es]
+  , tools    :: [Tool (Agents es : es)]
   , maxIters :: Int
   }
 
 -- | Build a SubAgent with @maxIters@ defaulted to 'defaultMaxIterations'.
-subAgent :: Text -> JSONCodec i -> JSONCodec o -> Text -> [Tool es] -> SubAgent es i o
+subAgent :: Text -> JSONCodec i -> JSONCodec o -> Text -> [Tool (Agents es : es)] -> SubAgent es i o
 subAgent n inC outC sys ts = SubAgent n inC outC sys ts defaultMaxIterations
 
 -- | A spawn failure.
@@ -66,7 +69,8 @@ data AgentFailure
   | GateRejected        Text Text         -- ^ worker name, the judge's critique
   deriving (Eq, Show)
 
--- | Orchestrator-worker spawn, indexed by the worker base row @es@.
+-- | Orchestrator-worker spawn, indexed by the worker base row @es@. Workers run
+-- in @Agents es : es@, so a worker tool can issue 'spawn' for sub-workers.
 data Agents (es :: [Effect]) :: Effect where
   Spawn :: SubAgent es i o -> i -> Agents es m (Either AgentFailure o)
 type instance DispatchOf (Agents es) = Dynamic
@@ -90,25 +94,28 @@ decodeFinal sub t = case decodeLLM sub.output t of
   Left e  -> Left (WorkerDecodeFailed sub.name e)
   Right o -> Right o
 
--- | Live interpreter: each spawn runs the worker tool loop as a fresh
--- transcript under the ambient 'Chat', honoring a spawn-count cap. Needs 'IOE'
--- (the budget is an 'IORef'; live spawn is IO-backed).
-runAgents :: (Chat :> es, IOE :> es) => Int -> Eff (Agents es : es) a -> Eff es a
+-- | Live interpreter for a spawn tree. One shared spawn budget is threaded
+-- across the whole tree (each spawn anywhere decrements it; exhaustion is
+-- 'SpawnBudgetExceeded'). Each worker runs in the full row 'Agents es : es', so
+-- a worker tool can 'spawn' sub-workers; the handler re-interprets that worker
+-- computation ('go'), servicing nested spawns against the same budget. Needs
+-- 'IOE' (the budget is an 'IORef'; live spawn is IO-backed).
+runAgents :: forall es a. (Chat :> es, IOE :> es) => Int -> Eff (Agents es : es) a -> Eff es a
 runAgents cap act = do
   ref <- liftIO (newIORef cap)
-  interpret
-    (\_ -> \case
+  let go :: forall x. Eff (Agents es : es) x -> Eff es x
+      go = interpret $ \_ -> \case
         Spawn sub i -> do
           remaining <- liftIO (readIORef ref)
           if remaining <= 0
             then pure (Left (SpawnBudgetExceeded cap))
             else do
               liftIO (writeIORef ref (remaining - 1))
-              res <- runToolAgentN sub.maxIters sub.tools (workerPrompt sub i)
+              res <- go (runToolAgentN sub.maxIters sub.tools (workerPrompt sub i))
               pure $ case res of
                 Left (ToolLoopExceeded n) -> Left (WorkerLoopExceeded sub.name n)
-                Right finalText           -> decodeFinal sub finalText)
-    act
+                Right finalText           -> decodeFinal sub finalText
+  go act
 
 -- | Model-free interpreter: each spawn pops the next canned final-answer text
 -- and decodes it through that spawn's output codec, honoring the same cap. Runs
