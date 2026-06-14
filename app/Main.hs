@@ -53,7 +53,8 @@ import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
-import Crucible.Memory (MemoryKind (..), Provenance (..), MemoryDraft (..), Query (..), remember, recallAs, runMemoryFile)
+import Crucible.Memory (MemoryKind (..), MemoryItem (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
+import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
 import Crucible.Partial (runPartialWith)
 import System.IO (hFlush, stdout)
 import Data.IORef (newIORef, modifyIORef', readIORef)
@@ -114,6 +115,16 @@ main = do
       recalled <- runEff (runMemoryFile memPath (recallAs (codec @Sentiment) (Query "" ["sentiment"] 5)))
       TIO.putStrLn ("memory: recalled " <> T.pack (show (length recalled)) <> " item(s); "
                     <> T.pack (show [either (const "stale") sentLabel v | (_, v) <- recalled]))
+      let consoPath = "/tmp/crucible-consolidate-demo.jsonl"
+      _ <- runEff (runMemoryFile consoPath (do
+             _ <- remember (MemoryDraft Episodic "The user said they prefer dark mode." ["pref"] (BySession "demo"))
+             _ <- remember (MemoryDraft Episodic "The user switched the theme to dark again." ["pref"] (BySession "demo"))
+             pure ()))
+      consoPlan <- runEff (runMemoryFile consoPath (Anthropic.run cfg
+                     (consolidate consolidationSkill (Query "" [] 50))))
+      consoItems <- runEff (runMemoryFile consoPath (recall (Query "" [] 50)))
+      TIO.putStrLn ("consolidate: plan " <> T.pack (show (either (const 0) (length . ((.ops) :: ConsolidationPlan -> [ConsolidationOp])) consoPlan))
+                    <> " op(s); store now " <> T.pack (show (map ((.content) :: MemoryItem -> T.Text) consoItems)))
       let ageFn :: Skill T.Text Int
           ageFn = skill "extract-age" str
             (object (field "age" Prelude.id

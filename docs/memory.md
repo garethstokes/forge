@@ -173,10 +173,137 @@ Tree and graph shapes, and richer querying over structured fields, stay
 future interpreters. The `Memory` effect interface does not change when
 the interpreter does.
 
+## Consolidation
+
+`Crucible.Memory.Consolidate` ships an offline pass that reads the current
+memories and compacts them. The shape is a plain `Skill`:
+
+```haskell
+consolidationSkill :: Skill [MemoryItem] ConsolidationPlan
+```
+
+The skill receives the live items rendered as a JSON array in `<input>` and
+proposes a `ConsolidationPlan`: a list of `ConsolidationOp` values. The LLM
+picks each operation; the host decides when to run the pass.
+
+### The four operations
+
+```haskell
+data ConsolidationOp
+  = Keep      MemoryId
+  | Drop      MemoryId
+  | Supersede MemoryId   MemoryKind Text
+  | Merge     [MemoryId] MemoryKind Text
+```
+
+An item the plan never mentions is kept implicitly. `Keep` records a
+deliberate retention -- a no-op for the store, useful when you want an
+explicit audit trail of what the LLM considered and chose to leave alone.
+`Drop` forgets a noisy or redundant item. `Supersede` replaces one item with
+a corrected or refined version, optionally changing its kind (for example
+promoting an `Episodic` observation to a `Semantic` fact). `Merge` combines
+several related items into one, taking the union of their tags.
+
+### Applying a plan
+
+`applyPlan` executes the plan as `Memory` operations:
+
+```haskell
+applyPlan :: (Memory :> es) => [MemoryItem] -> ConsolidationPlan -> Eff es ()
+```
+
+Under the hood: `Keep` is a no-op; `Drop` calls `forget`; `Supersede` calls
+`forget` then `remember`; `Merge` calls `forget` for each source then
+`remember` for the result. Every new item written by `applyPlan` is stamped
+`ByConsolidation`. The original entries remain in the JSONL log (supersede-
+not-erase), so the full history survives for audit; only `Recall` filters
+them out as live.
+
+The LLM chooses the `MemoryKind` and `content` for each derived item.
+`applyPlan` unions the source tags onto the result automatically.
+
+### Auditing implicit keeps
+
+```haskell
+unaddressed :: [MemoryItem] -> ConsolidationPlan -> [MemoryItem]
+```
+
+Returns the items the plan never referenced. These are the implicitly kept
+items. Useful when you want to log what the consolidation pass chose not to
+touch.
+
+### The `consolidate` convenience
+
+```haskell
+consolidate :: (Memory :> es, LLM :> es)
+            => Skill [MemoryItem] ConsolidationPlan -> Query
+            -> Eff es (Either DecodeError ConsolidationPlan)
+```
+
+`consolidate` composes recall, skill call, and apply in one step: it recalls
+items under the query, calls the skill, and if decoding succeeds applies the
+plan and returns `Right plan`. A decode failure returns `Left` and applies
+nothing, leaving the store unchanged.
+
+The effect order places `Anthropic.run` (or any LLM interpreter) inside
+`runMemoryFile`, since `consolidate` needs both `LLM` and `Memory` in scope:
+
+```haskell
+runEff (runMemoryFile path (Anthropic.run cfg
+          (consolidate consolidationSkill (Query "" [] 50))))
+```
+
+### Short example
+
+```haskell
+import Crucible.Memory (MemoryKind (..), MemoryItem (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, runMemoryFile)
+import Crucible.Memory.Consolidate (ConsolidationPlan (..), ConsolidationOp, consolidationSkill, consolidate)
+
+let path = "/tmp/demo.jsonl"
+
+-- seed two redundant episodic items
+_ <- runEff (runMemoryFile path (do
+       _ <- remember (MemoryDraft Episodic "The user prefers dark mode." ["pref"] (BySession "s1"))
+       _ <- remember (MemoryDraft Episodic "The user switched to dark theme again." ["pref"] (BySession "s1"))
+       pure ()))
+
+-- consolidate: the LLM merges both into one semantic fact
+plan <- runEff (runMemoryFile path (Anthropic.run cfg
+          (consolidate consolidationSkill (Query "" [] 50))))
+
+-- store now holds one ByConsolidation item, the two originals tombstoned
+items <- runEff (runMemoryFile path (recall (Query "" [] 50)))
+-- items ~ [MemoryItem { content = "The user prefers dark mode.", source = ByConsolidation, ... }]
+```
+
+Running this live produces:
+
+```
+consolidate: plan 1 op(s); store now ["The user prefers dark mode."]
+```
+
+The skill compressed two `Episodic + BySession` entries into one item; the
+plan had one operation (a `Merge`).
+
+### Iteration and scheduling
+
+The skill is iterable with `testSkill` and composable with `withTests` and
+`withExamples` like any other skill, so you can drive an improvement loop
+over consolidation quality using `Crucible.Skill.Improve`. crucible ships
+the skill and `applyPlan`; when to run the pass is the host's decision.
+A reasonable policy is to trigger consolidation when the store exceeds a
+token budget or after a fixed number of sessions.
+
+### Linear to star
+
+The JSONL log is the linear substrate: one append per `Remember` or
+`Forget`, full ordered history. Consolidation is the pump from that linear
+log to star-shaped facts: a single `Semantic + ByConsolidation` item that
+represents what the agent currently knows about a topic, with the raw
+episodes it was distilled from available in the log for audit.
+
 ## Planned follow-on work
 
-Consolidation (an offline `Skill` that reads `Episodic` items and writes
-distilled `Semantic + ByConsolidation` summaries) and `memoryLift` (an
-ablation eval that measures what the agent loses without a given memory) are
-planned sub-projects. Both operate through the same `Memory` effect and
-compose with the existing interpreters.
+`memoryLift` (an ablation eval that measures what the agent loses without a
+given memory) is a planned sub-project. It operates through the same
+`Memory` effect and composes with the existing interpreters.
