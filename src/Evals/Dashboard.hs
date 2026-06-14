@@ -41,12 +41,19 @@ import Evals.Ids
 import Evals.Schema
 import Evals.Tenant (withTenant)
 
+-- | Escape the five HTML-significant characters; org name/slug are interpolated
+-- into the picker page, so escape them even though slugs are URL-constrained.
+htmlEscape :: T.Text -> T.Text
+htmlEscape = T.concatMap $ \c -> case c of
+  '&' -> "&amp;"; '<' -> "&lt;"; '>' -> "&gt;"; '"' -> "&quot;"; '\'' -> "&#39;"
+  _   -> T.singleton c
+
 -- | Root page: a minimal standalone HTML list of orgs (links to /<slug>/).
 -- Unscoped — the registry has no RLS policy.
 orgPickerHandler :: Pool -> (Response -> IO a) -> IO a
 orgPickerHandler pool respond = do
   orgs <- withSession pool (selectWhere ([] :: [Cond Org]))
-  let row o = "<li><a href=\"/" <> o.slug <> "/\">" <> o.name <> "</a></li>"
+  let row o = "<li><a href=\"/" <> htmlEscape o.slug <> "/\">" <> htmlEscape o.name <> "</a></li>"
       body  = "<!doctype html><meta charset=utf-8><title>evals — orgs</title>"
            <> "<style>body{font:15px system-ui;margin:40px;max-width:540px}"
            <> "h1{font-size:18px}a{color:#2456c8;text-decoration:none}a:hover{text-decoration:underline}</style>"
