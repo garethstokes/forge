@@ -67,6 +67,7 @@ import qualified Crucible.LLM.CallLog as CallLog
 import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
 import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
+import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure)
 
 -- Sample types for codec tests
 
@@ -1891,4 +1892,65 @@ main = runChecks
                        (mapM_ emit ["{\"ppName\": \"Al", "ice\", \"ppAge\": 3", "0}"]))
            rights' = [a | Right a <- ps]
        in case rights' of (p : _) -> Just (ppName p, ppAge p); [] -> Nothing)
+  -- crucible-l9d: Memory foundation (pure + scripted + typed recall)
+  , check "memory: remember then recall-all returns the item with assigned id"
+      (MemoryId 0, "hello", 0 :: Int)
+      (let (_, items) = runPureEff (runMemoryPure
+              (remember (MemoryDraft Episodic "hello" ["greet"] (BySkill "s"))
+               >> recall (Query "" [] 10)))
+           it = head items
+       in (it.memId, it.content, it.createdAt))
+  , check "memory: tag filter and case-folded needle"
+      (["alpha"], ["beta"])
+      (let prog = do _ <- remember (MemoryDraft Semantic "Alpha" ["a"] Curated)
+                     _ <- remember (MemoryDraft Semantic "Beta" ["b"] Curated)
+                     byTag <- recall (Query "" ["a"] 10)
+                     byNeedle <- recall (Query "bet" [] 10)
+                     pure (map (.content) byTag, map (.content) byNeedle)
+           ((tg, nd), _) = runPureEff (runMemoryPure prog)
+       in (map T.toLower tg, map T.toLower nd))
+  , check "memory: maxItems caps and ordering is most-recent-first"
+      ["c", "b"]
+      (let prog = do mapM_ (\t -> remember (MemoryDraft Episodic t [] Curated)) ["a","b","c"]
+                     recall (Query "" [] 2)
+           (out, _) = runPureEff (runMemoryPure prog)
+       in map (.content) out)
+  , check "memory: forget removes from live recall but keeps the others"
+      ["a", "c"]
+      (let prog = do _ <- remember (MemoryDraft Episodic "a" [] Curated)
+                     _ <- remember (MemoryDraft Episodic "b" [] Curated)
+                     _ <- remember (MemoryDraft Episodic "c" [] Curated)
+                     forget (MemoryId 1)
+                     recall (Query "" [] 10)
+           (out, _) = runPureEff (runMemoryPure prog)
+       in reverse (map (.content) out))
+  , check "memory: all four provenance arms round-trip and are matchable"
+      (True, True, True, True)
+      (let (_, items) = runPureEff (runMemoryPure (do
+              mapM_ remember
+                [ MemoryDraft Episodic "p" [] (BySkill "k")
+                , MemoryDraft Episodic "q" [] (BySession "run1")
+                , MemoryDraft Episodic "r" [] ByConsolidation
+                , MemoryDraft Episodic "s" [] Curated ]
+              recall (Query "" [] 10)))
+           has p = any (\it -> it.source == p) items
+       in (has (BySkill "k"), has (BySession "run1"), has ByConsolidation, has Curated))
+  , check "memory scripted: canned recalls pop in order; remember ids increment"
+      ([["x"]], [], MemoryId 0)
+      (let canned = [[MemoryItem (MemoryId 9) Episodic "x" [] Curated 9]]
+           prog = do i <- remember (MemoryDraft Episodic "ignored" [] Curated)
+                     r1 <- recall (Query "" [] 10)
+                     r2 <- recall (Query "" [] 10)
+                     pure (map (map (.content)) [r1], map (.content) r2, i)
+           (a, b, c) = runPureEff (runMemoryScripted canned prog)
+       in (a, b, c))
+  , check "memory recallAs: typed round-trip and staleness on schema drift"
+      (Right (42 :: Int), True)
+      (let prog = do _ <- remember (MemoryDraft Semantic (C.encodeText C.int 42) ["n"] Curated)
+                     _ <- remember (MemoryDraft Semantic "not a number" ["n"] Curated)
+                     recallAs C.int (Query "" ["n"] 10)
+           (out, _) = runPureEff (runMemoryPure prog)
+           rs = map snd out
+       in ( case [v | Right v <- rs] of (v : _) -> Right v; [] -> Left ()
+          , any (\e -> case e of { Left _ -> True; Right _ -> False }) rs ))
   ]

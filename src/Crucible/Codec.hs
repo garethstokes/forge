@@ -8,7 +8,7 @@ module Crucible.Codec
   , str, int, bool, float, list', nullable', enum
   , object, field, optField, anyValue
   , bimapCodec
-  , schemaValue, schemaText
+  , schemaValue, schemaText, encodeText
   , refine, checked, Checked (..), allPassed, describe
   ) where
 
@@ -25,7 +25,7 @@ import Autodocodec
   ( JSONCodec, ObjectCodec, codec, textCodec, boolCodec, valueCodec
   , scientificCodec, dimapCodec, bimapCodec
   , listCodec, maybeCodec, stringConstCodec, requiredFieldWith', optionalFieldWith', (.=)
-  , (<?>) )
+  , (<?>) , toJSONVia )
 import qualified Autodocodec as AC
 import Autodocodec.Schema (jsonSchemaVia)
 
@@ -68,6 +68,11 @@ schemaValue = A.toJSON . jsonSchemaVia
 -- | The schema rendered as compact JSON text (for prompt injection).
 schemaText :: JSONCodec a -> Text
 schemaText = TE.decodeUtf8 . LB.toStrict . A.encode . schemaValue
+
+-- | Encode a value to compact JSON text through its codec (the encode
+-- companion to 'schemaText' / 'Crucible.Decode.decodeLLM').
+encodeText :: JSONCodec a -> a -> Text
+encodeText c = TE.decodeUtf8 . LB.toStrict . A.encode . toJSONVia c
 
 -- | Attach a human description to a codec's schema (renders as the
 -- JSON-schema "description"). Re-exports autodocodec's '<?>'.
