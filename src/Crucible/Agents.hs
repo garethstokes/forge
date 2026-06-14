@@ -63,6 +63,7 @@ data AgentFailure
   = SpawnBudgetExceeded Int               -- ^ the spawn cap that was hit
   | WorkerLoopExceeded  Text Int          -- ^ worker name; the iteration cap it exhausted
   | WorkerDecodeFailed  Text DecodeError  -- ^ worker name, the decode error
+  | GateRejected        Text Text         -- ^ worker name, the judge's critique
   deriving (Eq, Show)
 
 -- | Orchestrator-worker spawn, indexed by the worker base row @es@.
