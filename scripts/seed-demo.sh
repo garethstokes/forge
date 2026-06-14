@@ -59,16 +59,16 @@ VALUES (1, 1, 1, 'demo seed', now() - interval '2 days', now() - interval '2 day
 -- carries the example's theme tag. (All four examples share the same rubric so
 -- the run-level criteria union is the 3 criteria.)
 INSERT INTO examples (id, dataset_version, key, input, expected, meta) VALUES
-  (1, 1, 'capital-fr', '{"q": "What is the capital of France?"}',
+  (1, 1, 'capital-fr', '{"messages": [{"role": "user", "content": "What is the capital of France?"}]}',
      '[{"criterion":"names the correct capital","points":5,"tags":["axis:accuracy"]},{"criterion":"is concise","points":3,"tags":["axis:conciseness"]},{"criterion":"explicitly states it is the capital","points":2,"tags":["axis:clarity"]}]',
      '{"example_tags":["theme:europe"]}'),
-  (2, 1, 'capital-de', '{"q": "What is the capital of Germany?"}',
+  (2, 1, 'capital-de', '{"messages": [{"role": "user", "content": "What is the capital of Germany?"}]}',
      '[{"criterion":"names the correct capital","points":5,"tags":["axis:accuracy"]},{"criterion":"is concise","points":3,"tags":["axis:conciseness"]},{"criterion":"explicitly states it is the capital","points":2,"tags":["axis:clarity"]}]',
      '{"example_tags":["theme:europe"]}'),
-  (3, 1, 'capital-au', '{"q": "What is the capital of Australia?"}',
+  (3, 1, 'capital-au', '{"messages": [{"role": "user", "content": "What is the capital of Australia?"}]}',
      '[{"criterion":"names the correct capital","points":5,"tags":["axis:accuracy"]},{"criterion":"is concise","points":3,"tags":["axis:conciseness"]},{"criterion":"explicitly states it is the capital","points":2,"tags":["axis:clarity"]}]',
      '{"example_tags":["theme:oceania"]}'),
-  (4, 1, 'capital-jp', '{"q": "What is the capital of Japan?"}',
+  (4, 1, 'capital-jp', '{"messages": [{"role": "user", "content": "What is the capital of Japan?"}]}',
      '[{"criterion":"names the correct capital","points":5,"tags":["axis:accuracy"]},{"criterion":"is concise","points":3,"tags":["axis:conciseness"]},{"criterion":"explicitly states it is the capital","points":2,"tags":["axis:clarity"]}]',
      '{"example_tags":["theme:asia"]}');
 
