@@ -61,7 +61,7 @@ subAgent n inC outC sys ts = SubAgent n inC outC sys ts defaultMaxIterations
 -- | A spawn failure.
 data AgentFailure
   = SpawnBudgetExceeded Int               -- ^ the spawn cap that was hit
-  | WorkerLoopExceeded  Text Int          -- ^ worker name, its iteration cap
+  | WorkerLoopExceeded  Text Int          -- ^ worker name; the iteration cap it exhausted
   | WorkerDecodeFailed  Text DecodeError  -- ^ worker name, the decode error
   deriving (Eq, Show)
 
@@ -111,7 +111,11 @@ runAgents cap act = do
 
 -- | Model-free interpreter: each spawn pops the next canned final-answer text
 -- and decodes it through that spawn's output codec, honoring the same cap. Runs
--- no tools, so it is pure ('runPureEff'-compatible).
+-- no tools, so it is pure ('runPureEff'-compatible). The spawn input is ignored
+-- (the canned text is independent of it), so this interpreter cannot verify
+-- input-dependent worker behaviour; it is for testing parent orchestration
+-- logic. An exhausted script returns 'WorkerDecodeFailed' without consuming
+-- budget (no spawn was serviced).
 runAgentsScripted :: Int -> [Text] -> Eff (Agents es : es) a -> Eff es a
 runAgentsScripted cap script =
   reinterpret (evalState (cap, script)) $ \_ -> \case
@@ -121,5 +125,4 @@ runAgentsScripted cap script =
         then pure (Left (SpawnBudgetExceeded cap))
         else case answers of
           (t : ts) -> put (remaining - 1, ts) >> pure (decodeFinal sub t)
-          []       -> put (remaining - 1, [] :: [Text])
-                        >> pure (Left (WorkerDecodeFailed sub.name (DecodeError "no scripted answer" "")))
+          []       -> pure (Left (WorkerDecodeFailed sub.name (DecodeError "no scripted answer" "")))

@@ -24,6 +24,11 @@ A `SubAgent` is a `Skill` whose body is a tool loop: an input codec, an output
 codec, an instruction, its own toolbox, and a tool-loop cap. Each worker carries
 its own toolbox, so a worker has only the authority it needs.
 
+If a worker has tools, its `system` instruction must tell it to use them before
+replying. The base prompt only asks the worker to finish with JSON; it does not
+prompt tool use, so a worker told nothing about its tools may answer without
+calling them.
+
 ## Spawning
 
 ```haskell

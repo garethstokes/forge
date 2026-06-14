@@ -2202,6 +2202,14 @@ main = runChecks
          (runPureEff (runAgentsScripted 1 ["{\"n\": 1}", "{\"n\": 2}"]
             (do a <- spawn w 0; b <- spawn w 0; pure (a, b))))
   , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
+    in check "spawn: parent branches on a typed result then spawns again"
+         (Right (2 :: Int))
+         (runPureEff (runAgentsScripted 2 ["{\"n\": 1}", "{\"n\": 2}"]
+            (do r <- spawn w 0
+                case r of
+                  Right v -> spawn w v
+                  Left e  -> pure (Left e))))
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
     in check "spawn: exhausted script -> WorkerDecodeFailed"
          True
          (case runPureEff (runAgentsScripted 5 [] (spawn w 0)) of
