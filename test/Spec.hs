@@ -82,6 +82,7 @@ import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
 import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
+import Crucible.Research (Slug (..), LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec)
 
 -- Sample types for codec tests
 
@@ -2399,4 +2400,27 @@ main = runChecks
        let oks  = length [() | Right _ <- rs]
            caps = length [() | Left (SpawnBudgetExceeded _) <- rs]
        check "spawnAll: shared budget caps the batch (2 ok, 1 over budget)" (2 :: Int, 1 :: Int) (oks, caps)
+  , let p = Page (Slug "a") "Alpha" [] "the body of alpha" ()
+        (r, _, _) = runPureEff (runResearchState ([] :: [Page ()]) (do writePage p; readPage (Slug "a")))
+    in check "research: write then read" (Just p) r
+  , let (r, _, _) = runPureEff (runResearchState ([] :: [Page ()]) (readPage (Slug "missing")))
+    in check "research: read absent page is Nothing" (Nothing :: Maybe (Page ())) r
+  , let p1 = Page (Slug "a") "Alpha" [] "first" ()
+        p2 = Page (Slug "a") "Alpha v2" [] "second" ()
+        (r, _, _) = runPureEff (runResearchState ([] :: [Page ()]) (do writePage p1; writePage p2; readPage (Slug "a")))
+    in check "research: write overwrites by slug" (Just p2) r
+  , let ps = [Page (Slug "b") "B" [] "x" (), Page (Slug "a") "A" [] "y" ()]
+        (r, _, _) = runPureEff (runResearchState ps (index @()))
+    in check "research: index lists slugs in slug order" [Slug "a", Slug "b"] r
+  , let ps = [Page (Slug "a") "Alpha note" [] "mentions Haskell" (), Page (Slug "b") "Beta" [] "nothing here" ()]
+        (rt, _, _)  = runPureEff (runResearchState ps (search @() "haskell"))
+        (rti, _, _) = runPureEff (runResearchState ps (search @() "ALPHA"))
+        (rn, _, _)  = runPureEff (runResearchState ps (search @() "zzz"))
+    in check "research: search matches body/title case-insensitively, else []"
+         ([Slug "a"], [Slug "a"], ([] :: [Slug])) (rt, rti, rn)
+  , let (_, _, logs) = runPureEff (runResearchState ([] :: [Page ()]) (do appendLog @() "one"; appendLog @() "two"))
+    in check "research: appendLog accumulates in order" ["one", "two"] logs
+  , check "research: linkCodec round-trips each link type"
+      (Right (Link (Slug "t") Supersedes))
+      (decodeLLM linkCodec (C.encodeText linkCodec (Link (Slug "t") Supersedes)))
   ]
