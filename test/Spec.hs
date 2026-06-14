@@ -2123,4 +2123,15 @@ main = runChecks
   , check "blockJson: DocumentBlock -> base64 document source"
       "{\"source\":{\"data\":\"JVBERg==\",\"media_type\":\"application/pdf\",\"type\":\"base64\"},\"type\":\"document\"}"
       (C.encodeText C.anyValue (Chat.blockJson (Chat.DocumentBlock (pdfB64 "JVBERg=="))))
+  , check "OpenAI chatMessagesJson: text-only user stays a flat string"
+      "[{\"content\":\"hi\",\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue) (OpenAI.chatMessagesJson (Chat.Message User [Chat.TextBlock "hi"])))
+  , check "OpenAI chatMessagesJson: image user becomes a parts array"
+      "[{\"content\":[{\"text\":\"look\",\"type\":\"text\"},{\"image_url\":{\"url\":\"data:image/png;base64,QUJD\"},\"type\":\"image_url\"}],\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue)
+        (OpenAI.chatMessagesJson (Chat.Message User [Chat.TextBlock "look", Chat.ImageBlock (imageB64 "image/png" "QUJD")])))
+  , check "OpenAI chatMessagesJson: pdf without filename defaults to document.pdf"
+      "[{\"content\":[{\"file\":{\"file_data\":\"data:application/pdf;base64,JVBERg==\",\"filename\":\"document.pdf\"},\"type\":\"file\"}],\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue)
+        (OpenAI.chatMessagesJson (Chat.Message User [Chat.DocumentBlock (pdfB64 "JVBERg==")])))
   ]

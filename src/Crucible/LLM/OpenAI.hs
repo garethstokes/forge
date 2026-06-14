@@ -100,6 +100,7 @@ import Crucible.Chat (Block (..), Chat (..), ToolUse (..), Turn (..))
 import Crucible.Embed (Embed (..))
 import Crucible.LLM (LLM (..), Message (..), Role (..))
 import Crucible.LLM.Provider (Provider (..))
+import Crucible.Media (Media (..))
 import Crucible.Tool (ToolName)
 import Crucible.Usage (Usage (..))
 
@@ -426,13 +427,41 @@ chatMessagesJson (Chat.Message r blocks) =
       ]
   | ToolResultBlock i v <- blocks
   ]
-    ++ [ A.object ["role" .= openaiRole r, "content" .= txt]
-       | let txt = T.concat [s | TextBlock s <- blocks]
-       , not (T.null txt)
-       ]
+    ++ userMsgs
   where
     resultText (String s) = A.String s
     resultText other      = A.String (encodeText other)
+
+    txt    = T.concat [s | TextBlock s <- blocks]
+    images = [m | ImageBlock m <- blocks]
+    docs   = [m | DocumentBlock m <- blocks]
+
+    userMsgs
+      | not (null images && null docs) =
+          [ A.object ["role" .= openaiRole r, "content" .= A.Array (V.fromList parts)] ]
+      | not (T.null txt) =
+          [ A.object ["role" .= openaiRole r, "content" .= txt] ]
+      | otherwise = []
+
+    parts =
+      [ A.object ["type" .= A.String "text", "text" .= txt] | not (T.null txt) ]
+        ++ [ imagePart m | m <- images ]
+        ++ [ docPart m   | m <- docs ]
+
+    imagePart m =
+      A.object
+        [ "type" .= A.String "image_url"
+        , "image_url" .= A.object ["url" .= dataUri m]
+        ]
+    docPart m =
+      A.object
+        [ "type" .= A.String "file"
+        , "file" .= A.object
+            [ "filename" .= maybe "document.pdf" Prelude.id m.filename
+            , "file_data" .= dataUri m
+            ]
+        ]
+    dataUri m = "data:" <> m.mediaType <> ";base64," <> m.dataB64
 
 -- | Encode a 'Value' to compact JSON text (OpenAI's @arguments@ and tool
 -- result contents are strings on the wire).
