@@ -2313,4 +2313,17 @@ main = runChecks
   , check "ledger: workItemCodec round-trips a Ready item"
       (Right (WorkItem (WorkId 3) "do it" Ready Nothing))
       (decodeLLM workItemCodec (C.encodeText workItemCodec (WorkItem (WorkId 3) "do it" Ready Nothing)))
+  , do (path, h) <- openTempFile "/tmp" "crucible-ledger-test.jsonl"
+       hClose h
+       _ <- runEff (runLedgerFile path (do _ <- Ledger.record "A"; _ <- Ledger.record "B"; pure ()))
+       ready <- runEff (runLedgerFile path Ledger.listReady)
+       removeFile path
+       check "ledger file: recorded items outlive the session" [WorkId 0, WorkId 1] (map ((.wid) :: WorkItem -> WorkId) ready)
+  , do (path, h) <- openTempFile "/tmp" "crucible-ledger-claim.jsonl"
+       hClose h
+       ok <- runEff (runLedgerFile path (do w <- Ledger.record "A"; Ledger.claim w "worker-1"))
+       ready <- runEff (runLedgerFile path Ledger.listReady)
+       removeFile path
+       check "ledger file: a claim is visible in a later session" (True, ([] :: [WorkId]))
+         (ok, map ((.wid) :: WorkItem -> WorkId) ready)
   ]
