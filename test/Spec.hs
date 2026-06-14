@@ -77,7 +77,8 @@ import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
 import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
 import qualified Data.ByteString as BSTEST
-import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), Agents, spawn, workerPrompt, runAgentsScripted, runAgents)
+import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), Agents, spawn, spawnAll, workerPrompt, runAgentsScripted, runAgents)
+import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
 import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
@@ -2381,4 +2382,21 @@ main = runChecks
        check "nesting: the spawn budget is shared across the tree"
          True
          (case childResult of Just (Left (SpawnBudgetExceeded 1)) -> True; _ -> False)
+  -- Each forked sibling clones the scripted-Chat state, so a one-turn script
+  -- gives every worker its own canned "ok"; the shared budget lives in the
+  -- runAgents IORef, so the cap still bounds the concurrent batch.
+  , do let w :: SubAgent '[Chat.Chat, Concurrent, IOE] Text Text
+           w = subAgent "w" C.str C.str "do it" []
+           pairs = [(w, "a"), (w, "b"), (w, "c")]
+       rs <- runEff (runConcurrent (runChatScripted [Turn "\"ok\"" []]
+               (runAgents 5 (spawnAll pairs))))
+       check "spawnAll: all succeed under the cap" [Right "ok", Right "ok", Right "ok"] rs
+  , do let w :: SubAgent '[Chat.Chat, Concurrent, IOE] Text Text
+           w = subAgent "w" C.str C.str "do it" []
+           pairs = [(w, "a"), (w, "b"), (w, "c")]
+       rs <- runEff (runConcurrent (runChatScripted [Turn "\"ok\"" []]
+               (runAgents 2 (spawnAll pairs))))
+       let oks  = length [() | Right _ <- rs]
+           caps = length [() | Left (SpawnBudgetExceeded _) <- rs]
+       check "spawnAll: shared budget caps the batch (2 ok, 1 over budget)" (2 :: Int, 1 :: Int) (oks, caps)
   ]

@@ -27,16 +27,19 @@ module Crucible.Agents
   , AgentFailure (..)
   , Agents (..)
   , spawn
+  , spawnAll
   , workerPrompt
   , runAgents
   , runAgentsScripted
   ) where
 
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, newIORef, atomicModifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
 
 import Effectful
+import Effectful.Concurrent (Concurrent)
+import Effectful.Concurrent.Async (mapConcurrently)
 import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
 import Effectful.State.Static.Local (evalState, get, put)
 
@@ -78,6 +81,23 @@ type instance DispatchOf (Agents es) = Dynamic
 spawn :: (Agents es :> r) => SubAgent es i o -> i -> Eff r (Either AgentFailure o)
 spawn sub i = send (Spawn sub i)
 
+-- | Spawn a batch of workers concurrently and collect their results in input
+-- order. Built on effectful's 'Concurrent' ('mapConcurrently' over 'spawn'), so
+-- the 'Agents' effect is unchanged. Siblings share no state; each returns its
+-- own typed result. The spawn budget is shared atomically across the batch (and
+-- the whole tree), so with a cap below the batch size exactly cap spawns
+-- succeed and the rest return 'SpawnBudgetExceeded'. A worker failure is a
+-- 'Left' (it does not cancel siblings); a worker that throws cancels the
+-- siblings and rethrows (the 'async' semantics). Discharge 'Concurrent' with
+-- 'Effectful.Concurrent.runConcurrent'. Discharge the spawn with 'runAgents',
+-- not 'runAgentsScripted': the live interpreter holds the budget in an 'IORef'
+-- shared across the forked siblings, whereas the scripted interpreter's
+-- 'State' budget is cloned per sibling and so would not be shared (the cap
+-- would not bound a concurrent batch).
+spawnAll :: (Agents es :> r, Concurrent :> r)
+         => [(SubAgent es i o, i)] -> Eff r [Either AgentFailure o]
+spawnAll = mapConcurrently (uncurry spawn)
+
 -- | The worker prompt: the worker instruction, the output-schema contract, and
 -- the rendered input. Pure, so it is unit-tested.
 workerPrompt :: SubAgent es i o -> i -> Text
@@ -94,6 +114,12 @@ decodeFinal sub t = case decodeLLM sub.output t of
   Left e  -> Left (WorkerDecodeFailed sub.name e)
   Right o -> Right o
 
+-- | Atomically claim one unit of budget: True if a slot was taken (and the
+-- counter decremented), False if the budget was already exhausted. Safe under
+-- concurrent spawns (a compare-and-set), so the cap is never over-spent.
+claimSlot :: IORef Int -> IO Bool
+claimSlot ref = atomicModifyIORef' ref (\r -> if r <= 0 then (r, False) else (r - 1, True))
+
 -- | Live interpreter for a spawn tree. One shared spawn budget is threaded
 -- across the whole tree (each spawn anywhere decrements it; exhaustion is
 -- 'SpawnBudgetExceeded'). Each worker runs in the full row 'Agents es : es', so
@@ -106,11 +132,10 @@ runAgents cap act = do
   let go :: forall x. Eff (Agents es : es) x -> Eff es x
       go = interpret $ \_ -> \case
         Spawn sub i -> do
-          remaining <- liftIO (readIORef ref)
-          if remaining <= 0
+          claimed <- liftIO (claimSlot ref)
+          if not claimed
             then pure (Left (SpawnBudgetExceeded cap))
             else do
-              liftIO (writeIORef ref (remaining - 1))
               res <- go (runToolAgentN sub.maxIters sub.tools (workerPrompt sub i))
               pure $ case res of
                 Left (ToolLoopExceeded n) -> Left (WorkerLoopExceeded sub.name n)
