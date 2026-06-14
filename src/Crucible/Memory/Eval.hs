@@ -14,13 +14,20 @@
 module Crucible.Memory.Eval
   ( renderMemories
   , withMemories
+  , memoryLift
+  , liftDelta
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 
+import Effectful (Eff, (:>))
+import Crucible.Decode (DecodeError)
+import Crucible.Embed (Embed)
+import Crucible.Eval (Report (..))
+import Crucible.LLM (LLM)
 import Crucible.Memory (MemoryItem (..))
-import Crucible.Skill (Skill (..), Instruction (..), withPreamble)
+import Crucible.Skill (Skill (..), Instruction (..), withPreamble, testSkill)
 
 -- | Render memory contents as a labelled preamble block. Content only;
 -- kind/tags/source are internal taxonomy and are not rendered. Empty list
@@ -42,3 +49,23 @@ withMemories ms sk = withPreamble newPreamble sk
     rendered    = renderMemories ms
     newPreamble = if T.null existing then rendered
                                      else existing <> "\n\n" <> rendered
+
+-- | Ablation: run the skill's attached test cases without memories
+-- (baseline) and with them (lifted), returning both reports as
+-- (baseline, lifted). Needs only LLM + Embed (via 'testSkill'); decoupled
+-- from the Memory effect, so the candidates can come from 'recall' or be a
+-- literal proposed memory under review.
+memoryLift :: (Eq o, LLM :> es, Embed :> es)
+           => (o -> Text) -> Skill i o -> [MemoryItem]
+           -> Eff es (Report i (Either DecodeError o), Report i (Either DecodeError o))
+memoryLift render sk ms = do
+  base   <- testSkill render sk
+  lifted <- testSkill render (withMemories ms sk)
+  pure (base, lifted)
+
+-- | The headline deltas of an ablation, lifted minus baseline:
+-- (passRate delta, meanScore delta). Positive means the memories paid rent.
+liftDelta :: (Report i a, Report i a) -> (Double, Double)
+liftDelta (base, lifted) =
+  ( lifted.passRate  - base.passRate
+  , lifted.meanScore - base.meanScore )

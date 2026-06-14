@@ -69,7 +69,7 @@ import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
 import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
-import Crucible.Memory.Eval (renderMemories, withMemories)
+import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
 import System.Directory (removeFile)
 
@@ -2054,4 +2054,29 @@ main = runChecks
     in check "withMemories: empty list leaves the preamble unchanged"
          "BASE"
          (sk'.instruction :: Instruction Text).preamble
+  -- Memory.Eval liftDelta (pure arithmetic)
+  , let rep pr ms = Report [] pr ms :: Report () ()
+    in check "liftDelta lifted minus baseline"
+         (0.5, 0.5)
+         (liftDelta (rep 0.5 0.4, rep 1.0 0.9))
+  , let rep pr ms = Report [] pr ms :: Report () ()
+    in check "liftDelta negative when memories hurt"
+         (-0.5, -0.5)
+         (liftDelta (rep 1.0 1.0, rep 0.5 0.5))
+  , let rep pr ms = Report [] pr ms :: Report () ()
+    in check "liftDelta of equal reports is zero"
+         (0.0, 0.0)
+         (liftDelta (rep 0.7 0.7, rep 0.7 0.7))
+  -- Memory.Eval memoryLift integration (scripted LLM + Embed.none)
+  , let evalSkill = withTests
+          [ Case ("q" :: Text) "case1" (Exactly ("answer" :: Text)) ]
+          (skill "s" C.str C.str (const "produce the answer"))
+        mems = [ MemoryItem (MemoryId 0) Semantic "a hint" [] Curated 0 ]
+        -- str output codec expects a JSON-encoded string reply: "\"answer\""
+        cannedReply = "\"answer\""
+        (base, lifted) = runPureEff (runLLMScripted [cannedReply, cannedReply]
+                           (Embed.none (memoryLift id evalSkill mems)))
+    in check "memoryLift zero delta on identical outputs"
+         (0.0, 0.0)
+         (liftDelta (base, lifted))
   ]
