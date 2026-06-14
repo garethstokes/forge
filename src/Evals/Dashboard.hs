@@ -54,6 +54,7 @@ dashboardApp pool staticDir hub req respond =
         Nothing  -> respond (badRequest "invalid run id")
         Just n   -> apiWith (exampleDetailHandler pool (RunId n) key respond)
     ["api", "compare"]      -> apiWith (compareHandler pool req respond)
+    ["api", "calibration"]  -> apiWith (calibrationHandler pool respond)
     ["api", "events"]       -> respond (sseResponse hub)
     ("api" : _)             -> respond notFound
     segments                -> staticHandler staticDir (normalise segments) respond
@@ -329,6 +330,19 @@ runCalibration rid = do
       allForGv <- selectWhere [ #graderVersion ==. gvId ] :: Db [MetaEval]
       let history = [ h | h <- allForGv, h.mode == md ]
       buildSeries (Just rid) latestRow history
+
+-- | GET /api/calibration — every (graderVersion, mode) group that has any
+-- MetaEval row: the overall latest report + the full κ trend (no current marker).
+calibrationHandler :: Pool -> (Response -> IO a) -> IO a
+calibrationHandler pool respond = do
+  series <- withSession pool $ do
+    allMetas <- selectWhere ([] :: [Cond MetaEval])
+    let byGroup = Map.fromListWith (++) [ ((me.graderVersion, me.mode), [me]) | me <- allMetas ]
+        build (_grp, rows) =
+          buildSeries Nothing (maximumBy (comparing (.computedAt)) rows) rows
+    mapM build (Map.toList byGroup)
+  let sorted = sortBy (comparing (\s -> (s.graderName, s.graderVersion, s.mode))) series
+  respond (json status200 sorted)
 
 -- ---------------------------------------------------------------------------
 -- /api/runs/:id

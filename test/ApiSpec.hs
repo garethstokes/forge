@@ -476,6 +476,19 @@ serverSpec = withEphemeralDb $ \pool -> do
           && map (\p -> p.kappa) s.trend == [0.6, 0.78]
           && all (\p -> p.isCurrent) s.trend
         _ -> False
+    rCal <- getReq "/api/calibration"
+    expect "calibration 200" (statusCode (responseStatus rCal) == 200)
+    expect "calibration: one (exactness, stored) series" $
+      case decode (responseBody rCal) :: Maybe [CalibrationSeriesDto] of
+        Just ss -> map (\s -> (s.graderName, s.mode)) ss == [("exactness", "stored")]
+        Nothing -> False
+    expect "calibration: latest + non-current trend" $
+      case decode (responseBody rCal) :: Maybe [CalibrationSeriesDto] of
+        Just [s] ->
+             s.latest.kappa == 0.78
+          && map (\p -> p.kappa) s.trend == [0.6, 0.78]
+          && all (\p -> not p.isCurrent) s.trend
+        _ -> False
     -- unknown run -> 404 + ApiError
     r4 <- getReq "/api/runs/999999"
     expect "unknown run 404" (statusCode (responseStatus r4) == 404)
