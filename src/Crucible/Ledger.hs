@@ -36,7 +36,7 @@ import qualified Data.Text.IO as TIO
 
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
-import Effectful.State.Static.Local (runState, get, put)
+import Effectful.State.Static.Local (runState, get, put, modify)
 
 import Crucible.Codec (JSONCodec, object, field, optField, enum, str, int, bimapCodec, dimapCodec, encodeText)
 import Crucible.Decode (decodeLLM)
@@ -82,7 +82,9 @@ data LedgerEvent
   | EvCompleted WorkId
   deriving (Eq, Show)
 
--- | Fold the event log into the current work items, in record order.
+-- | Fold the event log into the current work items, in record order. Rescans
+-- the log per recorded item (O(items * events)); fine at ledger sizes, like the
+-- sibling fold in 'Crucible.Memory'.
 foldItems :: [LedgerEvent] -> [WorkItem]
 foldItems evs = map build recorded
   where
@@ -90,8 +92,8 @@ foldItems evs = map build recorded
     build (i, p) = foldl step (WorkItem i p Ready Nothing) evs
       where
         step it = \case
-          EvClaimed j who | widInt j == widInt i -> it { state = Claimed, claimant = Just who }
-          EvCompleted j   | widInt j == widInt i -> it { state = Done }
+          EvClaimed j who | j == i -> it { state = Claimed, claimant = Just who }
+          EvCompleted j   | j == i -> it { state = Done }
           _ -> it
 
 -- | The Ready items, in record order.
@@ -100,7 +102,7 @@ readyOf = filter (\it -> it.state == Ready) . foldItems
 
 -- | The current state of one id, if it exists.
 stateOf :: WorkId -> [LedgerEvent] -> Maybe WorkState
-stateOf w evs = case [it | it <- foldItems evs, widInt it.wid == widInt w] of
+stateOf w evs = case [it | it <- foldItems evs, it.wid == w] of
   (it : _) -> Just it.state
   []       -> Nothing
 
@@ -119,9 +121,7 @@ runLedgerState action = do
       case stateOf w evs of
         Just Ready -> put (evs ++ [EvClaimed w who]) >> pure True
         _          -> pure False
-    Complete w -> do
-      evs <- get @[LedgerEvent]
-      put (evs ++ [EvCompleted w])
+    Complete w -> modify @[LedgerEvent] (++ [EvCompleted w])
     ListReady -> readyOf <$> get @[LedgerEvent]) action
   pure (a, foldItems evs)
 

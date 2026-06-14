@@ -2280,7 +2280,7 @@ main = runChecks
       (fst (runPureEff (runLedgerState (do a <- Ledger.record "A"; b <- Ledger.record "B"; pure [a, b]))))
   , check "ledger: both recorded items are Ready in record order"
       [WorkId 0, WorkId 1]
-      (map ((.wid) :: WorkItem -> WorkId) (snd (runPureEff (runLedgerState (do _ <- Ledger.record "A"; _ <- Ledger.record "B"; Ledger.listReady)))))
+      (map ((.wid) :: WorkItem -> WorkId) (fst (runPureEff (runLedgerState (do _ <- Ledger.record "A"; _ <- Ledger.record "B"; Ledger.listReady)))))
   , check "ledger: claim a Ready item succeeds and sets claimant"
       (True, Just "worker-1", Claimed)
       (let (ok, final) = runPureEff (runLedgerState (do
@@ -2313,6 +2313,19 @@ main = runChecks
   , check "ledger: workItemCodec round-trips a Ready item"
       (Right (WorkItem (WorkId 3) "do it" Ready Nothing))
       (decodeLLM workItemCodec (C.encodeText workItemCodec (WorkItem (WorkId 3) "do it" Ready Nothing)))
+  , check "ledger: workItemCodec round-trips a Claimed item with claimant"
+      (Right (WorkItem (WorkId 4) "do it" Claimed (Just "worker-1")))
+      (decodeLLM workItemCodec (C.encodeText workItemCodec (WorkItem (WorkId 4) "do it" Claimed (Just "worker-1"))))
+  , check "ledger: workItemCodec round-trips a Done item"
+      (Right (WorkItem (WorkId 5) "do it" Ledger.Done Nothing))
+      (decodeLLM workItemCodec (C.encodeText workItemCodec (WorkItem (WorkId 5) "do it" Ledger.Done Nothing)))
+  , do (path, h) <- openTempFile "/tmp" "crucible-ledger-complete.jsonl"
+       hClose h
+       _ <- runEff (runLedgerFile path (do w <- Ledger.record "A"; Ledger.complete w))
+       items <- runEff (runLedgerFile path Ledger.listReady)
+       removeFile path
+       check "ledger file: a complete is visible in a later session" ([] :: [WorkId])
+         (map ((.wid) :: WorkItem -> WorkId) items)
   , do (path, h) <- openTempFile "/tmp" "crucible-ledger-test.jsonl"
        hClose h
        _ <- runEff (runLedgerFile path (do _ <- Ledger.record "A"; _ <- Ledger.record "B"; pure ()))

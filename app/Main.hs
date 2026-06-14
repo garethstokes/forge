@@ -293,16 +293,17 @@ main = do
       case gatedRes of
         Right summary -> TIO.putStrLn ("spawnGated: accepted: " <> summary)
         Left failure  -> TIO.putStrLn ("spawnGated: " <> T.pack (show failure))
-      -- Work ledger: record two items, claim and complete one, list the rest.
+      -- Work ledger: session 1 records and processes one item; a SEPARATE
+      -- session 2 on the same file reads back what remains (outlives sessions).
       let ledgerPath = "/tmp/crucible-ledger-demo.jsonl"
       TIO.writeFile ledgerPath ""  -- fresh ledger
-      ledgerRemaining <- runEff (Ledger.runLedgerFile ledgerPath (do
+      _ <- runEff (Ledger.runLedgerFile ledgerPath (do
         a <- Ledger.record "summarize the inbox"
         _ <- Ledger.record "draft the reply"
         ok <- Ledger.claim a "worker-1"
-        if ok then Ledger.complete a else pure ()
-        rs <- Ledger.listReady
-        pure (map (\it -> it.payload) rs)))
+        if ok then Ledger.complete a else pure ()))
+      ledgerRemaining <- runEff (Ledger.runLedgerFile ledgerPath
+        (map (\it -> it.payload) <$> Ledger.listReady))
       TIO.putStrLn ("ledger: remaining ready = " <> T.pack (show ledgerRemaining))
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
