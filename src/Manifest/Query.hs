@@ -31,6 +31,7 @@ module Manifest.Query
   , Self (..)
   , currentSetting
   , currentSettingOr
+  , castText
   , lit
   , renderPredicate
   , renderQueryM
@@ -161,6 +162,12 @@ currentSetting name = Expr ("current_setting(" <> quoteLit name <> ")") []
 currentSettingOr :: Text -> Text -> Expr Text
 currentSettingOr name def =
   Expr ("coalesce(current_setting(" <> quoteLit name <> ", true), " <> quoteLit def <> ")") []
+
+-- | Cast an expression to text — e.g. an Int column for comparison with a GUC
+-- (which 'currentSetting'/'currentSettingOr' returns as text) inside an RLS
+-- policy predicate, where both sides of @(.==)@ must share a type.
+castText :: Expr a -> Expr Text
+castText (Expr sql ps) = Expr ("(" <> sql <> ")::text") ps
 
 -- | An inline single-quoted SQL string literal (for DDL predicates; not a bound param).
 lit :: Text -> Expr a

@@ -69,6 +69,12 @@ tests = group "Rls"
       assertEqual "name" "org_isolation" (pdName pd)
       assertEqual "using" (Just "user_name = current_setting('app.current_org')") (pdUsing pd)
       assertEqual "check" Nothing (pdCheck pd)
+  , test "castText renders ::text for an int-keyed RLS predicate" $ do
+      let p = policy "org_isolation"
+                `using` (\u -> castText (u ^. #userId) .== currentSetting "app.current_org")
+              :: Policy User
+          pd = policyDef p
+      assertEqual "using" (Just "(user_id)::text = current_setting('app.current_org')") (pdUsing pd)
   , test "withRlsContext sets a transaction-local GUC; it is cleared afterward" $
       withEmptyDb $ \pool -> withSession pool $ do
         inside <- withTransaction $ withRlsContext [("app.current_org", "acme")] $ do

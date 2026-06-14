@@ -161,6 +161,7 @@ module Manifest
   , Self
   , currentSetting
   , currentSettingOr
+  , castText
   , lit
   , withRlsContext
     -- * Declarative indexes
@@ -194,7 +195,7 @@ import Manifest.Query
   , withCte, fromCte, CteRef, innerJoin, leftJoin, rightJoin, fullJoin, opt, (^.), (?.), Label(..), FieldType, val
   , (.==), (./=), (.>), (.<), (.&&), Jsonb, JsonbExpr, (.@>), (.->), (.->>), (.#>), (.#>>), where_, having, distinct, orderBy, asc, desc
   , limit, offset, groupBy, countRows, sum_, avg_, min_, max_
-  , OrderTerm, Selectable (Result), runQuery, Self, currentSetting, currentSettingOr, lit )
+  , OrderTerm, Selectable (Result), runQuery, Self, currentSetting, currentSettingOr, castText, lit )
 import Manifest.Core.Rls
   ( Policy, PolicyCmd (..) )
 import Manifest.Rls
