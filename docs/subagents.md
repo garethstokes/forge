@@ -106,6 +106,28 @@ Each `spawnGated` can spawn up to `retries + 1` times, so size the interpreter's
 spawn cap to leave room: a cap that runs out mid-retry surfaces as
 `SpawnBudgetExceeded`, not `GateRejected`.
 
+## Concurrent spawn
+
+Independent subtasks can run at once instead of one after another.
+
+```haskell
+spawnAll :: (Agents es :> r, Concurrent :> r)
+         => [(SubAgent es i o, i)] -> Eff r [Either AgentFailure o]
+```
+
+`spawnAll` runs a batch of spawns concurrently and returns their results in
+input order. Discharge the `Concurrent` effect with
+`Effectful.Concurrent.runConcurrent`. Each worker keeps its own isolated
+transcript and returns its own typed result, so siblings share no state. The
+spawn budget is shared atomically across the batch and the whole tree, so with a
+cap below the batch size exactly that many spawns succeed and the rest return
+`SpawnBudgetExceeded`. A worker failure is a `Left` value and does not cancel
+its siblings; a worker that throws an exception cancels the siblings and
+rethrows, the standard concurrent-task behaviour. For a batch with mixed input
+or output types, use `Effectful.Concurrent.Async.mapConcurrently` over `spawn`
+directly.
+
 ## What is not covered
 
-Spawn is synchronous. Concurrent spawn is planned as separate work.
+Cross-sibling communication (blackboard or debate patterns) and streaming
+partial results remain out of scope.
