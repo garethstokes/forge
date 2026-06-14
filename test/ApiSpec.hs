@@ -353,7 +353,9 @@ serverSpec = withEphemeralDb $ \pool -> do
   writeFile (staticDir <> "/probe.css") "body { color: red; }"
   -- Seed the database: insert e2 BEFORE e1 so heap order != key order,
   -- ensuring the sort-by-key in the handler is actually exercised.
-  (runId_, dvId) <- withSession pool $ do
+  (runId_, dvId, globexRunId) <- withSession pool $ do
+    _ <- add (Org { id = OrgId 1, slug = "acme",   name = "Acme",   createdAt = now } :: Org)
+    _ <- add (Org { id = OrgId 2, slug = "globex", name = "Globex", createdAt = now } :: Org)
     -- Seed "zeta" dataset FIRST (alphabetically after "demo") to verify
     -- /api/datasets returns results in name order, not insertion order.
     dz <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "zeta", slug = "zeta", createdAt = now } :: Dataset)
@@ -400,13 +402,21 @@ serverSpec = withEphemeralDb $ \pool -> do
                        , passF1 = 0.77, failF1 = 0.73, balancedF1 = 0.75
                        , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
                        , computedAt = now } :: MetaEval)
-    pure (r.id, v.id)
+    -- Globex org (OrgId 2) — a second tenant's graph for isolation tests.
+    dB  <- add (Dataset { id = DatasetId 0, org = OrgId 2, name = "b", slug = "b", createdAt = now } :: Dataset)
+    dvB <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 2, dataset = dB.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    tB  <- add (Target { id = TargetId 0, org = OrgId 2, name = "tb", createdAt = now } :: Target)
+    tvB <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 2, target = tB.id, version = 1, model = "m", prompt = "", params = Aeson (object []), createdAt = now } :: TargetVersion)
+    rB  <- add (Run { id = RunId 0, org = OrgId 2, datasetVersion = dvB.id, targetVersion = tvB.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
+    pure (r.id, v.id, rB.id)
   mgr <- newManager defaultManagerSettings
   hub <- newEventHub
   testWithApplication (pure (dashboardApp pool staticDir hub)) $ \port -> do
     let getReq path = parseRequest ("http://localhost:" <> show port <> path) >>= flip httpLbs mgr
+        RunId runIdInt = runId_
+        RunId rBInt    = globexRunId
     -- /api/datasets: 2 datasets, returned in name order (demo < zeta)
-    r1 <- getReq "/api/datasets"
+    r1 <- getReq "/acme/api/datasets"
     expect "datasets 200" (statusCode (responseStatus r1) == 200)
     expect "datasets shape" (case decode (responseBody r1) :: Maybe [DatasetDto] of
       Just [d1, d2] -> d1.name == "demo"
@@ -415,7 +425,7 @@ serverSpec = withEphemeralDb $ \pool -> do
                          && d2.name == "zeta"
       _ -> False)
     -- /api/runs
-    r2 <- getReq "/api/runs"
+    r2 <- getReq "/acme/api/runs"
     expect "runs shape" (case decode (responseBody r2) :: Maybe [RunSummaryDto] of
       Just [r] -> r.status == "succeeded" && r.model == "claude-x"
                     && r.datasetName == "demo"
@@ -433,12 +443,11 @@ serverSpec = withEphemeralDb $ \pool -> do
                           _   -> False)
       _ -> False)
     -- filter by datasetVersion: bogus id yields []
-    r2b <- getReq "/api/runs?datasetVersion=999999"
+    r2b <- getReq "/acme/api/runs?datasetVersion=999999"
     expect "runs filter" (decode (responseBody r2b) == Just ([] :: [RunSummaryDto]))
     -- run detail: outputs must be ordered by key (e1 < e2) even though
     -- they were inserted in reverse order (e2 first).
-    let RunId runIdInt = runId_
-    r3 <- getReq ("/api/runs/" <> show runIdInt)
+    r3 <- getReq ("/acme/api/runs/" <> show runIdInt)
     expect "detail 200" (statusCode (responseStatus r3) == 200)
     expect "detail outputs ordered by key" (case decode (responseBody r3) :: Maybe RunDetailDto of
       Just rd ->
@@ -483,7 +492,7 @@ serverSpec = withEphemeralDb $ \pool -> do
       case decode (responseBody r3) :: Maybe RunDetailDto of
         Just d | [s] <- d.calibration -> s.latest.balancedF1 == 0.75
         _ -> False
-    rCal <- getReq "/api/calibration"
+    rCal <- getReq "/acme/api/calibration"
     expect "calibration 200" (statusCode (responseStatus rCal) == 200)
     expect "calibration: one (exactness, stored) series" $
       case decode (responseBody rCal) :: Maybe [CalibrationSeriesDto] of
@@ -497,14 +506,14 @@ serverSpec = withEphemeralDb $ \pool -> do
           && all (\p -> not p.isCurrent) s.trend
         _ -> False
     -- unknown run -> 404 + ApiError
-    r4 <- getReq "/api/runs/999999"
+    r4 <- getReq "/acme/api/runs/999999"
     expect "unknown run 404" (statusCode (responseStatus r4) == 404)
     expect "unknown run ApiError" ((decode (responseBody r4) :: Maybe ApiError) /= Nothing)
     -- unknown api route -> 404
-    r5 <- getReq "/api/nope"
+    r5 <- getReq "/acme/api/nope"
     expect "unknown api route 404" (statusCode (responseStatus r5) == 404)
     -- example detail: GET /api/runs/:id/ex/e1 (the ok output o1)
-    rEx <- getReq ("/api/runs/" <> show runIdInt <> "/ex/e1")
+    rEx <- getReq ("/acme/api/runs/" <> show runIdInt <> "/ex/e1")
     expect "example detail 200" (statusCode (responseStatus rEx) == 200)
     expect "example detail shape" (case decode (responseBody rEx) :: Maybe ExampleDetailDto of
       Just ed ->
@@ -527,23 +536,41 @@ serverSpec = withEphemeralDb $ \pool -> do
               _   -> False)
       _ -> False)
     -- unknown example key -> 404
-    rExMiss <- getReq ("/api/runs/" <> show runIdInt <> "/ex/no-such-key")
+    rExMiss <- getReq ("/acme/api/runs/" <> show runIdInt <> "/ex/no-such-key")
     expect "example detail unknown key 404" (statusCode (responseStatus rExMiss) == 404)
     -- filter by datasetVersion with the real id
     let DatasetVersionId dvInt = dvId
-    r6 <- getReq ("/api/runs?datasetVersion=" <> show dvInt)
+    r6 <- getReq ("/acme/api/runs?datasetVersion=" <> show dvInt)
     expect "runs filter real dvId" (case decode (responseBody r6) :: Maybe [RunSummaryDto] of
       Just [_] -> True
       _ -> False)
     -- static file: known file -> 200 text/css with correct body
-    r7 <- getReq "/probe.css"
+    r7 <- getReq "/acme/probe.css"
     expect "static probe.css 200" (statusCode (responseStatus r7) == 200)
     expect "static probe.css content-type" $
       lookup hContentType (responseHeaders r7) == Just "text/css"
     expect "static probe.css body" (responseBody r7 == "body { color: red; }")
     -- static file: missing file -> 404
-    r8 <- getReq "/missing.css"
+    r8 <- getReq "/acme/missing.css"
     expect "static missing.css 404" (statusCode (responseStatus r8) == 404)
+    -- Cross-org isolation: globex sees only its own run
+    rGlobex <- getReq "/globex/api/runs"
+    expect "globex runs 200" (statusCode (responseStatus rGlobex) == 200)
+    expect "globex sees only its own run" $
+      case decode (responseBody rGlobex) :: Maybe [RunSummaryDto] of
+        Just rs -> all (\r -> r.runId == rBInt) rs && not (any (\r -> r.runId == runIdInt) rs)
+        Nothing -> False
+    -- Cross-org: acme cannot see globex's run id
+    rCross <- getReq ("/acme/api/runs/" <> show rBInt)
+    expect "acme cannot see globex run -> 404" (statusCode (responseStatus rCross) == 404)
+    -- Unknown org slug -> 404
+    rUnknown <- getReq "/nope/api/runs"
+    expect "unknown org slug -> 404" (statusCode (responseStatus rUnknown) == 404)
+    -- Root -> 200 org picker listing both orgs
+    rRoot <- getReq "/"
+    expect "root 200" (statusCode (responseStatus rRoot) == 200)
+    expect "root lists orgs" (let b = LBS.toStrict (responseBody rRoot)
+                              in BC.isInfixOf "acme" b && BC.isInfixOf "globex" b)
   -- Clean up temp static directory
   removeDirectoryRecursive staticDir
 
@@ -556,6 +583,7 @@ compareSpec = withEphemeralDb $ \pool -> do
   -- c1, c2, c3 (c3 has output only in run A).
   -- c2 inserted FIRST to test sort order.
   (runAId, runBId, runCId) <- withSession pool $ do
+    _ <- add (Org { id = OrgId 1, slug = "acme", name = "Acme", createdAt = now } :: Org)
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "cmp", slug = "cmp", createdAt = now } :: Dataset)
     v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     -- Insert c2 first — heap order != key order, so sort must be exercised.
@@ -607,7 +635,7 @@ compareSpec = withEphemeralDb $ \pool -> do
         RunId bInt = runBId
         RunId cInt = runCId
     -- Happy path: A vs B
-    rAB <- getReq ("/api/compare?a=" <> show aInt <> "&b=" <> show bInt)
+    rAB <- getReq ("/acme/api/compare?a=" <> show aInt <> "&b=" <> show bInt)
     expect "compare AB 200" (statusCode (responseStatus rAB) == 200)
     expect "compare AB shape" $ case decode (responseBody rAB) :: Maybe CompareDto of
       Nothing  -> False
@@ -657,28 +685,29 @@ compareSpec = withEphemeralDb $ \pool -> do
               && r3.scoreA   == Nothing
               && r3.delta    == Nothing
     -- Mismatch: A vs C (different dataset versions) -> 400 + ApiError
-    rAC <- getReq ("/api/compare?a=" <> show aInt <> "&b=" <> show cInt)
+    rAC <- getReq ("/acme/api/compare?a=" <> show aInt <> "&b=" <> show cInt)
     expect "compare AC 400" (statusCode (responseStatus rAC) == 400)
     expect "compare AC ApiError" ((decode (responseBody rAC) :: Maybe ApiError) /= Nothing)
     -- Missing parameter -> 400
-    rMiss <- getReq "/api/compare?a=1"
+    rMiss <- getReq "/acme/api/compare?a=1"
     expect "compare missing b 400" (statusCode (responseStatus rMiss) == 400)
     -- Garbage parameter -> 400
-    rGarb <- getReq "/api/compare?a=notanint&b=1"
+    rGarb <- getReq "/acme/api/compare?a=notanint&b=1"
     expect "compare garbage a 400" (statusCode (responseStatus rGarb) == 400)
     -- Unknown id -> 404
-    rUnk <- getReq ("/api/compare?a=999999&b=" <> show bInt)
+    rUnk <- getReq ("/acme/api/compare?a=999999&b=" <> show bInt)
     expect "compare unknown id 404" (statusCode (responseStatus rUnk) == 404)
 
 sseSpec :: IO ()
 sseSpec = withEphemeralDb' $ \conninfo pool -> do
   _ <- withSession pool migrateAll
   now <- getCurrentTime
+  _ <- withSession pool (add (Org { id = OrgId 1, slug = "acme", name = "Acme", createdAt = now } :: Org))
   hub <- newEventHub
   tid <- forkIO (runListener conninfo hub)
   mgr <- newManager defaultManagerSettings
   testWithApplication (pure (dashboardApp pool "static" hub)) $ \port -> do
-    req0 <- parseRequest ("http://localhost:" <> show port <> "/api/events")
+    req0 <- parseRequest ("http://localhost:" <> show port <> "/acme/api/events")
     let req = req0 { responseTimeout = responseTimeoutNone }
     withResponse req mgr $ \resp -> do
       expect "sse content type"

@@ -15,6 +15,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson (Value)
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as LBS
 import Data.List (maximumBy, minimumBy, nub, sortBy, sortOn)
 import Data.Maybe (catMaybes, isNothing)
 import Data.Ord (comparing)
@@ -38,31 +39,52 @@ import Evals.Dashboard.Events (EventHub, sseResponse)
 import Evals.Execute (assembleMessages)
 import Evals.Ids
 import Evals.Schema
+import Evals.Tenant (withTenant)
+
+-- | Root page: a minimal standalone HTML list of orgs (links to /<slug>/).
+-- Unscoped — the registry has no RLS policy.
+orgPickerHandler :: Pool -> (Response -> IO a) -> IO a
+orgPickerHandler pool respond = do
+  orgs <- withSession pool (selectWhere ([] :: [Cond Org]))
+  let row o = "<li><a href=\"/" <> o.slug <> "/\">" <> o.name <> "</a></li>"
+      body  = "<!doctype html><meta charset=utf-8><title>evals — orgs</title>"
+           <> "<style>body{font:15px system-ui;margin:40px;max-width:540px}"
+           <> "h1{font-size:18px}a{color:#2456c8;text-decoration:none}a:hover{text-decoration:underline}</style>"
+           <> "<h1>Organisations</h1><ul>" <> T.concat (map row orgs) <> "</ul>"
+  respond (responseLBS status200 [("Content-Type", "text/html; charset=utf-8")]
+             (LBS.fromStrict (TE.encodeUtf8 body)))
 
 -- | The WAI application: routes API calls and serves static files.
 dashboardApp :: Pool -> FilePath -> EventHub -> Application
 dashboardApp pool staticDir hub req respond =
   case pathInfo req of
-    ["api", "datasets"]     -> apiWith (datasetsHandler pool respond)
-    ["api", "runs"]         -> apiWith (runsHandler pool (queryParam "datasetVersion" req) respond)
-    ["api", "runs", nTxt]   ->
-      case readMaybe (T.unpack nTxt) :: Maybe Int of
-        Nothing  -> respond (badRequest "invalid run id")
-        Just n   -> apiWith (runDetailHandler pool (RunId n) respond)
-    ["api", "runs", nTxt, "ex", key] ->
-      case readMaybe (T.unpack nTxt) :: Maybe Int of
-        Nothing  -> respond (badRequest "invalid run id")
-        Just n   -> apiWith (exampleDetailHandler pool (RunId n) key respond)
-    ["api", "compare"]      -> apiWith (compareHandler pool req respond)
-    ["api", "calibration"]  -> apiWith (calibrationHandler pool respond)
-    ["api", "events"]       -> respond (sseResponse hub)
-    ("api" : _)             -> respond notFound
-    segments                -> staticHandler staticDir (normalise segments) respond
+    []            -> apiWith (orgPickerHandler pool respond)
+    (slug : rest) -> do
+      orgs <- withSession pool (selectWhere ([ #slug ==. slug ] :: [Cond Org]))
+      case orgs of
+        []      -> respond notFound
+        (o : _) -> dispatch o.id rest
   where
     apiWith action = handle
       (\(e :: SomeException) ->
         respond (json status500 (ApiError { error = "internal error: " <> T.pack (show e) })))
       action
+    dispatch orgId rest = case rest of
+      ["api", "datasets"]     -> apiWith (datasetsHandler pool orgId respond)
+      ["api", "runs"]         -> apiWith (runsHandler pool orgId (queryParam "datasetVersion" req) respond)
+      ["api", "runs", nTxt]   ->
+        case readMaybe (T.unpack nTxt) :: Maybe Int of
+          Nothing -> respond (badRequest "invalid run id")
+          Just n  -> apiWith (runDetailHandler pool orgId (RunId n) respond)
+      ["api", "runs", nTxt, "ex", key] ->
+        case readMaybe (T.unpack nTxt) :: Maybe Int of
+          Nothing -> respond (badRequest "invalid run id")
+          Just n  -> apiWith (exampleDetailHandler pool orgId (RunId n) key respond)
+      ["api", "compare"]      -> apiWith (compareHandler pool orgId req respond)
+      ["api", "calibration"]  -> apiWith (calibrationHandler pool orgId respond)
+      ["api", "events"]       -> respond (sseResponse hub)
+      ("api" : _)             -> respond notFound
+      segments                -> staticHandler staticDir (normalise segments) respond
 
 -- | Serve a static file.
 staticHandler :: FilePath -> [T.Text] -> (Response -> IO a) -> IO a
@@ -116,9 +138,9 @@ badRequest msg = json status400 (ApiError { error = msg })
 -- ---------------------------------------------------------------------------
 -- /api/datasets
 
-datasetsHandler :: Pool -> (Response -> IO a) -> IO a
-datasetsHandler pool respond = do
-  dtos <- withSession pool $ do
+datasetsHandler :: Pool -> OrgId -> (Response -> IO a) -> IO a
+datasetsHandler pool orgId respond = do
+  dtos <- withSession pool $ withTenant orgId $ do
     datasets <- selectWhere ([] :: [Cond Dataset])
     let sorted = sortOn (\d -> d.name) datasets
     mapM datasetDto sorted
@@ -152,21 +174,21 @@ versionDto v = do
 -- ---------------------------------------------------------------------------
 -- /api/runs
 
-runsHandler :: Pool -> Maybe T.Text -> (Response -> IO a) -> IO a
-runsHandler pool mFilterTxt respond =
+runsHandler :: Pool -> OrgId -> Maybe T.Text -> (Response -> IO a) -> IO a
+runsHandler pool orgId mFilterTxt respond =
   case mFilterTxt of
     Just txt ->
       case readMaybe (T.unpack txt) :: Maybe Int of
         Nothing  -> respond (badRequest "invalid datasetVersion id")
         Just n   -> do
-          dtos <- withSession pool $ do
+          dtos <- withSession pool $ withTenant orgId $ do
             runs <- selectWhere [ #datasetVersion ==. DatasetVersionId n ] :: Db [Run]
             let runIdInt (RunId n) = n
                 sorted = sortBy (flip (comparing (\r -> runIdInt r.id))) runs
             mapM (runSummary False) sorted
           respond (json status200 dtos)
     Nothing  -> do
-      dtos <- withSession pool $ do
+      dtos <- withSession pool $ withTenant orgId $ do
         runs <- selectWhere ([] :: [Cond Run])
         let runIdInt (RunId n) = n
             sorted = sortBy (flip (comparing (\r -> runIdInt r.id))) runs
@@ -336,9 +358,9 @@ runCalibration rid = do
 
 -- | GET /api/calibration — every (graderVersion, mode) group that has any
 -- MetaEval row: the overall latest report + the full κ trend (no current marker).
-calibrationHandler :: Pool -> (Response -> IO a) -> IO a
-calibrationHandler pool respond = do
-  series <- withSession pool $ do
+calibrationHandler :: Pool -> OrgId -> (Response -> IO a) -> IO a
+calibrationHandler pool orgId respond = do
+  series <- withSession pool $ withTenant orgId $ do
     allMetas <- selectWhere ([] :: [Cond MetaEval])
     let byGroup = Map.fromListWith (++) [ ((me.graderVersion, me.mode), [me]) | me <- allMetas ]
         build (_grp, rows) =
@@ -350,9 +372,9 @@ calibrationHandler pool respond = do
 -- ---------------------------------------------------------------------------
 -- /api/runs/:id
 
-runDetailHandler :: Pool -> RunId -> (Response -> IO a) -> IO a
-runDetailHandler pool rid respond = do
-  mDto <- withSession pool $ do
+runDetailHandler :: Pool -> OrgId -> RunId -> (Response -> IO a) -> IO a
+runDetailHandler pool orgId rid respond = do
+  mDto <- withSession pool $ withTenant orgId $ do
     mRun <- get @Run (Key rid)
     case mRun of
       Nothing  -> pure Nothing
@@ -405,9 +427,9 @@ scoreDto s = do
 -- ---------------------------------------------------------------------------
 -- /api/runs/:id/ex/:key
 
-exampleDetailHandler :: Pool -> RunId -> T.Text -> (Response -> IO a) -> IO a
-exampleDetailHandler pool rid key respond = do
-  mDto <- withSession pool $ do
+exampleDetailHandler :: Pool -> OrgId -> RunId -> T.Text -> (Response -> IO a) -> IO a
+exampleDetailHandler pool orgId rid key respond = do
+  mDto <- withSession pool $ withTenant orgId $ do
     mRun <- get @Run (Key rid)
     case mRun of
       Nothing  -> pure Nothing
@@ -470,13 +492,13 @@ verdictsFromDetail (Just (Aeson v)) = maybe [] id (AT.parseMaybe p v)
 -- The grader compared is the lexicographically-first (name, version) among
 -- graders that scored BOTH runs, falling back to either run's graders when
 -- none scored both.
-compareHandler :: Pool -> Request -> (Response -> IO a) -> IO a
-compareHandler pool req respond =
+compareHandler :: Pool -> OrgId -> Request -> (Response -> IO a) -> IO a
+compareHandler pool orgId req respond =
   case (queryParam "a" req >>= readMaybeInt, queryParam "b" req >>= readMaybeInt) of
     (Nothing, _) -> respond (badRequest "a and b run ids required")
     (_, Nothing) -> respond (badRequest "a and b run ids required")
     (Just aInt, Just bInt) -> do
-      result <- withSession pool $ do
+      result <- withSession pool $ withTenant orgId $ do
         mRunA <- get @Run (Key (RunId aInt))
         mRunB <- get @Run (Key (RunId bInt))
         case (mRunA, mRunB) of
