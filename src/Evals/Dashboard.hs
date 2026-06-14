@@ -11,6 +11,7 @@ module Evals.Dashboard (dashboardApp) where
 
 import Control.Exception (SomeException, handle)
 import qualified Data.Aeson as Aeson
+import Data.Aeson (Value)
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (minimumBy, nub, sortBy, sortOn)
@@ -152,25 +153,25 @@ runsHandler pool mFilterTxt respond =
             runs <- selectWhere [ #datasetVersion ==. DatasetVersionId n ] :: Db [Run]
             let runIdInt (RunId n) = n
                 sorted = sortBy (flip (comparing (\r -> runIdInt r.id))) runs
-            mapM runSummary sorted
+            mapM (runSummary False) sorted
           respond (json status200 dtos)
     Nothing  -> do
       dtos <- withSession pool $ do
         runs <- selectWhere ([] :: [Cond Run])
         let runIdInt (RunId n) = n
             sorted = sortBy (flip (comparing (\r -> runIdInt r.id))) runs
-        mapM runSummary sorted
+        mapM (runSummary False) sorted
       respond (json status200 dtos)
 
 -- | Build a RunSummaryDto for a Run. Missing FK rows fall back to "?" names.
-runSummary :: Run -> Db RunSummaryDto
-runSummary r = do
+runSummary :: Bool -> Run -> Db RunSummaryDto
+runSummary detail r = do
   mtv <- get @TargetVersion (Key r.targetVersion)
   mt  <- maybe (pure Nothing) (\tv -> get @Target (Key tv.target)) mtv
   mdv <- get @DatasetVersion (Key r.datasetVersion)
   md  <- maybe (pure Nothing) (\dv -> get @Dataset (Key dv.dataset)) mdv
   allMetrics <- selectWhere [ #run ==. r.id ] :: Db [RunMetric]
-  metricDtos <- groupedMetricDtos allMetrics
+  metricDtos <- groupedMetricDtos detail r.id allMetrics
   let sortedMetrics = sortOn (\m -> m.graderName) metricDtos
       RunId rid = r.id
       tvVersion  = maybe 0 (.version) mtv
@@ -196,8 +197,8 @@ runSummary r = do
 -- | One MetricDto per grader version: the overall (tag Nothing) row supplies
 -- mean/passRate/stderr/count; the tagged rows become sorted breakdowns. A group
 -- with no overall row is dropped (recompute always writes one).
-groupedMetricDtos :: [RunMetric] -> Db [MetricDto]
-groupedMetricDtos rms =
+groupedMetricDtos :: Bool -> RunId -> [RunMetric] -> Db [MetricDto]
+groupedMetricDtos detail runId rms =
   fmap catMaybes (mapM buildOne (Map.toList byGrader))
   where
     byGrader = Map.fromListWith (++) [ (rm.graderVersion, [rm]) | rm <- rms ]
@@ -213,10 +214,34 @@ groupedMetricDtos rms =
               brks = sortOn (.tag)
                        [ TagMetricDto { tag = t, mean = rm.mean, stderr = rm.stderr, count = rm.count }
                        | rm <- rows, Just t <- [rm.tag] ]
+          crits <- if detail && gKind == "pointed"
+                     then rubricCriteriaFor runId gvId
+                     else pure []
           pure (Just MetricDto
             { graderName = gName, graderVersion = gVersion, graderKind = gKind
             , mean = overall.mean, passRate = overall.passRate, count = overall.count
-            , stderr = overall.stderr, breakdowns = brks })
+            , stderr = overall.stderr, breakdowns = brks, criteria = crits })
+
+-- | The distinct rubric criteria across all of a grader version's scores in a
+-- run — the union, deduped by criterion text. Detail-view only (the runs list
+-- never calls this).
+rubricCriteriaFor :: RunId -> GraderVersionId -> Db [RubricCriterionDto]
+rubricCriteriaFor runId gvId = do
+  outs   <- selectWhere [ #run ==. runId ] :: Db [Output]
+  perOut <- mapM (\o -> selectWhere [ #output ==. o.id, #graderVersion ==. gvId ] :: Db [Score]) outs
+  pure (dedupCriteria (concatMap (rubricCriteriaFromDetail . (.detail)) (concat perOut)))
+
+rubricCriteriaFromDetail :: Maybe (Aeson Value) -> [RubricCriterionDto]
+rubricCriteriaFromDetail Nothing = []
+rubricCriteriaFromDetail (Just (Aeson v)) = maybe [] id (AT.parseMaybe p v)
+  where p = AT.withObject "detail" $ \o -> do
+              arr <- o AT..: "criteria"
+              mapM (AT.withObject "criterion" $ \c ->
+                      RubricCriterionDto <$> c AT..: "criterion" <*> c AT..: "points" <*> c AT..: "tags")
+                   (arr :: [Value])
+
+dedupCriteria :: [RubricCriterionDto] -> [RubricCriterionDto]
+dedupCriteria = Map.elems . Map.fromListWith (\_new old -> old) . map (\c -> (c.criterion, c))
 
 -- ---------------------------------------------------------------------------
 -- /api/runs/:id
@@ -228,7 +253,7 @@ runDetailHandler pool rid respond = do
     case mRun of
       Nothing  -> pure Nothing
       Just run -> do
-        summary <- runSummary run
+        summary <- runSummary True run
         outputs <- selectWhere [ #run ==. rid ] :: Db [Output]
         -- build OutputRowDto per output, ordering by example key
         rows <- mapM (outputRowDto rid) outputs
@@ -296,8 +321,8 @@ compareHandler pool req respond =
             if runA.datasetVersion /= runB.datasetVersion
               then pure (Left (400, "runs are over different dataset versions"))
               else do
-                summA <- runSummary runA
-                summB <- runSummary runB
+                summA <- runSummary False runA
+                summB <- runSummary False runB
                 -- Examples of the shared dataset version, sorted by key.
                 examples <- selectWhere [ #datasetVersion ==. runA.datasetVersion ] :: Db [Example]
                 let sortedExamples = sortOn (.key) examples

@@ -54,7 +54,10 @@ main = do
     , count = 100
     , stderr = Just 0.02
     , breakdowns = [ TagMetricDto { tag = "theme:x", mean = 0.7, stderr = Nothing, count = 8 } ]
+    , criteria = []
     }
+  rt "RubricCriterionDto" RubricCriterionDto
+    { criterion = "names the capital", points = 5, tags = ["axis:accuracy"] }
   rt "TagMetricDto" TagMetricDto
     { tag = "axis:accuracy", mean = 0.8, stderr = Just 0.03, count = 20 }
   rt "ScoreDto" ScoreDto
@@ -122,6 +125,7 @@ main = do
             , count = 100
             , stderr = Just 0.02
             , breakdowns = [ TagMetricDto { tag = "theme:x", mean = 0.7, stderr = Nothing, count = 8 } ]
+            , criteria = []
             }
         ]
     }
@@ -276,6 +280,7 @@ main = do
               , stderr = Just 0.02
               , breakdowns =
                   [ TagMetricDto { tag = "theme:x", mean = 0.7, stderr = Nothing, count = 8 } ]
+              , criteria = []
               }
         )
         :: Maybe Value
@@ -297,6 +302,7 @@ main = do
                        , "count" .= (8 :: Int)
                        ]
                    ]
+            , "criteria" .= ([] :: [Value])
             ]
         )
   serverSpec
@@ -338,6 +344,17 @@ serverSpec = withEphemeralDb $ \pool -> do
     -- A per-tag breakdown row: now surfaced as a nested `breakdowns` entry on
     -- the grader's MetricDto (asserted below), not excluded.
     _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Nothing, count = 1, computedAt = now, tag = Just "axis:accuracy", stderr = Nothing } :: RunMetric)
+    -- A pointed (rubric) grader: a criterion-bearing score on o1 + an overall
+    -- RunMetric. The detail endpoint must surface its criteria union; the list
+    -- endpoint must leave criteria empty.
+    pg  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "rubric", kind = "pointed", createdAt = now } :: Grader)
+    pgv <- add (GraderVersion { id = GraderVersionId 0, grader = pg.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    _   <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = pgv.id, value = Just 0.5, passed = Nothing
+                      , detail = Just (Aeson (object
+                          [ "achieved" .= (5::Double), "possible" .= (10::Double)
+                          , "criteria" .= [ object ["criterion" .= ("names the capital"::Text), "points" .= (5::Double), "tags" .= (["axis:accuracy"]::[Text]), "met" .= True, "explanation" .= (""::Text)] ] ]))
+                      , error = Nothing, createdAt = now } :: Score)
+    _   <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = pgv.id, mean = 0.5, passRate = Nothing, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.0 } :: RunMetric)
     pure (r.id, v.id)
   mgr <- newManager defaultManagerSettings
   hub <- newEventHub
@@ -357,13 +374,18 @@ serverSpec = withEphemeralDb $ \pool -> do
     expect "runs shape" (case decode (responseBody r2) :: Maybe [RunSummaryDto] of
       Just [r] -> r.status == "succeeded" && r.model == "claude-x"
                     && r.datasetName == "demo"
-                    && (case r.metrics of
-                          [m] -> m.graderName == "exactness" && m.graderKind == "exact" && m.mean == 1.0 && m.passRate == Just 1.0
+                    && (case filter (\m -> m.graderName == "exactness") r.metrics of
+                          [m] -> m.graderKind == "exact" && m.mean == 1.0 && m.passRate == Just 1.0
                                    && m.stderr == Just 0.05
                                    && (case m.breakdowns of
                                          [b] -> b.tag == "axis:accuracy" && b.mean == 1.0 && b.count == 1
                                          _   -> False)
                           _ -> False)
+                    -- LIST endpoint: the rubric grader's criteria union is NOT
+                    -- computed (detail=False path) — must be empty.
+                    && (case filter (\m -> m.graderName == "rubric") r.metrics of
+                          [m] -> null m.criteria
+                          _   -> False)
       _ -> False)
     -- filter by datasetVersion: bogus id yields []
     r2b <- getReq "/api/runs?datasetVersion=999999"
@@ -380,7 +402,7 @@ serverSpec = withEphemeralDb $ \pool -> do
            && (head outs).exampleKey == "e1"
            && (head outs).outputText == Just "hello"
            && (head outs).latencyMs == Just 42
-           && (case (head outs).scores of
+           && (case filter (\s -> s.graderName == "exactness") (head outs).scores of
                  [s] -> s.value == Just 1.0
                          && s.passed == Just True
                          && s.rationale == Just "exact match"
@@ -388,6 +410,14 @@ serverSpec = withEphemeralDb $ \pool -> do
            && (outs !! 1).exampleKey == "e2"
            && (outs !! 1).outputError == Just "llm: boom"
            && null (outs !! 1).scores
+           -- DETAIL endpoint: the rubric grader's criteria union is populated.
+           && (case filter (\m -> m.graderName == "rubric") rd.run.metrics of
+                 [m] -> case m.criteria of
+                          [c] -> c.criterion == "names the capital"
+                                   && c.points == 5.0
+                                   && c.tags == ["axis:accuracy"]
+                          _   -> False
+                 _ -> False)
       _ -> False)
     -- unknown run -> 404 + ApiError
     r4 <- getReq "/api/runs/999999"

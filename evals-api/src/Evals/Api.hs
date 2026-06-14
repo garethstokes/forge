@@ -9,7 +9,7 @@
 -- server-side).
 module Evals.Api
   ( DatasetDto (..), DatasetVersionDto (..)
-  , RunSummaryDto (..), MetricDto (..), TagMetricDto (..)
+  , RunSummaryDto (..), MetricDto (..), TagMetricDto (..), RubricCriterionDto (..)
   , RunDetailDto (..), OutputRowDto (..), ScoreDto (..)
   , CompareDto (..), CompareRowDto (..)
   , ApiError (..)
@@ -33,11 +33,16 @@ data TagMetricDto = TagMetricDto
   { tag :: Text, mean :: Double, stderr :: Maybe Double, count :: Int }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
+data RubricCriterionDto = RubricCriterionDto
+  { criterion :: Text, points :: Double, tags :: [Text] }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
 data MetricDto = MetricDto
   { graderName :: Text, graderVersion :: Int, graderKind :: Text
   , mean :: Double, passRate :: Maybe Double, count :: Int
   , stderr :: Maybe Double
   , breakdowns :: [TagMetricDto]
+  , criteria :: [RubricCriterionDto]
   } deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 data RunSummaryDto = RunSummaryDto
