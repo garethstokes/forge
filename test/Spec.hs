@@ -55,7 +55,7 @@ import Crucible.Partial (closeJson, runPartial)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import Control.Concurrent (threadDelay)
-import Control.Exception (try, throwIO, fromException, evaluate, SomeException, SomeAsyncException (..))
+import Control.Exception (try, throwIO, fromException, evaluate, SomeException, SomeAsyncException (..), catch)
 import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
@@ -72,7 +72,7 @@ import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryD
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
 import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
-import System.Directory (removeFile)
+import System.Directory (removeFile, createDirectoryIfMissing, removeDirectoryRecursive, doesFileExist)
 import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
 import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
@@ -82,6 +82,7 @@ import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
 import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
+import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec)
 
 -- Sample types for codec tests
 
@@ -2399,4 +2400,66 @@ main = runChecks
        let oks  = length [() | Right _ <- rs]
            caps = length [() | Left (SpawnBudgetExceeded _) <- rs]
        check "spawnAll: shared budget caps the batch (2 ok, 1 over budget)" (2 :: Int, 1 :: Int) (oks, caps)
+  , let p = Page (Slug "a") "Alpha" [] "the body of alpha" ()
+        (r, _, _) = runPureEff (runResearchState ([] :: [Page ()]) (do writePage p; readPage (Slug "a")))
+    in check "research: write then read" (Just p) r
+  , let (r, _, _) = runPureEff (runResearchState ([] :: [Page ()]) (readPage (Slug "missing")))
+    in check "research: read absent page is Nothing" (Nothing :: Maybe (Page ())) r
+  , let p1 = Page (Slug "a") "Alpha" [] "first" ()
+        p2 = Page (Slug "a") "Alpha v2" [] "second" ()
+        (r, _, _) = runPureEff (runResearchState ([] :: [Page ()]) (do writePage p1; writePage p2; readPage (Slug "a")))
+    in check "research: write overwrites by slug" (Just p2) r
+  , let ps = [Page (Slug "b") "B" [] "x" (), Page (Slug "a") "A" [] "y" ()]
+        (r, _, _) = runPureEff (runResearchState ps (index @()))
+    in check "research: index lists slugs in slug order" [Slug "a", Slug "b"] r
+  , let ps = [Page (Slug "a") "Alpha note" [] "mentions Haskell" (), Page (Slug "b") "Beta" [] "nothing here" ()]
+        (rt, _, _)  = runPureEff (runResearchState ps (search @() "haskell"))
+        (rti, _, _) = runPureEff (runResearchState ps (search @() "ALPHA"))
+        (rn, _, _)  = runPureEff (runResearchState ps (search @() "zzz"))
+    in check "research: search matches body/title case-insensitively, else []"
+         ([Slug "a"], [Slug "a"], ([] :: [Slug])) (rt, rti, rn)
+  , let (_, _, logs) = runPureEff (runResearchState ([] :: [Page ()]) (do appendLog @() "one"; appendLog @() "two"))
+    in check "research: appendLog accumulates in order" ["one", "two"] logs
+  , check "research: linkCodec round-trips each link type"
+      (Right (Link (Slug "t") Supersedes))
+      (decodeLLM linkCodec (C.encodeText linkCodec (Link (Slug "t") Supersedes)))
+  , do let dir = "/tmp/crucible-research-test"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       let p = Page (Slug "alpha") "Alpha" [Link (Slug "beta") Extends] "body text here" ("m" :: Text)
+       _ <- runEff (runResearchDir C.str dir (writePage p))
+       got <- runEff (runResearchDir C.str dir (readPage (Slug "alpha")))
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: a written page reads back across sessions (title/links/meta)" (Just p) got
+  , do let dir = "/tmp/crucible-research-idx"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       (idx, hits) <- runEff (runResearchDir C.str dir (do
+                        writePage (Page (Slug "a") "Apple" [] "red fruit" ("" :: Text))
+                        writePage (Page (Slug "b") "Boat" [] "floats" ("" :: Text))
+                        i <- index @Text
+                        h <- search @Text "fruit"
+                        pure (i, h)))
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: index lists slugs, search greps body" ([Slug "a", Slug "b"], [Slug "a"]) (idx, hits)
+  , do let dir = "/tmp/crucible-research-nl"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       let p = Page (Slug "nl") "NL" [] "line one\nline two\n" ("" :: Text)   -- trailing newline + multi-line
+       _ <- runEff (runResearchDir C.str dir (writePage p))
+       got <- runEff (runResearchDir C.str dir (readPage (Slug "nl")))
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: body round-trips verbatim (trailing newline + multi-line)" (Just p) got
+  , check "research: mkSlug accepts a plain slug, rejects path-unsafe ones"
+      (Just (Slug "ok"), Nothing, Nothing, Nothing)
+      (mkSlug "ok", mkSlug "../escape", mkSlug "a/b", mkSlug "")
+  , do let dir = "/tmp/crucible-research-safe"
+           escapeDir = "/tmp/crucible-research-ESCAPED.md"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       removeFile escapeDir `catch` \(_ :: SomeException) -> pure ()
+       -- a path-unsafe slug must not be written (no escape), and reads Nothing
+       got <- runEff (runResearchDir C.str dir (do
+                writePage (Page (Slug "../crucible-research-ESCAPED") "X" [] "pwned" ("" :: Text))
+                readPage (Slug "../crucible-research-ESCAPED")))
+       escaped <- doesFileExist escapeDir
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: a path-unsafe slug is refused (no escape, reads Nothing)"
+         (Nothing :: Maybe (Page Text), False) (got, escaped)
   ]
