@@ -7,13 +7,13 @@ module ApiSpec (main) where
 
 import Control.Concurrent (forkIO, killThread)
 import Control.Monad (unless)
-import Data.Aeson (FromJSON, ToJSON, Value (..), decode, encode, object, (.=))
+import Data.Aeson (FromJSON, ToJSON, Value (..), decode, encode, object, toJSON, (.=))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
-import Data.Time (UTCTime (..), fromGregorian, getCurrentTime)
+import Data.Time (UTCTime (..), addUTCTime, fromGregorian, getCurrentTime)
 import Evals.Api
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import System.Timeout (timeout)
@@ -387,6 +387,16 @@ serverSpec = withEphemeralDb $ \pool -> do
                           , "criteria" .= [ object ["criterion" .= ("names the capital"::Text), "points" .= (5::Double), "tags" .= (["axis:accuracy"]::[Text]), "met" .= True, "explanation" .= (""::Text)] ] ]))
                       , error = Nothing, createdAt = now } :: Score)
     _   <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = pgv.id, mean = 0.5, passRate = Nothing, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.0 } :: RunMetric)
+    _ <- add (MetaEval { id = MetaEvalId 0, run = r.id, graderVersion = gv.id
+                       , mode = "stored", seed = 1, agreement = 0.8, kappa = 0.6
+                       , kappaLow = 0.5, kappaHigh = 0.7, failPrecision = 0.7, failRecall = 0.6
+                       , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
+                       , computedAt = addUTCTime (-3600) now } :: MetaEval)
+    _ <- add (MetaEval { id = MetaEvalId 0, run = r.id, graderVersion = gv.id
+                       , mode = "stored", seed = 1, agreement = 0.9, kappa = 0.78
+                       , kappaLow = 0.66, kappaHigh = 0.9, failPrecision = 0.8, failRecall = 0.75
+                       , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
+                       , computedAt = now } :: MetaEval)
     pure (r.id, v.id)
   mgr <- newManager defaultManagerSettings
   hub <- newEventHub
@@ -451,6 +461,21 @@ serverSpec = withEphemeralDb $ \pool -> do
                           _   -> False
                  _ -> False)
       _ -> False)
+    expect "run-detail calibration: one series" $
+      case decode (responseBody r3) :: Maybe RunDetailDto of
+        Just d  -> length d.calibration == 1
+        Nothing -> False
+    expect "run-detail calibration: latest + trend" $
+      case decode (responseBody r3) :: Maybe RunDetailDto of
+        Just d | [s] <- d.calibration ->
+             s.graderName == "exactness"
+          && s.mode == "stored"
+          && s.latest.kappa == 0.78
+          && s.latest.trusted == True
+          && s.latest.band == "substantial"
+          && map (\p -> p.kappa) s.trend == [0.6, 0.78]
+          && all (\p -> p.isCurrent) s.trend
+        _ -> False
     -- unknown run -> 404 + ApiError
     r4 <- getReq "/api/runs/999999"
     expect "unknown run 404" (statusCode (responseStatus r4) == 404)

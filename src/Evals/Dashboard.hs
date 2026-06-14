@@ -15,12 +15,13 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson (Value)
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
-import Data.List (minimumBy, nub, sortBy, sortOn)
+import Data.List (maximumBy, minimumBy, nub, sortBy, sortOn)
 import Data.Maybe (catMaybes, isNothing)
 import Data.Ord (comparing)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import Network.HTTP.Types (Status, status200, status400, status404, status500)
 import Network.Wai (Application, Request, Response, pathInfo, queryString, responseLBS, responseFile)
 import System.Directory (doesFileExist)
@@ -32,6 +33,7 @@ import Manifest.Postgres (Pool)
 
 import Crucible.LLM (Message (..), Role (..))
 import Evals.Api
+import Evals.Calibration (bandOf, trustedBy)
 import Evals.Dashboard.Events (EventHub, sseResponse)
 import Evals.Execute (assembleMessages)
 import Evals.Ids
@@ -251,6 +253,84 @@ dedupCriteria :: [RubricCriterionDto] -> [RubricCriterionDto]
 dedupCriteria = Map.elems . Map.fromListWith (\_new old -> old) . map (\c -> (c.criterion, c))
 
 -- ---------------------------------------------------------------------------
+-- Calibration (meta-eval) surfacing
+
+-- | Resolve a MetaEval row into its wire DTO: grader identity, judge-error
+-- count, and the server-computed trust verdict + Landis-Koch band.
+metaEvalDto :: MetaEval -> Db MetaEvalDto
+metaEvalDto me = do
+  mgv <- get @GraderVersion (Key me.graderVersion)
+  mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
+  pure MetaEvalDto
+    { graderName    = maybe "?" (.name) mg
+    , graderVersion = maybe 0 (.version) mgv
+    , graderKind    = maybe "?" (.kind) mg
+    , mode          = me.mode
+    , agreement     = me.agreement
+    , kappa         = me.kappa
+    , kappaLow      = me.kappaLow
+    , kappaHigh     = me.kappaHigh
+    , failPrecision = me.failPrecision
+    , failRecall    = me.failRecall
+    , measured      = me.measured
+    , judgeErrors   = judgeErrorCount me.judgeErrors
+    , computedAt    = isoTime me.computedAt
+    , trusted       = trustedBy me.kappaLow
+    , band          = bandOf me.kappa
+    }
+
+-- | A trend point. 'isCurrent' is True when this report belongs to the run
+-- being viewed (Nothing -> cross-run view, never current).
+trendPoint :: Maybe RunId -> MetaEval -> TrendPointDto
+trendPoint mrid me =
+  let RunId rid = me.run
+  in TrendPointDto
+       { runId      = rid
+       , kappa      = me.kappa
+       , kappaLow   = me.kappaLow
+       , kappaHigh  = me.kappaHigh
+       , computedAt = isoTime me.computedAt
+       , isCurrent  = maybe False (== me.run) mrid
+       }
+
+judgeErrorCount :: Aeson Value -> Int
+judgeErrorCount (Aeson v) = case v of
+  Aeson.Array a -> length a
+  _             -> 0
+
+isoTime :: UTCTime -> T.Text
+isoTime = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
+
+-- | Build one CalibrationSeriesDto from a chosen "latest" row and a chronological
+-- history (already filtered to one (graderVersion, mode) group).
+buildSeries :: Maybe RunId -> MetaEval -> [MetaEval] -> Db CalibrationSeriesDto
+buildSeries mrid latestRow history = do
+  latestDto <- metaEvalDto latestRow
+  pure CalibrationSeriesDto
+    { graderName    = latestDto.graderName
+    , graderVersion = latestDto.graderVersion
+    , graderKind    = latestDto.graderKind
+    , mode          = latestDto.mode
+    , latest        = latestDto
+    , trend         = map (trendPoint mrid) (sortOn (.computedAt) history)
+    }
+
+-- | Calibration series for a single run: latest report per (graderVersion,
+-- mode) seen on THIS run, each with that grader version's kappa trend across ALL
+-- runs (so the sparkline shows whether this run's kappa is typical).
+runCalibration :: RunId -> Db [CalibrationSeriesDto]
+runCalibration rid = do
+  thisRun <- selectWhere [ #run ==. rid ] :: Db [MetaEval]
+  let byGroup = Map.fromListWith (++) [ ((me.graderVersion, me.mode), [me]) | me <- thisRun ]
+  mapM buildGroup (Map.toList byGroup)
+  where
+    buildGroup ((gvId, md), rows) = do
+      let latestRow = maximumBy (comparing (.computedAt)) rows
+      allForGv <- selectWhere [ #graderVersion ==. gvId ] :: Db [MetaEval]
+      let history = [ h | h <- allForGv, h.mode == md ]
+      buildSeries (Just rid) latestRow history
+
+-- ---------------------------------------------------------------------------
 -- /api/runs/:id
 
 runDetailHandler :: Pool -> RunId -> (Response -> IO a) -> IO a
@@ -265,7 +345,8 @@ runDetailHandler pool rid respond = do
         -- build OutputRowDto per output, ordering by example key
         rows <- mapM (outputRowDto rid) outputs
         let sortedRows = sortOn (\r -> r.exampleKey) rows
-        pure (Just RunDetailDto { run = summary, outputs = sortedRows, calibration = [] })
+        cal <- runCalibration rid
+        pure (Just RunDetailDto { run = summary, outputs = sortedRows, calibration = cal })
   case mDto of
     Nothing  -> respond notFound
     Just dto -> respond (json status200 dto)
