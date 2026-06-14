@@ -34,7 +34,8 @@ data TagMetricDto = TagMetricDto
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 data MetricDto = MetricDto
-  { graderName :: Text, graderVersion :: Int, mean :: Double, passRate :: Maybe Double, count :: Int
+  { graderName :: Text, graderVersion :: Int, graderKind :: Text
+  , mean :: Double, passRate :: Maybe Double, count :: Int
   , stderr :: Maybe Double
   , breakdowns :: [TagMetricDto]
   } deriving (Eq, Show, Generic, ToJSON, FromJSON)

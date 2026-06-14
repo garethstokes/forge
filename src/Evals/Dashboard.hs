@@ -209,11 +209,12 @@ groupedMetricDtos rms =
           mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
           let gName    = maybe "?" (.name) mg
               gVersion = maybe 0 (.version) mgv
+              gKind    = maybe "?" (.kind) mg
               brks = sortOn (.tag)
                        [ TagMetricDto { tag = t, mean = rm.mean, stderr = rm.stderr, count = rm.count }
                        | rm <- rows, Just t <- [rm.tag] ]
           pure (Just MetricDto
-            { graderName = gName, graderVersion = gVersion
+            { graderName = gName, graderVersion = gVersion, graderKind = gKind
             , mean = overall.mean, passRate = overall.passRate, count = overall.count
             , stderr = overall.stderr, breakdowns = brks })
 

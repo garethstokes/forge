@@ -48,6 +48,7 @@ main = do
   rt "MetricDto" MetricDto
     { graderName = "exact-match"
     , graderVersion = 1
+    , graderKind = "exact"
     , mean = 0.85
     , passRate = Just 0.9
     , count = 100
@@ -115,6 +116,7 @@ main = do
         [ MetricDto
             { graderName = "exact-match"
             , graderVersion = 1
+            , graderKind = "exact"
             , mean = 0.85
             , passRate = Just 0.9
             , count = 100
@@ -267,6 +269,7 @@ main = do
             MetricDto
               { graderName = "exact-match"
               , graderVersion = 1
+              , graderKind = "exact"
               , mean = 0.85
               , passRate = Just 0.9
               , count = 100
@@ -281,6 +284,7 @@ main = do
         ( object
             [ "graderName" .= ("exact-match" :: Text)
             , "graderVersion" .= (1 :: Int)
+            , "graderKind" .= ("exact" :: Text)
             , "mean" .= (0.85 :: Double)
             , "passRate" .= (0.9 :: Double)
             , "count" .= (100 :: Int)
@@ -354,7 +358,7 @@ serverSpec = withEphemeralDb $ \pool -> do
       Just [r] -> r.status == "succeeded" && r.model == "claude-x"
                     && r.datasetName == "demo"
                     && (case r.metrics of
-                          [m] -> m.graderName == "exactness" && m.mean == 1.0 && m.passRate == Just 1.0
+                          [m] -> m.graderName == "exactness" && m.graderKind == "exact" && m.mean == 1.0 && m.passRate == Just 1.0
                                    && m.stderr == Just 0.05
                                    && (case m.breakdowns of
                                          [b] -> b.tag == "axis:accuracy" && b.mean == 1.0 && b.count == 1
