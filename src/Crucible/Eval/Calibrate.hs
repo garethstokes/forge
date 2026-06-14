@@ -44,6 +44,9 @@ data CalibrationReport = CalibrationReport
   , measured      :: Int     -- ^ number of holdout cases metrics are computed over
   , kappaCI       :: (Double, Double)  -- ^ 95% bootstrap interval for kappa
   , abstained     :: [Text]            -- ^ case names where the judge abstained
+  , passF1        :: Double  -- ^ F1 of the met (pass) class
+  , failF1        :: Double  -- ^ F1 of the not-met (fail) class
+  , balancedF1    :: Double  -- ^ mean of passF1 and failF1 (HealthBench pairwise_model_f1_balanced)
   }
   deriving (Eq, Show)
 
@@ -101,10 +104,14 @@ bootstrapStdErr seed resamples xs
           var     = sum [ (m - mbar) ** 2 | m <- means ] / fromIntegral resamples
       in sqrt var
 
+-- | F1 = harmonic mean of precision and recall; 0 when both are 0.
+harmonic :: Double -> Double -> Double
+harmonic p r = if p + r == 0 then 0 else 2 * p * r / (p + r)
+
 -- | Pure metric computation from outcomes + report shape fields.
 reportFrom :: Int -> [(Text, Bool, VoteOutcome)] -> Int -> Int -> CalibrationReport
 reportFrom seed outcomes exampleCount_ measured_ =
-  CalibrationReport po kap fPrec fRec cont errs exampleCount_ measured_ ci abst
+  CalibrationReport po kap fPrec fRec cont errs exampleCount_ measured_ ci abst passF1_ failF1_ balancedF1_
   where
     errs   = [nm | (nm, _, AllErrored _) <- outcomes]
     abst   = [nm | (nm, _, AllAbstained _) <- outcomes]
@@ -120,6 +127,13 @@ reportFrom seed outcomes exampleCount_ measured_ =
     hFails = [(p') | (_, False, p', _, _) <- judged]
     fRec   = ratio (length (filter not hFails)) (length hFails) 1
     cont   = [nm | (nm, _, _, y, f) <- judged, y > 0, f > 0]
+    jPass  = [h' | (_, h', True, _, _) <- judged]   -- judge said met
+    pPrec  = ratio (length (filter id jPass)) (length jPass) 1
+    hPass  = [p' | (_, True, p', _, _) <- judged]    -- human said met
+    pRec   = ratio (length (filter id hPass)) (length hPass) 1
+    passF1_     = harmonic pPrec pRec
+    failF1_     = harmonic fPrec fRec
+    balancedF1_ = (passF1_ + failF1_) / 2
     ratio :: Int -> Int -> Double -> Double
     ratio _ 0 dflt = dflt
     ratio num den _ = fromIntegral num / fromIntegral den
@@ -132,7 +146,7 @@ reportFrom seed outcomes exampleCount_ measured_ =
 -- 'exampleCount' is 0; 'measured' counts the non-errored cases.
 reportFromVerdicts :: Int -> [(Text, Bool, Maybe Bool)] -> CalibrationReport
 reportFromVerdicts seed cases =
-  CalibrationReport po kap fPrec fRec [] errs 0 (length judged) ci []
+  CalibrationReport po kap fPrec fRec [] errs 0 (length judged) ci [] passF1_ failF1_ balancedF1_
   where
     errs   = [nm | (nm, _, Nothing) <- cases]
     judged = [(h, j) | (_, h, Just j) <- cases]
@@ -145,6 +159,13 @@ reportFromVerdicts seed cases =
     fPrec  = ratio (length (filter not jFails)) (length jFails) 1
     hFails = [j | (False, j) <- judged]   -- human said not-met
     fRec   = ratio (length (filter not hFails)) (length hFails) 1
+    jPass  = [h | (h, True) <- judged]   -- judge said met
+    pPrec  = ratio (length (filter id jPass)) (length jPass) 1
+    hPass  = [j | (True, j) <- judged]   -- human said met
+    pRec   = ratio (length (filter id hPass)) (length hPass) 1
+    passF1_     = harmonic pPrec pRec
+    failF1_     = harmonic fPrec fRec
+    balancedF1_ = (passF1_ + failF1_) / 2
     ratio :: Int -> Int -> Double -> Double
     ratio _ 0 dflt = dflt
     ratio num den _ = fromIntegral num / fromIntegral den
@@ -188,6 +209,8 @@ renderCalibration r = T.intercalate "\n" $
       <> "  [95% CI " <> tshow lo <> ", " <> tshow hi <> "]"
   , "fail precision: " <> tshow r.failPrecision
   , "fail recall:    " <> tshow r.failRecall
+  , "balanced F1:    " <> tshow r.balancedF1
+      <> "  (met " <> tshow r.passF1 <> " · not-met " <> tshow r.failF1 <> ")"
   ]
   ++ [ "contested (label these next): " <> T.intercalate ", " r.contested | not (null r.contested) ]
   ++ [ "judge errors: " <> T.intercalate ", " r.judgeErrors | not (null r.judgeErrors) ]

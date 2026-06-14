@@ -1209,7 +1209,7 @@ main = runChecks
           , r.contested, r.judgeErrors, r.exampleCount, r.measured
           , lo <= r.kappa && r.kappa <= hi ))
   , check "calibrate: degenerate denominators are defined"
-      (CalibrationReport 1.0 0 1.0 1.0 [] [] 0 2 (0, 0) [])
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 0 2 (0, 0) [] 1.0 1.0 1.0)
       (runPureEff (runLLMScripted
          [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}" ]
          (calibrate 1 id "r" [("c1", "o" :: Text, True), ("c2", "o", True)])))
@@ -1276,7 +1276,7 @@ main = runChecks
             [ Case ("x" :: Text) "rub" (Rubric "r")
             , Case "y" "chk" (Checklist [criterion "c"]) ])))).passRate)
   , check "calibrateWith: examples held out of measurement"
-      (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2 (0, 0) [], "leftover")
+      (CalibrationReport 1.0 0 1.0 1.0 [] [] 2 2 (0, 0) [] 1.0 1.0 1.0, "leftover")
       (runPureEff (runLLMScripted
         [ "{\"why\":\"\",\"pass\":true}", "{\"why\":\"\",\"pass\":true}", "leftover" ]
         (do r <- calibrateWith 42 2 1 id "rubric"
@@ -1323,11 +1323,11 @@ main = runChecks
   , check "renderCalibration: kappa line carries the CI"
       True
       (T.isInfixOf "[95% CI "
-        (renderCalibration (CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0) [])))
+        (renderCalibration (CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0) [] 1 1 1)))
   , check "renderCalibration: examples line only when used"
       (True, False)
-      (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2 (0, 0) []
-           withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0) []
+      (let withEx    = CalibrationReport 1 0 1 1 [] [] 2 2 (0, 0) [] 1 1 1
+           withoutEx = CalibrationReport 1 0 1 1 [] [] 0 4 (0, 0) [] 1 1 1
        in ( T.isInfixOf "examples fed: 2" (renderCalibration withEx)
           , T.isInfixOf "examples fed" (renderCalibration withoutEx)))
   , check "reportFromVerdicts: perfect agreement, kappa 1, measured 2"
@@ -1353,8 +1353,16 @@ main = runChecks
       (let r = reportFromVerdicts 0 [("a", False, Just False), ("b", False, Just True)]
        in (r.failPrecision, r.failRecall))
   , check "reportFromVerdicts: empty input is the degenerate report"
-      (CalibrationReport 0 0 1.0 1.0 [] [] 0 0 (0, 0) [])
+      (CalibrationReport 0 0 1.0 1.0 [] [] 0 0 (0, 0) [] 1.0 1.0 1.0)
       (reportFromVerdicts 0 [])
+  , check "reportFromVerdicts: balanced-F1 averages distinct per-class F1s"
+      True
+      (let r = reportFromVerdicts 0
+                 [ ("a", True,  Just True),  ("b", True,  Just True)
+                 , ("c", False, Just False), ("d", False, Just True) ]
+           near x y = abs (x - y) < 1e-9
+       in near r.passF1 0.8 && near r.failF1 (2/3)
+          && near r.balancedF1 ((0.8 + 2/3) / 2) && r.passF1 /= r.failF1)
   , check "reportFromVerdicts: CI brackets the point estimate"
       True
       (let r = reportFromVerdicts 7
