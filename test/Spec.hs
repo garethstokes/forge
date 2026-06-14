@@ -83,6 +83,7 @@ import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
 import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
 import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec)
+import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))
 
 -- Sample types for codec tests
 
@@ -2462,4 +2463,46 @@ main = runChecks
        removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
        check "research dir: a path-unsafe slug is refused (no escape, reads Nothing)"
          (Nothing :: Maybe (Page Text), False) (got, escaped)
+  , let page = Page (Slug "p") "P" [] "the temperature is 26C. the city is Brisbane." ()
+        (res, pages, _) = runPureEff (runLLMScripted
+          [ "[\"the temperature is 26C\",\"the city is Brisbane\"]"
+          , "{\"why\":\"ok\",\"pass\":true}"
+          , "{\"why\":\"ok\",\"pass\":true}" ]
+          (runResearchState [] (writeGrounded defaultGroundGate "Brisbane is 26C." page)))
+    in check "writeGrounded: all supported -> committed" (Right (), [page]) (res, pages)
+  , let page = Page (Slug "p") "P" [] "the temperature is 26C. it is raining." ()
+        (res, pages, _) = runPureEff (runLLMScripted
+          [ "[\"the temperature is 26C\",\"it is raining\"]"
+          , "{\"why\":\"ok\",\"pass\":true}"
+          , "{\"why\":\"evidence says sunny\",\"pass\":false}" ]
+          (runResearchState [] (writeGrounded defaultGroundGate "sunny, 26C" page)))
+    in check "writeGrounded: an unsupported claim at threshold 1.0 -> rejected, not written"
+         (True, ([] :: [Page ()]))
+         (case res of Left (GroundingOutcome 1 2 _) -> True; _ -> False, pages)
+  , let page = Page (Slug "p") "P" [] "the temperature is 26C. it is raining." ()
+        (res, pages, _) = runPureEff (runLLMScripted
+          [ "[\"the temperature is 26C\",\"it is raining\"]"
+          , "{\"why\":\"ok\",\"pass\":true}"
+          , "{\"why\":\"evidence says sunny\",\"pass\":false}" ]
+          (runResearchState [] (writeGrounded (defaultGroundGate { threshold = 0.5 }) "sunny, 26C" page)))
+    in check "writeGrounded: threshold 0.5 with 1/2 supported -> committed" (Right (), [page]) (res, pages)
+  , let page = Page (Slug "p") "P" [] "no factual claims here" ()
+        (res, pages, _) = runPureEff (runLLMScripted ["[]"]
+          (runResearchState [] (writeGrounded defaultGroundGate "ev" page)))
+    in check "writeGrounded: NoClaims under CommitNoClaims -> committed" (Right (), [page]) (res, pages)
+  , let page = Page (Slug "p") "P" [] "no factual claims here" ()
+        (res, pages, _) = runPureEff (runLLMScripted ["[]"]
+          (runResearchState [] (writeGrounded (defaultGroundGate { onNoClaims = RejectNoClaims }) "ev" page)))
+    in check "writeGrounded: NoClaims under RejectNoClaims -> rejected, not written"
+         (True, ([] :: [Page ()]))
+         (case res of Left NoClaims -> True; _ -> False, pages)
+  , let page = Page (Slug "p") "P" [] "something" ()
+        (res, pages, _) = runPureEff (runLLMScripted ["junk", "junk2"]
+          (runResearchState [] (writeGrounded defaultGroundGate "ev" page)))
+    in check "writeGrounded: DecomposeFailed -> rejected, not written"
+         (True, ([] :: [Page ()]))
+         (case res of Left (DecomposeFailed _) -> True; _ -> False, pages)
+  , check "writeGrounded: defaultGroundGate fields"
+      (1.0, 1 :: Int, CommitNoClaims)
+      (defaultGroundGate.threshold, defaultGroundGate.votes, defaultGroundGate.onNoClaims)
   ]
