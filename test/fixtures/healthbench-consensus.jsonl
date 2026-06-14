@@ -1,0 +1,3 @@
+{"prompt":[{"role":"user","content":"Q1"}],"completion":"A1","rubric":"states X","binary_labels":[true,true,true],"anonymized_physician_ids":["p1","p2","p3"],"category":"theme_a"}
+{"prompt":[{"role":"user","content":"Q2"}],"completion":"A2","rubric":"states Y","binary_labels":[false,false],"anonymized_physician_ids":["p1","p2"],"category":"theme_b"}
+{"prompt":[{"role":"user","content":"Q3"}],"completion":"A3","rubric":"states Z","binary_labels":[true,false],"anonymized_physician_ids":["p1","p2"],"category":""}

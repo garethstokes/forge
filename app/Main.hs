@@ -91,6 +91,7 @@ main = getArgs >>= \case
     ver  <- maybe (pure 1) parseIntFlag (lookupFlag "--version" flags)
     let opts = MetaLoadOpts
           { file = fileArg, name = T.pack name, slug = T.pack slug, version = ver
+          , format = maybe "generic" T.pack (lookupFlag "--format" flags)
           , skipBad = "--skip-bad" `elem` flags, force = "--force" `elem` flags }
     withEnvPool $ \pool -> metaLoad pool opts >>= \case
       Left e  -> die (T.unpack (renderMetaLoadError e))
@@ -118,7 +119,7 @@ usage :: String
 usage = "usage: manifest-evals migrate | run <runId> [--concurrency N] | "
      <> "score <runId> <graderVersionId>... [--concurrency N] | "
      <> "ingest <file.jsonl> --name N --slug S [--version N] [--format generic|healthbench] [--limit N] [--skip-bad] [--force]"
-     <> " | metaeval load <file.jsonl> --name N --slug S [--version N] [--skip-bad] [--force]"
+     <> " | metaeval load <file.jsonl> --name N --slug S [--version N] [--format generic|healthbench] [--skip-bad] [--force]"
      <> " | metaeval report <runId> <graderVersionId> [--mode live|stored] [--seed N]"
 
 requireEnv :: String -> IO String

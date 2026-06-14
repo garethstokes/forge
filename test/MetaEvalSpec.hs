@@ -119,7 +119,7 @@ persistSpec pool now = do
 opts :: Bool -> MetaLoadOpts
 opts skip = MetaLoadOpts
   { file = "test/fixtures/metaeval.jsonl", name = "Meta", slug = "meta"
-  , version = 1, skipBad = skip, force = False }
+  , version = 1, format = "generic", skipBad = skip, force = False }
 
 ingestSpec :: Pool -> IO ()
 ingestSpec pool = do
@@ -146,7 +146,7 @@ ingestSpec pool = do
         (case again of Left (AlreadyExists "meta" 1) -> True; _ -> False)
       forced <- metaLoad pool (MetaLoadOpts
         { file = "test/fixtures/metaeval.jsonl", name = "Meta", slug = "meta"
-        , version = 1, skipBad = True, force = True })
+        , version = 1, format = "generic", skipBad = True, force = True })
       case forced of
         Left e   -> expect ("metaLoad --force should replace, got: " <> show e) False
         Right r2 -> do
