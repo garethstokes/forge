@@ -57,6 +57,7 @@ callMedia sk i media = loop sk.retries [mediaMessage sk i media]
     schema = schemaText sk.output
     loop n msgs = do
       turn <- converse ([] :: [(Text, Value)]) msgs
+      -- toolUses not expected; callMedia advertises no tools.
       let raw = turn.text
       case decodeLLM sk.output raw of
         Right o -> pure (Right o)

@@ -2140,6 +2140,10 @@ main = runChecks
       "[{\"content\":[{\"file\":{\"file_data\":\"data:application/pdf;base64,JVBERg==\",\"filename\":\"document.pdf\"},\"type\":\"file\"}],\"role\":\"user\"}]"
       (C.encodeText (C.list' C.anyValue)
         (OpenAI.chatMessagesJson (Chat.Message User [Chat.DocumentBlock (pdfB64 "JVBERg==")])))
+  , check "OpenAI chatMessagesJson: tool-result + media -> tool msg then user parts"
+      "[{\"content\":\"done\",\"role\":\"tool\",\"tool_call_id\":\"u1\"},{\"content\":[{\"image_url\":{\"url\":\"data:image/png;base64,QUJD\"},\"type\":\"image_url\"}],\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue)
+        (OpenAI.chatMessagesJson (Chat.Message User [Chat.ToolResultBlock "u1" (String "done"), Chat.ImageBlock (imageB64 "image/png" "QUJD")])))
   , check "mediaMessage: image then text, image routed to ImageBlock"
       True
       (case mediaMessage (skill "s" C.str C.str (const "extract")) ("" :: Text) [imageB64 "image/png" "QUJD"] of

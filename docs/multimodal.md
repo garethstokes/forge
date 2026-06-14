@@ -16,7 +16,7 @@ the document-extraction shape: a scan or a PDF in, a typed record out.
 data Media = Media { mediaType :: Text, dataB64 :: Text, filename :: Maybe Text }
 
 imageB64 :: Text -> Text -> Media   -- mediaType, base64 data
-pdfB64   :: Text -> Media           -- application/pdf
+pdfB64   :: Text -> Media           -- base64 data; media type fixed to application/pdf
 imageFile :: FilePath -> IO Media   -- reads + encodes, infers type from extension
 pdfFile   :: FilePath -> IO Media
 ```
@@ -34,7 +34,7 @@ callMedia :: (Chat :> es) => Skill i o -> i -> [Media] -> Eff es (Either DecodeE
 ```
 
 It builds one user message (the media blocks, then a text block with the
-instruction and the output-schema contract), sends it over the block-based
+output-schema contract and the instruction), sends it over the block-based
 `Chat` path, and decodes the reply against the skill's output codec with the
 same retry loop as `call`. Multimodal skills therefore carry `Chat :> es`
 rather than `LLM :> es`: the richer input needs the richer effect.
