@@ -66,9 +66,35 @@ history for free. A later session reading the same directory sees the earlier
 pages. `index` lists the `.md` files on disk, which may include a file whose
 head no longer decodes.
 
+## Grounding-gated writes
+
+A page is only as trustworthy as the write that created it. `writeGrounded`
+commits a page only when its body's claims are supported by a source trace.
+
+```haskell
+data NoClaimsPolicy = CommitNoClaims | RejectNoClaims
+data GroundGate = GroundGate { threshold :: Double, votes :: Int, onNoClaims :: NoClaimsPolicy }
+defaultGroundGate :: GroundGate   -- threshold 1.0, votes 1, CommitNoClaims
+
+writeGrounded :: (Research meta :> es, LLM :> es)
+              => GroundGate -> Text -> Page meta -> Eff es (Either GroundingOutcome ())
+```
+
+`writeGrounded gate evidence page` decomposes the page body into claims, verifies
+each against the evidence with the judge, and commits the page with `writePage`
+only if the supported fraction meets `threshold`. `Right ()` means committed;
+`Left outcome` means it was not written, and the outcome names the unsupported
+claims. A body with no factual claims commits or is rejected per `onNoClaims`; a
+verifier breakdown always rejects, so an edit is never committed unverified. This
+is automated claim-level verified ingest: an agent can write to its knowledge
+base and have unsupported claims kept out by default.
+
+To flag rather than gate (always write, but record the grounding result), call
+`groundingOutcome` and then `writePage` and `appendLog` yourself; the gate is the
+strict default, and the building blocks are public.
+
 ## Planned follow-on work
 
 This is the foundation. Exposing the operations as `Tool`s for the stock agent
-loop, grounding-gated writes (verifying a page's claims against its sources with
-`Crucible.Eval.Grounding` before a write commits), and lint as `Eval` cases
-(orphans, broken links, contradictions) are planned as separate work.
+loop and lint as `Eval` cases (orphans, broken links, contradictions) are planned
+as separate work.
