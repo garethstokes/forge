@@ -265,7 +265,7 @@ runDetailHandler pool rid respond = do
         -- build OutputRowDto per output, ordering by example key
         rows <- mapM (outputRowDto rid) outputs
         let sortedRows = sortOn (\r -> r.exampleKey) rows
-        pure (Just RunDetailDto { run = summary, outputs = sortedRows })
+        pure (Just RunDetailDto { run = summary, outputs = sortedRows, calibration = [] })
   case mDto of
     Nothing  -> respond notFound
     Just dto -> respond (json status200 dto)

@@ -159,6 +159,7 @@ main = do
             , scores = []
             }
         ]
+    , calibration = []
     }
   rt "CompareRowDto" CompareRowDto
     { exampleKey = "row-001"
@@ -272,6 +273,19 @@ main = do
     , prompt = [ PromptMsgDto { role = "system", content = "Answer." } ]
     , responseText = Just "Paris.", responseError = Nothing
     , grades = [] }
+  rt "CalibrationSeriesDto" CalibrationSeriesDto
+    { graderName = "rubric", graderVersion = 1, graderKind = "pointed"
+    , mode = "stored"
+    , latest = MetaEvalDto
+        { graderName = "rubric", graderVersion = 1, graderKind = "pointed"
+        , mode = "stored", agreement = 0.88, kappa = 0.78
+        , kappaLow = 0.66, kappaHigh = 0.9, failPrecision = 0.8, failRecall = 0.75
+        , measured = 40, judgeErrors = 0, computedAt = "2026-06-14T00:00:00Z"
+        , trusted = True, band = "substantial" }
+    , trend = [ TrendPointDto { runId = 1, kappa = 0.7, kappaLow = 0.55
+                              , kappaHigh = 0.85, computedAt = "2026-06-13T00:00:00Z"
+                              , isCurrent = False } ]
+    }
   rt "ApiError" ApiError { error = "not found" }
   rt "ChangeDto" (ChangeDto { table = "outputs", key = Just "42" })
   rt "ChangeDto pk-less" (ChangeDto { table = "scores", key = Nothing })

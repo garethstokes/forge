@@ -13,6 +13,7 @@ module Evals.Api
   , RunDetailDto (..), OutputRowDto (..), ScoreDto (..)
   , CompareDto (..), CompareRowDto (..)
   , PromptMsgDto (..), CriterionVerdictDto (..), GradeDto (..), ExampleDetailDto (..)
+  , MetaEvalDto (..), CalibrationSeriesDto (..), TrendPointDto (..)
   , ApiError (..)
   , ChangeDto (..)
   ) where
@@ -64,7 +65,10 @@ data OutputRowDto = OutputRowDto
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 data RunDetailDto = RunDetailDto
-  { run :: RunSummaryDto, outputs :: [OutputRowDto] }
+  { run         :: RunSummaryDto
+  , outputs     :: [OutputRowDto]
+  , calibration :: [CalibrationSeriesDto]
+  }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 data CompareRowDto = CompareRowDto
@@ -101,6 +105,49 @@ data ExampleDetailDto = ExampleDetailDto
   , responseText :: Maybe Text, responseError :: Maybe Text
   , grades :: [GradeDto] }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+-- | One persisted calibration report, denormalised with grader identity and
+-- the server-computed verdict ('trusted' = κ CI lower bound ≥ threshold) and
+-- 'band' (Landis–Koch). 'judgeErrors' is a count (the stored array's length).
+data MetaEvalDto = MetaEvalDto
+  { graderName    :: Text
+  , graderVersion :: Int
+  , graderKind    :: Text
+  , mode          :: Text
+  , agreement     :: Double
+  , kappa         :: Double
+  , kappaLow      :: Double
+  , kappaHigh     :: Double
+  , failPrecision :: Double
+  , failRecall    :: Double
+  , measured      :: Int
+  , judgeErrors   :: Int
+  , computedAt    :: Text
+  , trusted       :: Bool
+  , band          :: Text
+  } deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+-- | One point on a grader version's κ-over-time trend. 'isCurrent' marks the
+-- run being viewed (run-detail only; always False in the cross-run view).
+data TrendPointDto = TrendPointDto
+  { runId      :: Int
+  , kappa      :: Double
+  , kappaLow   :: Double
+  , kappaHigh  :: Double
+  , computedAt :: Text
+  , isCurrent  :: Bool
+  } deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+-- | A grader version's calibration history under one mode: the latest report
+-- plus the κ trend (chronological, oldest → newest).
+data CalibrationSeriesDto = CalibrationSeriesDto
+  { graderName    :: Text
+  , graderVersion :: Int
+  , graderKind    :: Text
+  , mode          :: Text
+  , latest        :: MetaEvalDto
+  , trend         :: [TrendPointDto]
+  } deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 newtype ApiError = ApiError { error :: Text }
   deriving (Eq, Show, Generic)
