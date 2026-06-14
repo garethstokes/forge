@@ -254,6 +254,18 @@ main = do
     , graderVersion = Nothing
     , rows = []
     }
+  rt "PromptMsgDto" PromptMsgDto { role = "system", content = "Answer concisely." }
+  rt "CriterionVerdictDto" CriterionVerdictDto
+    { criterion = "names the capital", points = 5, tags = ["axis:accuracy"], met = True, explanation = "says Paris" }
+  rt "GradeDto" GradeDto
+    { graderName = "rubric", graderVersion = 1, graderKind = "pointed", value = Just 0.7
+    , passed = Nothing, rationale = Nothing, gradeError = Nothing
+    , criteria = [ CriterionVerdictDto { criterion = "c", points = 5, tags = ["axis:accuracy"], met = True, explanation = "" } ] }
+  rt "ExampleDetailDto" ExampleDetailDto
+    { runId = 1, exampleKey = "capital-fr", input = object ["q" .= ("?" :: Text)]
+    , prompt = [ PromptMsgDto { role = "system", content = "Answer." } ]
+    , responseText = Just "Paris.", responseError = Nothing
+    , grades = [] }
   rt "ApiError" ApiError { error = "not found" }
   rt "ChangeDto" (ChangeDto { table = "outputs", key = Just "42" })
   rt "ChangeDto pk-less" (ChangeDto { table = "scores", key = Nothing })

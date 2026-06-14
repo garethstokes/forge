@@ -12,6 +12,7 @@ module Evals.Api
   , RunSummaryDto (..), MetricDto (..), TagMetricDto (..), RubricCriterionDto (..)
   , RunDetailDto (..), OutputRowDto (..), ScoreDto (..)
   , CompareDto (..), CompareRowDto (..)
+  , PromptMsgDto (..), CriterionVerdictDto (..), GradeDto (..), ExampleDetailDto (..)
   , ApiError (..)
   , ChangeDto (..)
   ) where
@@ -79,6 +80,26 @@ data CompareDto = CompareDto
   { runA :: RunSummaryDto, runB :: RunSummaryDto
   , graderName :: Maybe Text, graderVersion :: Maybe Int
   , rows :: [CompareRowDto] }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+data PromptMsgDto = PromptMsgDto { role :: Text, content :: Text }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+data CriterionVerdictDto = CriterionVerdictDto
+  { criterion :: Text, points :: Double, tags :: [Text], met :: Bool, explanation :: Text }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+data GradeDto = GradeDto
+  { graderName :: Text, graderVersion :: Int, graderKind :: Text
+  , value :: Maybe Double, passed :: Maybe Bool, rationale :: Maybe Text
+  , gradeError :: Maybe Text, criteria :: [CriterionVerdictDto] }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+data ExampleDetailDto = ExampleDetailDto
+  { runId :: Int, exampleKey :: Text
+  , input :: Value, prompt :: [PromptMsgDto]
+  , responseText :: Maybe Text, responseError :: Maybe Text
+  , grades :: [GradeDto] }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 newtype ApiError = ApiError { error :: Text }
