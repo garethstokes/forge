@@ -61,6 +61,9 @@ updateModel = \case
       CompareR _ _ -> do
         compareL .= Loading
         expandedL .= []
+      ExampleR _ _ -> do
+        exampleL .= Loading
+        expandedL .= []
     fetchRoute r
   Navigate h ->
     io_ (setHash h)
@@ -86,6 +89,11 @@ updateModel = \case
     case route of
       CompareR a b | a == ra, b == rb -> compareL %= \old -> keepStale old (fromEither e)
       _ -> pure ()  -- response arrived after navigation away; drop it
+  GotExample rid k e -> do
+    route <- use routeL
+    case route of
+      ExampleR i kk | i == rid, kk == k -> exampleL %= \old -> keepStale old (fromEither e)
+      _ -> pure ()
   SseOpen -> do
     -- Track whether this is the very first connect or a genuine reconnect.
     -- On the first connect SetRoute has already issued a fetch, so we must NOT
@@ -129,3 +137,5 @@ fetchRoute = \case
     fetchJson ("/api/runs/" <> msShow i) (GotDetail i)
   CompareR a b ->
     fetchJson ("/api/compare?a=" <> msShow a <> "&b=" <> msShow b) (GotCompare a b)
+  ExampleR i k ->
+    fetchJson ("/api/runs/" <> msShow i <> "/ex/" <> ms (encodeSegment k)) (GotExample i k)

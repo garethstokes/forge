@@ -5,10 +5,13 @@
 -- are accessed with record-dot syntax ("Evals.Api" uses DuplicateRecordFields).
 module Evals.Ui.View (viewModel) where
 
+import Data.Aeson (Value)
+import Data.Aeson.Text (encodeToLazyText)
 import Data.List (nub)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as LT
 import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import Numeric (showFFloat)
 
@@ -38,6 +41,7 @@ viewModel _ m =
       RunsR -> runsView m
       RunR i -> detailView m i
       CompareR a b -> compareView m a b
+      ExampleR i k -> exampleView m i k
 
 -- | SSE connection status dot in the header: green while the change feed is
 -- connected, gray while the EventSource is reconnecting.
@@ -145,7 +149,7 @@ detailView m _ =
       [ P.class_ "detail" ]
       [ backLink
       , runHeader (_expandedM m) d.run
-      , outputsTable (_expandedM m) d.run.metrics d.outputs
+      , outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
       ]
 
 runHeader :: [MisoString] -> RunSummaryDto -> View Model Action
@@ -162,8 +166,8 @@ runHeader _ r =
     , div_ [ P.class_ "grader-details" ] (map graderDetailSection r.metrics)
     ]
 
-outputsTable :: [MisoString] -> [MetricDto] -> [OutputRowDto] -> View Model Action
-outputsTable expandedKeys metrics outputs =
+outputsTable :: Int -> [MisoString] -> [MetricDto] -> [OutputRowDto] -> View Model Action
+outputsTable rid expandedKeys metrics outputs =
   table_
     [ P.class_ "outputs" ]
     [ thead_ [] [ tr_ [] (map thTxt ([ "example", "output", "latency ms" ] <> map graderHeading gs)) ]
@@ -181,7 +185,7 @@ outputsTable expandedKeys metrics outputs =
     row o =
       tr_
         [ P.class_ (if isJust o.outputError then "error-row" else "") ]
-        ( td_ [ P.class_ "key" ] [ text (ms o.exampleKey) ]
+        ( td_ [ P.class_ "key" ] [ a_ [ P.href_ (exampleHash rid o.exampleKey) ] [ text (ms o.exampleKey) ] ]
         : outputCell expandedKeys ("d:" <> ms o.exampleKey) o.outputText o.outputError
         : td_ [] [ text (maybe "–" msShow o.latencyMs) ]
         : [ scoreCell (lookupScore g o.scores) | g <- gs ]
@@ -219,6 +223,54 @@ outputCell expandedKeys k mtext merr =
       let full = ms (fromMaybe "" mtext)
           cls = if k `elem` expandedKeys then "out expanded" else "out truncate"
       in td_ [ P.class_ cls, P.title_ full, onClick (ToggleExpand k) ] [ text full ]
+
+-- Example inspector -------------------------------------------------------------
+
+exampleView :: Model -> Int -> Text -> View Model Action
+exampleView m _ _ =
+  remoteView (_exampleM m) $ \d ->
+    div_ [ P.class_ "example" ]
+      [ a_ [ P.href_ (runHash d.runId), P.class_ "back" ] [ text "← run" ]
+      , h2_ [] [ text ("example " <> ms d.exampleKey) ]
+      , exSection "Input" [ pre_ [ P.class_ "io" ] [ text (renderJson d.input) ] ]
+      , exSection "Generated prompt" (map promptMsg d.prompt)
+      , exSection "Response" [ responseBlock d.responseText d.responseError ]
+      , exSection "Grades" (map gradeBlock d.grades)
+      ]
+  where
+    exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
+
+renderJson :: Value -> MisoString
+renderJson = ms . LT.toStrict . encodeToLazyText
+
+promptMsg :: PromptMsgDto -> View Model Action
+promptMsg p =
+  div_ [ P.class_ ("msg " <> ms p.role) ]
+    [ span_ [ P.class_ "role" ] [ text (ms p.role) ]
+    , pre_ [ P.class_ "content" ] [ text (ms p.content) ] ]
+
+responseBlock :: Maybe Text -> Maybe Text -> View Model Action
+responseBlock _ (Just e)       = div_ [ P.class_ "cell-error" ] [ text (ms e) ]
+responseBlock (Just t) Nothing = pre_ [ P.class_ "io" ] [ text (ms t) ]
+responseBlock Nothing Nothing  = div_ [ P.class_ "muted" ] [ text "–" ]
+
+gradeBlock :: GradeDto -> View Model Action
+gradeBlock g =
+  div_ [ P.class_ "grade" ]
+    ( div_ [ P.class_ "grade-head" ]
+        [ strong_ [] [ text (ms g.graderName) ], text (" v" <> msShow g.graderVersion)
+        , span_ [ P.class_ "kind" ] [ text (ms g.graderKind) ]
+        , span_ [ P.class_ "gval" ] [ text (maybe "–" fmtD g.value), passMark g.passed ] ]
+      : [ verdictRow c | c <- g.criteria ]
+      ++ [ div_ [ P.class_ "cell-error" ] [ text ("⚠ " <> ms e) ] | Just e <- [g.gradeError] ]
+      ++ [ div_ [ P.class_ "muted" ] [ text (ms r) ] | Just r <- [g.rationale] ] )
+  where
+    verdictRow c =
+      div_ [ P.class_ "cr" ]
+        [ span_ [ P.class_ (if c.met then "m ok" else "m fail") ] [ text (if c.met then "✓" else "✗") ]
+        , span_ [ P.class_ "ctxt" ] [ text (ms c.criterion), span_ [ P.class_ "why" ] [ text (ms c.explanation) ] ]
+        , span_ [ P.class_ "crit-tags" ] [ span_ [ P.class_ "tag" ] [ text (ms t) ] | t <- c.tags ]
+        , span_ [ P.class_ "earn" ] [ text (if c.met then "+" <> fmtD c.points else "0 / " <> fmtD c.points) ] ]
 
 -- Compare -----------------------------------------------------------------------
 

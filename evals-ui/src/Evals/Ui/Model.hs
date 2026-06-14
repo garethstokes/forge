@@ -17,6 +17,7 @@ module Evals.Ui.Model
   , runsL
   , detailL
   , compareL
+  , exampleL
   , selectedL
   , expandedL
   , liveL
@@ -29,6 +30,8 @@ module Evals.Ui.Model
   , runsHash
   , runHash
   , compareHash
+  , exampleHash
+  , encodeSegment
     -- * Small helpers
   , fromEither
   , keepStale
@@ -51,6 +54,7 @@ data Route
   = RunsR
   | RunR Int
   | CompareR Int Int
+  | ExampleR Int T.Text
   deriving (Show, Eq)
 
 -- | Lifecycle of a fetched resource.
@@ -73,6 +77,7 @@ data Model = Model
   , _runsM :: RemoteData [RunSummaryDto]
   , _detailM :: RemoteData RunDetailDto
   , _compareM :: RemoteData CompareDto
+  , _exampleM :: RemoteData ExampleDetailDto
   , _selectedM :: [Int]
     -- ^ run ids ticked for comparison on the runs view (at most two)
   , _expandedM :: [MisoString]
@@ -88,7 +93,7 @@ data Model = Model
   } deriving (Show, Eq)
 
 emptyModel :: Model
-emptyModel = Model RunsR NotAsked NotAsked NotAsked [] [] LiveReconnecting False False
+emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked [] [] LiveReconnecting False False
 
 data Action
   = Startup
@@ -107,6 +112,8 @@ data Action
   --   be dropped before touching the model
   | GotCompare Int Int (Either MisoString CompareDto)
   -- ^ carries the requested (a, b) ids for the same stale-response guard
+  | GotExample Int T.Text (Either MisoString ExampleDetailDto)
+  -- ^ carries the requested (run id, example key) for the same stale-response guard
   | SseOpen
   -- ^ the EventSource (re)connected
   | SseError
@@ -134,6 +141,9 @@ detailL = lens _detailM $ \r x -> r { _detailM = x }
 compareL :: Lens Model (RemoteData CompareDto)
 compareL = lens _compareM $ \r x -> r { _compareM = x }
 
+exampleL :: Lens Model (RemoteData ExampleDetailDto)
+exampleL = lens _exampleM $ \r x -> r { _exampleM = x }
+
 selectedL :: Lens Model [Int]
 selectedL = lens _selectedM $ \r x -> r { _selectedM = x }
 
@@ -160,6 +170,7 @@ relevantTo route table =
     RunsR -> table `elem` ["runs", "run_metrics"]
     RunR _ -> table `elem` detailTables
     CompareR _ _ -> table `elem` detailTables
+    ExampleR _ _ -> table `elem` detailTables
   where
     detailTables = ["runs", "outputs", "scores", "run_metrics"]
 
@@ -172,6 +183,7 @@ parseHash h =
     ["", "runs"] -> RunsR
     ["", "runs", n] | Just i <- readInt n -> RunR i
     ["", "compare", a, b] | Just x <- readInt a, Just y <- readInt b -> CompareR x y
+    ["", "runs", n, "ex", k] | Just i <- readInt n -> ExampleR i (decodeSegment k)
     _ -> RunsR
   where
     readInt t = case TR.decimal t of
@@ -186,6 +198,18 @@ runHash i = "#/runs/" <> msShow i
 
 compareHash :: Int -> Int -> MisoString
 compareHash a b = "#/compare/" <> msShow a <> "/" <> msShow b
+
+exampleHash :: Int -> T.Text -> MisoString
+exampleHash i k = "#/runs/" <> msShow i <> "/ex/" <> ms (encodeSegment k)
+
+encodeSegment :: T.Text -> T.Text
+encodeSegment = T.concatMap enc
+  where enc '%' = "%25"; enc '/' = "%2F"; enc '#' = "%23"
+        enc ' ' = "%20"; enc '?' = "%3F"; enc '&' = "%26"; enc c = T.singleton c
+
+decodeSegment :: T.Text -> T.Text
+decodeSegment = T.replace "%25" "%" . T.replace "%2F" "/" . T.replace "%23" "#"
+              . T.replace "%20" " " . T.replace "%3F" "?" . T.replace "%26" "&"
 
 -- Helpers ---------------------------------------------------------------------
 
