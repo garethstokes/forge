@@ -143,13 +143,28 @@ INSERT INTO run_metrics (id, run, grader_version, mean, pass_rate, count, comput
   (8, 1, 2, 0.75, NULL, 4, now() - interval '24 hours', 'axis:conciseness', 0.22),
   (9, 1, 2, 0.50, NULL, 4, now() - interval '24 hours', 'axis:clarity',     0.25);
 
+-- meta-eval calibration history (append-only; keyed by run + grader_version).
+-- grader_version 1 = exactness/exact, 2 = rubric/pointed. Two computedAt points
+-- per grader so the run-detail sparkline shows a trend. exactness climbs and its
+-- 95% CI lower bound clears the 0.6 trust threshold (→ "trustworthy", green);
+-- rubric sits borderline with its CI low below 0.6 (→ "below threshold", amber).
+INSERT INTO meta_evals
+  (id, run, grader_version, mode, seed, agreement, kappa, kappa_low, kappa_high,
+   fail_precision, fail_recall, measured, judge_errors, computed_at) VALUES
+  -- exactness (gv 1): trustworthy, rising
+  (1, 1, 1, 'stored', 1, 0.86, 0.70, 0.58, 0.82, 0.83, 0.80, 4, '[]', now() - interval '25 hours'),
+  (2, 2, 1, 'stored', 1, 0.92, 0.80, 0.66, 0.92, 0.88, 0.85, 4, '[]', now() - interval '1 hour'),
+  -- rubric (gv 2): borderline, below threshold
+  (3, 1, 2, 'stored', 1, 0.74, 0.52, 0.34, 0.70, 0.66, 0.60, 4, '["capital-au"]', now() - interval '25 hours'),
+  (4, 2, 2, 'stored', 1, 0.78, 0.55, 0.38, 0.72, 0.70, 0.64, 4, '[]', now() - interval '1 hour');
+
 -- keep the sequences ahead of the explicit ids
 SELECT setval('datasets_id_seq', 10), setval('dataset_versions_id_seq', 10),
        setval('examples_id_seq', 10), setval('targets_id_seq', 10),
        setval('target_versions_id_seq', 10), setval('graders_id_seq', 10),
        setval('grader_versions_id_seq', 10), setval('runs_id_seq', 10),
        setval('outputs_id_seq', 10), setval('scores_id_seq', 20),
-       setval('run_metrics_id_seq', 10);
+       setval('run_metrics_id_seq', 10), setval('meta_evals_id_seq', 10);
 SQL
 
 echo "seeded $DB. serve with:"
