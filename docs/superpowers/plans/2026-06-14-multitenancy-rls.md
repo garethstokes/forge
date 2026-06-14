@@ -12,7 +12,7 @@
 
 **CRITICAL BUILD ENVIRONMENT:** Every `zinc` build/test runs via `nix develop -c` (e.g. `nix develop -c zinc test spec`); a bare run fails with a libpq link error that is environmental. Never add deps to fix it. The suite uses the `expect`-style harness (no hspec).
 
-**Execution note:** Tasks 0–1 are **controller-driven** (cross-repo manifest worktree + re-pin). Tasks 2–8 are manifest-evals work, subagent-ready. **Integration decision:** `castText` lands on a dedicated manifest branch off the *currently-pinned* rev `0e414c2` (NOT manifest main, which is ~ahead) — manifest-evals gets ONLY `castText`, no manifest core upgrade. Flag to the user if that proves impossible.
+**Execution note:** Tasks 0–1 are **controller-driven** (cross-repo manifest worktree + re-pin). Tasks 2–8 are manifest-evals work, subagent-ready. **Integration decision (full upgrade):** `castText` lands on manifest **`main`**, and manifest-evals re-pins to the new `main` HEAD. manifest `main` (`ad68afd`) is only ONE commit past the current pin `0e414c2` — a bookkeeping commit that touches neither `Query.hs` nor `Manifest.hs` — so the "upgrade" carries no API change and no reconciliation.
 
 ---
 
@@ -32,10 +32,11 @@
 
 ### Task 0: manifest `castText` (CONTROLLER, in a worktree)
 
-Create a manifest worktree off the pinned rev (the main checkout is on `main`; do not disturb it):
+Create a manifest worktree off `origin/main` (the main checkout is on `main`; do not disturb its working tree):
 ```bash
 cd /home/gareth/code/garethstokes/manifest
-git worktree add -b feat/casttext ../manifest-casttext 0e414c29f77fe8668daefdcbbb5af56576ff1267
+git fetch origin
+git worktree add -b feat/casttext ../manifest-casttext origin/main
 cd ../manifest-casttext
 ```
 
@@ -77,7 +78,8 @@ Run manifest's test command (check `manifest/zinc.toml` `[build.test...]` + its 
 ```bash
 git add src/Manifest/Query.hs src/Manifest.hs test/RlsSpec.hs
 git commit -m "feat(query): castText :: Expr a -> Expr Text for RLS int-column predicates"
-git push origin feat/casttext
+# verify clean fast-forward of main, then push to main (the full-upgrade integration)
+git merge-base --is-ancestor origin/main HEAD && git push origin feat/casttext:main
 git rev-parse HEAD    # capture the SHA for the re-pin
 ```
 
@@ -89,7 +91,7 @@ git rev-parse HEAD    # capture the SHA for the re-pin
 
 - [ ] **Step 1: Bump the manifest rev**
 
-In `zinc.toml` `[dependencies.manifest]`, set `rev` to the `feat/casttext` SHA from Task 0. Update the pin comment to note "+ castText (RLS int-column cast)".
+In `zinc.toml` `[dependencies.manifest]`, set `rev` to the new manifest `main` HEAD (the castText commit) from Task 0. Update the pin comment to note "manifest main + castText (RLS int-column cast)". (This advances the pin past `0e414c2` by the one bookkeeping commit + castText — no API change.)
 
 - [ ] **Step 2: Update the lock + build**
 
