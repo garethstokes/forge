@@ -313,7 +313,7 @@ rendered in (lifted). A positive delta means the memories paid rent.
 
 ### Rendering memories into a skill
 
-Two helpers in `Crucible.Memory` connect the memory store to the skill
+Two helpers in `Crucible.Memory.Eval` connect the memory store to the skill
 evaluation pipeline:
 
 ```haskell
