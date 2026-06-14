@@ -39,12 +39,11 @@ rev = "0e414c29f77fe8668daefdcbbb5af56576ff1267"
 
 [dependencies.crucible]
 repo = "https://github.com/garethstokes/crucible.git"
-# Pushed remote master: typed Tool overhaul, eval rubric upgrades (Score votes/dissent,
-# Checklist, judgeN, calibrate), prompt composition + withReasoning, groundingCheck,
-# Maybe fields optional in generic schemas. Plus reportFromVerdicts (verdict-level
-# calibration report) and the new judge API (JudgeOpts, AllAbstained). Plus the pure
-# bootstrapStdErr :: Int -> Int -> [Double] -> Double (bootstrap standard error).
-rev = "e6f29d94b0a7c217c35221677fe8a32ac05a260c"
+# Pushed remote master. Catches up ~60 commits (multimodal image/PDF inputs, Memory
+# effect + memoryLift, latency assertions, cross-model judge panels, partial typed
+# streaming, typed Spawn orchestrator-worker + spawnGated judge gates) and adds
+# passF1/failF1/balancedF1 to CalibrationReport (HealthBench pairwise balanced F1).
+rev = "f2a8ff20bd61536568828364d1207604d93f8069"
 
 # --- crucible's transitive dependency stanzas (copied verbatim) ---
 
