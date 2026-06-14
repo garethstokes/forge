@@ -302,8 +302,87 @@ log to star-shaped facts: a single `Semantic + ByConsolidation` item that
 represents what the agent currently knows about a topic, with the raw
 episodes it was distilled from available in the log for audit.
 
-## Planned follow-on work
+## Evaluating memories (does a memory pay rent?)
 
-`memoryLift` (an ablation eval that measures what the agent loses without a
-given memory) is a planned sub-project. It operates through the same
-`Memory` effect and composes with the existing interpreters.
+Consolidation compacts the store. The next question is whether the surviving
+memories actually help: does putting a memory in a skill's context raise the
+skill's scores, or does it add noise that changes nothing? `memoryLift`
+answers that question by running a set ablation: the skill's attached test
+cases run once without the candidate memories (baseline) and once with them
+rendered in (lifted). A positive delta means the memories paid rent.
+
+### Rendering memories into a skill
+
+Two helpers in `Crucible.Memory` connect the memory store to the skill
+evaluation pipeline:
+
+```haskell
+renderMemories :: [MemoryItem] -> Text
+withMemories   :: [MemoryItem] -> Skill i o -> Skill i o
+```
+
+`renderMemories` formats a list of items into a plain text block. `withMemories`
+appends that block to the skill's instruction preamble, producing a new skill
+that runs with those memories in context. An empty list leaves the skill
+unchanged, so the same call is safe at every call-site regardless of whether
+retrieval returned anything.
+
+`withMemories` is not only for evaluation. It is how a skill runs with recalled
+context in production: recall from the store, call `withMemories`, call the
+skill.
+
+### The ablation
+
+```haskell
+memoryLift
+  :: (Eq o, LLM :> es, Embed :> es)
+  => (o -> Text)
+  -> Skill i o
+  -> [MemoryItem]
+  -> Eff es (Report i (Either DecodeError o), Report i (Either DecodeError o))
+```
+
+`memoryLift` takes a render function for the output type, the skill under
+review, and a candidate `[MemoryItem]` list. It runs `testSkill` twice: once
+on the bare skill (baseline) and once on `withMemories candidates skill`
+(lifted), and returns both `Report` values. The candidates can come from a
+`recall` call on the live store or be a single proposed memory you want to
+evaluate before committing it. The function needs only `LLM` and `Embed` (the
+same constraints as `testSkill`); it is decoupled from the `Memory` effect
+entirely.
+
+### Reading the result
+
+```haskell
+liftDelta :: (Report i a, Report i a) -> (Double, Double)
+```
+
+`liftDelta` is a pure function that takes the pair of reports and returns
+`(passRate delta, meanScore delta)` as lifted minus baseline. A positive delta
+on either dimension means the memories moved the needle in the right direction.
+
+```haskell
+-- A skill whose test cases can only be answered from a memory.
+(base, lifted) <- memoryLift render mySkill candidateMemories
+let (dPass, dScore) = liftDelta (base, lifted)
+-- dPass > 0  =>  the memories paid rent; keep them.
+```
+
+This is the write gate: keep memories whose delta is positive, drop those whose
+delta is zero or negative.
+
+### Closing the loop with consolidation
+
+Consolidation and `memoryLift` address the same store from different angles.
+Consolidation compacts what you have, merging duplicates and dropping noise at
+the structural level. `memoryLift` measures which of the surviving memories
+are worth keeping at the performance level: if adding a memory does not raise
+scores, it is not contributing anything the skill could not already do on its
+own.
+
+Like consolidation, crucible reports the delta and leaves the policy to the
+host. The typical threshold is straightforward - keep if `dPass > 0` or
+`dScore > 0` - but the host can set a stricter bar (for example, requiring a
+minimum delta to justify the token cost) or a looser one (retaining memories
+that break even but carry provenance the operator wants to preserve). crucible
+provides the measurement; the decision is yours.
