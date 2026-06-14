@@ -179,18 +179,18 @@ seedGraph did opts rows now nSkip = do
 
 -- | Decode + validate each line; on a bad/invalid row, skip (counting) or abort.
 adaptAll :: (Int -> Value -> Either Text MetaRow) -> Bool -> [(Int, BS.ByteString)] -> Either MetaLoadError ([MetaRow], Int)
-adaptAll parseRow skip numbered = fmap (\(rows, n) -> (reverse rows, n)) (foldM step ([], 0) numbered)
+adaptAll parseRow skip numbered = fmap (\(rows, n) -> (reverse rows, n)) (foldM step ([], 0) (zip [0 :: Int ..] numbered))
   where
-    step (acc, nSkip) (n, ln) =
-      case validate n ln of
+    step (acc, nSkip) (rowIdx, (lineNo, ln)) =
+      case validate rowIdx lineNo ln of
         Right row -> Right (row : acc, nSkip)
         Left e
           | skip      -> Right (acc, nSkip + 1)
           | otherwise -> Left e
-    validate n ln = do
-      raw <- first (BadLine n . T.pack) (eitherDecodeStrict ln)
-      row <- first (BadLine n) (parseRow n raw)
+    validate rowIdx lineNo ln = do
+      raw <- first (BadLine lineNo . T.pack) (eitherDecodeStrict ln)
+      row <- first (BadLine lineNo) (parseRow rowIdx raw)
       let crits = rubricCriteria row.rubric
       case [ c | (c, _) <- row.labels, c `notElem` crits ] of
-        (c : _) -> Left (NoSuchCriterion n c)
+        (c : _) -> Left (NoSuchCriterion lineNo c)
         []      -> Right row
