@@ -68,6 +68,7 @@ import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
 import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
 import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile)
+import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
 import System.IO (openTempFile, hClose)
 import System.Directory (removeFile)
 
@@ -1985,4 +1986,42 @@ main = runChecks
          ( length items
          , found "a" (BySkill "k") && found "b" (BySession "run1")
              && found "c" ByConsolidation && found "d" Curated )
+  -- crucible-cyx: memory consolidation
+  , check "consolidate applyPlan: drop/supersede/merge rewrite the store, ByConsolidation"
+      (["CD", "B2"], Semantic, ["t4", "t3"], ByConsolidation)
+      (let prog = do
+             mapM_ remember
+               [ MemoryDraft Episodic "a" ["t1"] Curated
+               , MemoryDraft Episodic "b" ["t2"] Curated
+               , MemoryDraft Episodic "c" ["t3"] Curated
+               , MemoryDraft Episodic "d" ["t4"] Curated ]
+             cur <- recall (Query "" [] 100)
+             applyPlan cur (ConsolidationPlan
+               [ Drop (MemoryId 0)
+               , Supersede (MemoryId 1) Semantic "B2"
+               , Merge [MemoryId 2, MemoryId 3] Semantic "CD" ])
+             recall (Query "" [] 100)
+           (out, _) = runPureEff (runMemoryPure prog)
+           cd = head out
+       in (map (.content) out, cd.kind, cd.tags, cd.source))
+  , check "consolidate unaddressed: items no op references"
+      ["b"]
+      (let items = [ MemoryItem (MemoryId 0) Episodic "a" [] Curated 0
+                   , MemoryItem (MemoryId 1) Episodic "b" [] Curated 1 ]
+       in map (.content) (unaddressed items (ConsolidationPlan [Drop (MemoryId 0)])))
+  , check "consolidationSkill: decodes a scripted plan array"
+      (ConsolidationPlan [Drop (MemoryId 0), Merge [MemoryId 1, MemoryId 2] Semantic "merged"])
+      (runPureEff (runLLMScripted
+         ["[{\"op\":\"drop\",\"id\":0},{\"op\":\"merge\",\"ids\":[1,2],\"kind\":\"semantic\",\"content\":\"merged\"}]"]
+         (either (const (ConsolidationPlan [])) Prelude.id <$> call consolidationSkill [])))
+  , check "consolidate end to end: scripted plan applied to the pure store"
+      ["merged"]
+      (let prog = do mapM_ remember [ MemoryDraft Episodic "x" ["a"] Curated
+                                    , MemoryDraft Episodic "y" ["a"] Curated ]
+                     _ <- consolidate consolidationSkill (Query "" [] 100)
+                     recall (Query "" [] 100)
+           (out, _) = runPureEff (runLLMScripted
+                        ["[{\"op\":\"merge\",\"ids\":[0,1],\"kind\":\"semantic\",\"content\":\"merged\"}]"]
+                        (runMemoryPure prog))
+       in map (.content) out)
   ]

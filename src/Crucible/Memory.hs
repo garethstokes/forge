@@ -32,6 +32,8 @@ module Crucible.Memory
   , runMemoryScripted
   , runMemoryPure
   , runMemoryFile
+  , memoryItemCodec
+  , memoryKindCodec
   ) where
 
 import Control.Exception (IOException, try)
@@ -167,8 +169,8 @@ runMemoryPure action = do
 recallAs :: (Memory :> es) => JSONCodec a -> Query -> Eff es [(MemoryItem, Either DecodeError a)]
 recallAs c q = map (\m -> (m, decodeLLM c m.content)) <$> recall q
 
-kindCodec :: JSONCodec MemoryKind
-kindCodec = enum [("episodic", Episodic), ("semantic", Semantic), ("procedural", Procedural)]
+memoryKindCodec :: JSONCodec MemoryKind
+memoryKindCodec = enum [("episodic", Episodic), ("semantic", Semantic), ("procedural", Procedural)]
 
 memoryIdCodec :: JSONCodec MemoryId
 memoryIdCodec = dimapCodec MemoryId idInt int
@@ -193,7 +195,7 @@ provenanceCodec = bimapCodec toP fromP
 memoryItemCodec :: JSONCodec MemoryItem
 memoryItemCodec = object (MemoryItem
   <$> field "id"        (.memId)     memoryIdCodec
-  <*> field "kind"      (.kind)      kindCodec
+  <*> field "kind"      (.kind)      memoryKindCodec
   <*> field "content"   (.content)   str
   <*> field "tags"      (.tags)      (list' str)
   <*> field "source"    (.source)    provenanceCodec
