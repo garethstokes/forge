@@ -59,6 +59,7 @@ import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
 import qualified Crucible.Ledger as Ledger
+import qualified Crucible.Research as Research
 import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
 import Crucible.Memory.Eval (memoryLift, liftDelta)
@@ -340,6 +341,21 @@ main = do
       ledgerRemaining <- runEff (Ledger.runLedgerFile ledgerPath
         (map (\it -> it.payload) <$> Ledger.listReady))
       TIO.putStrLn ("ledger: remaining ready = " <> T.pack (show ledgerRemaining))
+      -- Research: a typed, persistent knowledge base (markdown files on disk).
+      let researchDir = "/tmp/crucible-research-demo"
+          alpha = Research.Page (Research.Slug "alpha") "Alpha" [] "Alpha is the first letter." ("" :: T.Text)
+          beta  = Research.Page (Research.Slug "beta") "Beta"
+                    [Research.Link (Research.Slug "alpha") Research.Extends]
+                    "Beta extends alpha." ("" :: T.Text)
+      (researchIdx, researchHits) <- runEff (Research.runResearchDir str researchDir (do
+        Research.writePage alpha
+        Research.writePage beta
+        Research.appendLog @T.Text "wrote alpha and beta"
+        i <- Research.index @T.Text
+        h <- Research.search @T.Text "extends"
+        pure (i, h)))
+      TIO.putStrLn ("research: index = " <> T.pack (show (map (\(Research.Slug s) -> s) researchIdx))
+                    <> ", search 'extends' = " <> T.pack (show (map (\(Research.Slug s) -> s) researchHits)))
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
