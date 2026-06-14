@@ -43,9 +43,11 @@ with tagged `run_metrics` on run 1.
 
 ## 3. UI (`evals-ui/src/Evals/Ui/View.hs` + `static/style.css`)
 **Pills (headlines).** `metricChip`/`metricChipDetail` append a **kind tag**
-(`mc.graderKind`) as a small sub-label. The expandable chip (detail view) gets
-`cursor:pointer` + a hover/focus affordance (box-shadow ring) so it reads as
-interactive; non-expandable pills (no breakdowns) don't.
+(`mc.graderKind`) as a small sub-label. In the run-detail view **every** grader
+pill is expandable (`cursor:pointer` + a hover/focus ring + a caret) so any
+grader — including a plain `exact` one with no breakdown — can be clicked to
+learn what kind it is and how it scores. (List/compare keep the plain
+non-interactive `metricChip` + kind tag.)
 
 **Grader-detail section (full-width, run-level).** Replace the cramped
 `breakdownPanel` with a full-width section rendered below the chips row when a
