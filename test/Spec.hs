@@ -60,7 +60,7 @@ import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
 import qualified Data.List
-import Data.IORef (IORef, newIORef, modifyIORef', readIORef)
+import Data.IORef (IORef, newIORef, modifyIORef', readIORef, writeIORef)
 import Crucible.LLM.Provider (Provider (..))
 import qualified Crucible.LLM.Fallback as Fallback
 import Crucible.LLM.CallLog (CallEntry (..))
@@ -2347,4 +2347,38 @@ main = runChecks
        removeFile path
        check "ledger file: a claim is visible in a later session" (True, ([] :: [WorkId]))
          (ok, map ((.wid) :: WorkItem -> WorkId) ready)
+  , do ref <- newIORef (Nothing :: Maybe (Either AgentFailure Text))
+       let child :: SubAgent '[Chat.Chat, IOE] Text Text
+           child = subAgent "child" C.str C.str "child instruction" []
+           delegate = Tl.toolWith "delegate" C.str C.str (\q -> do
+                        r <- spawn child q
+                        liftIO (writeIORef ref (Just r))
+                        pure (either (const "failed") Prelude.id r))
+           root :: SubAgent '[Chat.Chat, IOE] Text Text
+           root = subAgent "root" C.str C.str "root instruction" [delegate]
+       _ <- runEff (runChatScripted
+              [ Turn "" [ToolUse "u1" "delegate" (String "sub-task")]
+              , Turn "\"child-done\"" []
+              , Turn "\"root-done\"" [] ]
+              (runAgents 5 (spawn root "start")))
+       childResult <- readIORef ref
+       check "nesting: a worker tool spawns a child that returns its typed result"
+         (Just (Right "child-done")) childResult
+  , do ref <- newIORef (Nothing :: Maybe (Either AgentFailure Text))
+       let child :: SubAgent '[Chat.Chat, IOE] Text Text
+           child = subAgent "child" C.str C.str "child instruction" []
+           delegate = Tl.toolWith "delegate" C.str C.str (\q -> do
+                        r <- spawn child q
+                        liftIO (writeIORef ref (Just r))
+                        pure (either (const "failed") Prelude.id r))
+           root :: SubAgent '[Chat.Chat, IOE] Text Text
+           root = subAgent "root" C.str C.str "root instruction" [delegate]
+       _ <- runEff (runChatScripted
+              [ Turn "" [ToolUse "u1" "delegate" (String "sub-task")]
+              , Turn "\"root-done\"" [] ]
+              (runAgents 1 (spawn root "start")))
+       childResult <- readIORef ref
+       check "nesting: the spawn budget is shared across the tree"
+         True
+         (case childResult of Just (Left (SpawnBudgetExceeded 1)) -> True; _ -> False)
   ]
