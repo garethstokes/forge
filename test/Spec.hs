@@ -16,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText, refine, checked, Checked (..), allPassed)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Skill (Skill (..), Instruction (..), skill, skillWith, withPreamble, withConstraints, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, call, testSkill)
+import Crucible.Skill (Skill (..), Instruction (..), skill, skillWith, withPreamble, withConstraints, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, instructionText, call, testSkill)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -598,6 +598,11 @@ main = runChecks
         [ "\"hello there\""                                  -- the skill's reply
         , "{\"pass\":true,\"why\":\"greets the user\"}" ]    -- the judge's verdict
         (Embed.none (testSkill id (withTests [Case "hi" "greets" (Rubric "must be a greeting")] classifyFn))))).passRate)
+  , check "instructionText contains the task and the input JSON"
+      True
+      (let s = skill "t" C.str C.str (\x -> "Do the thing with " <> x)
+           out = instructionText s "ABC"
+       in T.isInfixOf "Do the thing with ABC" out && T.isInfixOf "<input>\n\"ABC\"" out)
   -- M12 Task 1: schemaValue shape checks (robust — autodocodec schema shape may differ)
   , check "schemaValue: object codec has type=object"
       (Just (String "object"))
