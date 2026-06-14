@@ -65,8 +65,39 @@ orchestrate = spawn researchWorker "the question"
 -- in tests: runPureEff (runAgentsScripted 4 ["{...}"] orchestrate)
 ```
 
+## Judge gates
+
+A spawned worker hands back a typed value, but typed is not the same as correct.
+A gate verifies the worker's output with the judge before accepting it.
+
+```haskell
+data Gate o = Gate { rubric :: Text, render :: o -> Text, votes :: Int, retries :: Int }
+
+gate :: Text -> (o -> Text) -> Gate o   -- votes = 1, retries = 1
+
+spawnGated :: (Agents es :> r, LLM :> r)
+           => Gate o -> SubAgent es i o -> i -> Eff r (Either AgentFailure o)
+```
+
+`spawnGated` spawns the worker, renders its output, and judges it against the
+rubric with an independent vote. On a pass it returns the output. On a rejection
+it re-spawns the worker with the critique appended to its instruction, up to
+`retries` times, then returns `GateRejected`. Only a successful spawn is judged:
+a worker that fails to produce a value short-circuits with its own
+`AgentFailure`.
+
+```haskell
+g = gate "the summary names a city and a temperature" id
+spawnGated g weatherWorker "Brisbane"
+```
+
+The judge is a separate call, not the worker grading itself, so this is not a
+closed loop; the critique is retry guidance. Gating is opt-in per spawn: the
+base `spawn` is ungated. For a pure check with no judge call, use a `refine` on
+the worker's output codec instead.
+
 ## What is not covered
 
-Workers are leaf (no nested trees) and spawn is synchronous. Judge-gated worker
-outputs, a work-ledger effect, nested trees with tree-wide budgets, and
-concurrent spawn are planned as separate work.
+Workers are leaf (no nested trees) and spawn is synchronous. A work-ledger
+effect, nested trees with tree-wide budgets, and concurrent spawn are planned as
+separate work.
