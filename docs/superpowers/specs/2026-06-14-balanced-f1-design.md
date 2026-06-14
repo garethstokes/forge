@@ -66,10 +66,27 @@ with a known confusion matrix. E.g. for pairs giving TP/FP/FN/TN that yield
 passF1 = X, failF1 = Y, balancedF1 = (X+Y)/2; plus the degenerate all-agree case
 (both F1 = 1, balanced = 1) and an empty case (0/0 → 0).
 
-**Cross-repo:** implement in a crucible worktree, merge to crucible `master`, push, then
-re-pin here — bump the crucible `rev` in `zinc.toml` and run `zinc update` (a rev change is
-not lock drift; see [[zinc-rev-change-needs-update]]). Crucible pins to **pushed remote
-master only**.
+**Cross-repo (expanded scope — full crucible upgrade).** The crucible main checkout is in
+use (branch `feat/spawn-gate`), and manifest-evals currently pins an OLD crucible
+(`e6f29d9`) while crucible master is ~60 commits ahead (multimodal, memory, latency, judge
+panels, typed `Spawn`, …). Per the chosen strategy, balanced-F1 lands on crucible **master**
+and manifest-evals re-pins to **latest master** — i.e. this slice also performs a full
+crucible-version upgrade.
+
+Mechanics (via `superpowers:using-git-worktrees`):
+1. Create a **fresh crucible worktree** off `origin/master` (do NOT disturb the in-use
+   `feat/spawn-gate` working tree); add balanced-F1 + tests there; push to crucible master.
+2. Re-pin manifest-evals: bump the crucible `rev` in `zinc.toml` to the new master HEAD, and
+   **reconcile the verbatim transitive-dependency stanzas** (the `# crucible's transitive
+   dependency stanzas (copied verbatim)` block) against what current crucible needs, then
+   `zinc update` (a rev change is not lock drift — see [[zinc-rev-change-needs-update]]).
+3. **Discovery + reconciliation:** `nix develop -c zinc build`. The 60-commit jump may break
+   manifest-evals where crucible APIs drifted (e.g. Judge/Eval/Chat/Tool signatures). The
+   breakage surface is unknown until the build runs; fixing it is part of this slice. This is
+   the riskiest, least-deterministic part — the implementation plan front-loads it as a
+   discovery step before the schema/DTO/UI work.
+
+Crucible pins to **pushed remote master only** (zinc fetches the rev from GitHub).
 
 ## Component 2 — manifest-evals persistence
 
