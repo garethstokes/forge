@@ -31,18 +31,22 @@ module Crucible.Memory
   , recallAs
   , runMemoryScripted
   , runMemoryPure
+  , runMemoryFile
   ) where
 
+import Control.Exception (IOException, try)
 import Data.List (sortOn)
 import Data.Ord (Down (..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 
 import Effectful
-import Effectful.Dispatch.Dynamic (reinterpret, send)
+import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
 import Effectful.State.Static.Local (evalState, get, modify, put, runState)
 
-import Crucible.Codec (JSONCodec)
+import Crucible.Codec (JSONCodec, object, field, optField, enum, str, int, list', bimapCodec, encodeText)
+import Autodocodec (dimapCodec)
 import Crucible.Decode (DecodeError, decodeLLM)
 
 data MemoryKind = Episodic | Semantic | Procedural
@@ -163,3 +167,75 @@ runMemoryPure action = do
 -- memory (it no longer fits today's schema) with its 'MemoryItem' intact.
 recallAs :: (Memory :> es) => JSONCodec a -> Query -> Eff es [(MemoryItem, Either DecodeError a)]
 recallAs c q = map (\m -> (m, decodeLLM c m.content)) <$> recall q
+
+kindCodec :: JSONCodec MemoryKind
+kindCodec = enum [("episodic", Episodic), ("semantic", Semantic), ("procedural", Procedural)]
+
+memoryIdCodec :: JSONCodec MemoryId
+memoryIdCodec = dimapCodec MemoryId idInt int
+
+data RawProv = RawProv { by :: Text, name :: Maybe Text }
+
+provenanceCodec :: JSONCodec Provenance
+provenanceCodec = bimapCodec toP fromP
+  (object (RawProv <$> field "by" (.by) str <*> optField "name" (.name) str))
+  where
+    toP r = case r.by of
+      "skill"         -> maybe (Left "skill provenance needs a name") (Right . BySkill) r.name
+      "session"       -> maybe (Left "session provenance needs a name") (Right . BySession) r.name
+      "consolidation" -> Right ByConsolidation
+      "curated"       -> Right Curated
+      other           -> Left ("unknown provenance: " <> T.unpack other)
+    fromP (BySkill n)     = RawProv "skill" (Just n)
+    fromP (BySession n)   = RawProv "session" (Just n)
+    fromP ByConsolidation = RawProv "consolidation" Nothing
+    fromP Curated         = RawProv "curated" Nothing
+
+memoryItemCodec :: JSONCodec MemoryItem
+memoryItemCodec = object (MemoryItem
+  <$> field "id"        (.memId)     memoryIdCodec
+  <*> field "kind"      (.kind)      kindCodec
+  <*> field "content"   (.content)   str
+  <*> field "tags"      (.tags)      (list' str)
+  <*> field "source"    (.source)    provenanceCodec
+  <*> field "createdAt" (.createdAt) int)
+
+data RawEntry = RawEntry { entry :: Text, item :: Maybe MemoryItem, fid :: Maybe MemoryId }
+
+entryCodec :: JSONCodec MemoryEntry
+entryCodec = bimapCodec toE fromE
+  (object (RawEntry <$> field "entry" (.entry) str
+                    <*> optField "item" (.item) memoryItemCodec
+                    <*> optField "id"   (.fid)  memoryIdCodec))
+  where
+    toE r = case r.entry of
+      "remembered" -> maybe (Left "remembered entry needs an item") (Right . Remembered) r.item
+      "forgot"     -> maybe (Left "forgot entry needs an id") (Right . Forgot) r.fid
+      other        -> Left ("unknown entry: " <> T.unpack other)
+    fromE (Remembered it) = RawEntry "remembered" (Just it) Nothing
+    fromE (Forgot i)      = RawEntry "forgot" Nothing (Just i)
+
+-- | Read the entry log, tolerant of blank/garbled lines (skipped).
+readLog :: FilePath -> IO [MemoryEntry]
+readLog path = do
+  r <- try (TIO.readFile path) :: IO (Either IOException Text)
+  let contents = either (const "") Prelude.id r
+  pure [e | ln <- T.lines contents, not (T.null (T.strip ln))
+          , Right e <- [decodeLLM entryCodec ln]]
+
+appendEntry :: FilePath -> MemoryEntry -> IO ()
+appendEntry path e = TIO.appendFile path (encodeText entryCodec e <> "\n")
+
+-- | A JSONL log at the path. Remember/Forget append one line; Recall reads,
+-- folds, filters, budgets. id = count of prior Remembered entries;
+-- createdAt = the same ordinal (a uniform counter, not wall-clock).
+-- git-diffable, lexical + tag matching.
+runMemoryFile :: (IOE :> es) => FilePath -> Eff (Memory : es) a -> Eff es a
+runMemoryFile path = interpret $ \_ -> \case
+  Remember d -> liftIO $ do
+    es <- readLog path
+    let n = length [() | Remembered _ <- es]
+    appendEntry path (Remembered (itemOf d n))
+    pure (MemoryId n)
+  Recall q -> liftIO (queryLive q <$> readLog path)
+  Forget i -> liftIO (appendEntry path (Forgot i))

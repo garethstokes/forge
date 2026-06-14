@@ -67,7 +67,9 @@ import qualified Crucible.LLM.CallLog as CallLog
 import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
 import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
-import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure)
+import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile)
+import System.IO (openTempFile, hClose)
+import System.Directory (removeFile)
 
 -- Sample types for codec tests
 
@@ -1953,4 +1955,34 @@ main = runChecks
            rs = map snd out
        in ( case [v | Right v <- rs] of (v : _) -> Right v; [] -> Left ()
           , any (\e -> case e of { Left _ -> True; Right _ -> False }) rs ))
+  , do (path, h) <- openTempFile "/tmp" "crucible-mem-test.jsonl"
+       hClose h
+       items <- runEff (runMemoryFile path (do
+                  _ <- remember (MemoryDraft Episodic "alpha" ["x"] (BySkill "k"))
+                  _ <- remember (MemoryDraft Semantic "beta" ["y"] Curated)
+                  forget (MemoryId 0)
+                  recall (Query "" [] 10)))
+       raw <- TIO.readFile path
+       removeFile path
+       check "memory file: recall folds tombstones; history stays in the file"
+         (["beta"], True, True)
+         ( map (.content) items
+         , T.isInfixOf "alpha" raw
+         , T.isInfixOf "forgot" raw )
+  , do (path, h) <- openTempFile "/tmp" "crucible-mem-prov.jsonl"
+       hClose h
+       items <- runEff (runMemoryFile path (do
+                  mapM_ remember
+                    [ MemoryDraft Episodic   "a" [] (BySkill "k")
+                    , MemoryDraft Semantic   "b" [] (BySession "run1")
+                    , MemoryDraft Procedural "c" [] ByConsolidation
+                    , MemoryDraft Episodic   "d" [] Curated ]
+                  recall (Query "" [] 10)))
+       removeFile path
+       let found c p = any (\it -> it.content == c && it.source == p) items
+       check "memory file: provenance arms and kinds round-trip through JSONL"
+         (4 :: Int, True)
+         ( length items
+         , found "a" (BySkill "k") && found "b" (BySession "run1")
+             && found "c" ByConsolidation && found "d" Curated )
   ]
