@@ -89,7 +89,11 @@ spawn sub i = send (Spawn sub i)
 -- succeed and the rest return 'SpawnBudgetExceeded'. A worker failure is a
 -- 'Left' (it does not cancel siblings); a worker that throws cancels the
 -- siblings and rethrows (the 'async' semantics). Discharge 'Concurrent' with
--- 'Effectful.Concurrent.runConcurrent'.
+-- 'Effectful.Concurrent.runConcurrent'. Discharge the spawn with 'runAgents',
+-- not 'runAgentsScripted': the live interpreter holds the budget in an 'IORef'
+-- shared across the forked siblings, whereas the scripted interpreter's
+-- 'State' budget is cloned per sibling and so would not be shared (the cap
+-- would not bound a concurrent batch).
 spawnAll :: (Agents es :> r, Concurrent :> r)
          => [(SubAgent es i o, i)] -> Eff r [Either AgentFailure o]
 spawnAll = mapConcurrently (uncurry spawn)
