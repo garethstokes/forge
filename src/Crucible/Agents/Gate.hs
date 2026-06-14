@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -56,13 +55,18 @@ spawnGated g sub0 i = loop g.retries sub0
           outcome <- vote True opts g.rubric (g.render o)
           case outcome of
             Decided True _ _ _ _    -> pure (Right o)
-            Decided False why _ _ _ -> retryOrReject n sub why
-            AllAbstained why        -> retryOrReject n sub why
+            Decided False why _ _ _ -> retry n sub why (augmentReject sub.system why)
+            AllAbstained why        -> retry n sub why (augmentAbstain sub.system why)
             AllErrored m            -> pure (Left (GateRejected sub.name ("judge error: " <> m)))
 
-    retryOrReject n sub why
+    -- on exhaustion reject with the latest critique; otherwise re-spawn with
+    -- the worker instruction augmented to address it.
+    retry n sub why newSystem
       | n <= 0    = pure (Left (GateRejected sub.name why))
-      | otherwise = loop (n - 1) sub { system = augment sub.system why }
+      | otherwise = loop (n - 1) sub { system = newSystem }
 
-    augment s why =
+    augmentReject s why =
       s <> "\n\nA previous attempt was rejected: " <> why <> "\nAddress this and try again."
+    augmentAbstain s why =
+      s <> "\n\nA previous attempt could not be assessed: " <> why
+        <> "\nMake the output unambiguously satisfy the criterion."

@@ -2244,7 +2244,7 @@ main = runChecks
          True
          (case runPureEff (runLLMScripted ["{\"verdict\":\"fail\",\"why\":\"bad\"}", "{\"verdict\":\"fail\",\"why\":\"still bad\"}"]
                  (runAgentsScripted 5 ["{\"n\": 1}", "{\"n\": 2}"] (spawnGated g w 3))) of
-            Left (GateRejected nm _) -> nm == "double"
+            Left (GateRejected nm w') -> nm == "double" && T.isInfixOf "still bad" w'
             _ -> False)
   , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
         g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
@@ -2253,6 +2253,22 @@ main = runChecks
          (case runPureEff (runLLMScripted []
                  (runAgentsScripted 5 ["not json"] (spawnGated g w 3))) of
             Left (WorkerDecodeFailed nm _) -> nm == "double"
+            _ -> False)
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+        g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
+    in check "spawnGated: spawn budget exhausted on the retry -> SpawnBudgetExceeded"
+         True
+         (case runPureEff (runLLMScripted ["{\"verdict\":\"fail\",\"why\":\"bad\"}"]
+                 (runAgentsScripted 1 ["{\"n\": 1}"] (spawnGated g w 3))) of
+            Left (SpawnBudgetExceeded _) -> True
+            _ -> False)
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+        g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
+    in check "spawnGated: judge AllErrored -> GateRejected with judge-error tag"
+         True
+         (case runPureEff (runLLMScripted []
+                 (runAgentsScripted 5 ["{\"n\": 6}"] (spawnGated g w 3))) of
+            Left (GateRejected _ m) -> T.isInfixOf "judge error:" m
             _ -> False)
   , check "gate defaults: votes = 1, retries = 1"
       (1 :: Int, 1 :: Int)

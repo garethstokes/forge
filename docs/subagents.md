@@ -36,6 +36,7 @@ data AgentFailure
   = SpawnBudgetExceeded Int
   | WorkerLoopExceeded  Text Int
   | WorkerDecodeFailed  Text DecodeError
+  | GateRejected        Text Text   -- worker name, the judge's critique
 
 spawn :: (Agents es :> r) => SubAgent es i o -> i -> Eff r (Either AgentFailure o)
 ```
@@ -95,6 +96,10 @@ The judge is a separate call, not the worker grading itself, so this is not a
 closed loop; the critique is retry guidance. Gating is opt-in per spawn: the
 base `spawn` is ungated. For a pure check with no judge call, use a `refine` on
 the worker's output codec instead.
+
+Each `spawnGated` can spawn up to `retries + 1` times, so size the interpreter's
+spawn cap to leave room: a cap that runs out mid-retry surfaces as
+`SpawnBudgetExceeded`, not `GateRejected`.
 
 ## What is not covered
 
