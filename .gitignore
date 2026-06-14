@@ -23,3 +23,6 @@ static/js/
 
 # superpowers visual-companion / brainstorm scratch
 .superpowers/
+
+# downloaded eval datasets (large, external)
+data/
