@@ -17,16 +17,19 @@ N="${HB_N:-200}"
 CLAUDE_MODEL="${HB_CLAUDE_MODEL:-claude-sonnet-4-6}"
 OPENAI_MODEL="${HB_OPENAI_MODEL:-gpt-4.1}"
 URL="postgresql:///$DB"
-CONSENSUS_URL="https://openaipublic.blob.core.windows.net/simple-evals/healthbench/consensus_2025-05-09-20-00-46.jsonl"
+# The grader META-EVALUATION dataset: one row per (conversation, completion,
+# single rubric criterion) with physician binary_labels. NOT the consensus
+# *subset* of the main eval (which carries prompts+rubrics, no labels).
+METAEVAL_URL="https://openaipublic.blob.core.windows.net/simple-evals/healthbench/2025-05-07-06-14-12_oss_meta_eval.jsonl"
 TEMPLATE="scripts/healthbench-grader-template.txt"
 
 mkdir -p data/healthbench
-if [ ! -f data/healthbench/consensus.jsonl ]; then
-  echo "downloading consensus dataset (~37MB)..."
-  curl -fsSL -o data/healthbench/consensus.jsonl "$CONSENSUS_URL"
+if [ ! -f data/healthbench/meta_eval.jsonl ]; then
+  echo "downloading HealthBench meta-eval dataset..."
+  curl -fsSL -o data/healthbench/meta_eval.jsonl "$METAEVAL_URL"
 fi
-head -n "$N" data/healthbench/consensus.jsonl > data/healthbench/consensus-sample.jsonl
-echo "sample: $(wc -l < data/healthbench/consensus-sample.jsonl) rows"
+head -n "$N" data/healthbench/meta_eval.jsonl > data/healthbench/meta_eval-sample.jsonl
+echo "sample: $(wc -l < data/healthbench/meta_eval-sample.jsonl) rows"
 
 # fresh DB so grader ids are predictable (1 = openai, 2 = claude)
 dropdb --if-exists --force "$DB"
@@ -34,7 +37,7 @@ createdb "$DB"
 MANIFEST_DATABASE_URL="$URL" ./.zinc/build/manifest-evals migrate
 
 MANIFEST_DATABASE_URL="$URL" ./.zinc/build/manifest-evals metaeval load \
-  data/healthbench/consensus-sample.jsonl --format healthbench \
+  data/healthbench/meta_eval-sample.jsonl --format healthbench \
   --name healthbench-consensus --slug hbc
 RUN=$(psql -tAd "$DB" -c "select id from runs order by id desc limit 1")
 echo "loaded run $RUN"
