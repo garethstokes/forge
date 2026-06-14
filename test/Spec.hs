@@ -69,6 +69,7 @@ import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
 import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
+import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
 import System.Directory (removeFile)
 
@@ -2024,4 +2025,72 @@ main = runChecks
                         ["[{\"op\":\"merge\",\"ids\":[0,1],\"kind\":\"semantic\",\"content\":\"merged\"}]"]
                         (runMemoryPure prog))
        in map (.content) out)
+  -- Memory.Eval renderMemories/withMemories
+  , let mi c = MemoryItem (MemoryId 0) Semantic c [] Curated 0
+        m1 = mi "The user prefers dark mode."
+        m2 = mi "The user's name is Gareth."
+    in check "renderMemories: lists content with a header, in order"
+         "Relevant memories from past sessions:\n- The user prefers dark mode.\n- The user's name is Gareth.\n"
+         (renderMemories [m1, m2])
+  , check "renderMemories: empty list is empty string"
+      ""
+      (renderMemories [])
+  , let mi c = MemoryItem (MemoryId 0) Semantic c [] Curated 0
+        m1 = mi "The user prefers dark mode."
+        sk  = skill "s" C.str C.str (const "do it")
+        sk' = withMemories [m1] sk
+    in check "withMemories: appends to an empty preamble"
+         (renderMemories [m1])
+         (sk'.instruction :: Instruction Text).preamble
+  , let mi c = MemoryItem (MemoryId 0) Semantic c [] Curated 0
+        m1 = mi "The user prefers dark mode."
+        sk  = withPreamble "BASE" (skill "s" C.str C.str (const "do it"))
+        sk' = withMemories [m1] sk
+    in check "withMemories: appends after an existing preamble"
+         ("BASE\n\n" <> renderMemories [m1])
+         (sk'.instruction :: Instruction Text).preamble
+  , let sk  = withPreamble "BASE" (skill "s" C.str C.str (const "do it"))
+        sk' = withMemories ([] :: [MemoryItem]) sk
+    in check "withMemories: empty list leaves the preamble unchanged"
+         "BASE"
+         (sk'.instruction :: Instruction Text).preamble
+  -- Memory.Eval liftDelta (pure arithmetic)
+  , let rep pr ms = Report [] pr ms :: Report () ()
+    in check "liftDelta lifted minus baseline"
+         (0.5, 0.5)
+         (liftDelta (rep 0.5 0.25, rep 1.0 0.75))
+  , let rep pr ms = Report [] pr ms :: Report () ()
+    in check "liftDelta negative when memories hurt"
+         (-0.5, -0.5)
+         (liftDelta (rep 1.0 1.0, rep 0.5 0.5))
+  , let rep pr ms = Report [] pr ms :: Report () ()
+    in check "liftDelta of equal reports is zero"
+         (0.0, 0.0)
+         (liftDelta (rep 0.7 0.7, rep 0.7 0.7))
+  -- Memory.Eval memoryLift integration (scripted LLM + Embed.none)
+  , let evalSkill = withTests
+          [ Case ("q" :: Text) "case1" (Exactly ("answer" :: Text)) ]
+          (skill "s" C.str C.str (const "produce the answer"))
+        mems = [ MemoryItem (MemoryId 0) Semantic "a hint" [] Curated 0 ]
+        -- str output codec expects a JSON-encoded string reply: "\"answer\""
+        cannedReply = "\"answer\""
+        (base, lifted) = runPureEff (runLLMScripted [cannedReply, cannedReply]
+                           (Embed.none (memoryLift id evalSkill mems)))
+    in check "memoryLift zero delta on identical outputs"
+         (0.0, 0.0)
+         (liftDelta (base, lifted))
+  -- Memory.Eval memoryLift: both arms execute and score independently.
+  -- runLLMScripted serves replies by position, so the baseline arm (run
+  -- first) gets the failing reply and the lifted arm (run second) gets the
+  -- passing one, giving a positive delta. This proves both reports carry
+  -- real scores (not empty defaults) and that liftDelta's sign is correct.
+  , let evalSkill = withTests
+          [ Case ("q" :: Text) "case1" (Exactly ("answer" :: Text)) ]
+          (skill "s" C.str C.str (const "produce the answer"))
+        mems = [ MemoryItem (MemoryId 0) Semantic "a hint" [] Curated 0 ]
+        (base, lifted) = runPureEff (runLLMScripted ["\"wrong\"", "\"answer\""]
+                           (Embed.none (memoryLift id evalSkill mems)))
+    in check "memoryLift positive delta when lifted arm passes"
+         (1.0, 1.0)
+         (liftDelta (base, lifted))
   ]

@@ -46,15 +46,16 @@ import Crucible.Skill (Skill, skill, call, withExamples, withTests)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
 import Crucible.Codec (str, int, object, field, refine, encodeText)
-import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, penalty, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
+import Crucible.Eval (Case (..), Expectation (..), Score (..), Report (..), criterion, penalty, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
 import Crucible.Eval.Judge (judgeOnce, votePanel)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
-import Crucible.Memory (MemoryKind (..), MemoryItem (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
+import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
+import Crucible.Memory.Eval (memoryLift, liftDelta)
 import Crucible.Partial (runPartialWith)
 import System.IO (hFlush, stdout)
 import Data.IORef (newIORef, modifyIORef', readIORef)
@@ -125,6 +126,23 @@ main = do
       consoItems <- runEff (runMemoryFile consoPath (recall (Query "" [] 50)))
       TIO.putStrLn ("consolidate: plan " <> T.pack (show (either (const 0) (length . ((.ops) :: ConsolidationPlan -> [ConsolidationOp])) consoPlan))
                     <> " op(s); store now " <> T.pack (show (map ((.content) :: MemoryItem -> T.Text) consoItems)))
+      -- memoryLift: does a memory pay rent? Ablate a skill that can only
+      -- answer from a memory, with and without it.
+      let editorSkill = withTests
+            [ Case ("What is the user's preferred editor? Answer with one word." :: T.Text)
+                   "recall-editor"
+                   (Predicate (\o -> "neovim" `T.isInfixOf` T.toLower o)) ]
+            (skill "recall-editor" str str Prelude.id)
+          editorMems =
+            [ MemoryItem (MemoryId 0) Semantic
+                "The user's preferred editor is Neovim." [] Curated 0 ]
+      (mlBase, mlLifted) <- runEff (Anthropic.run cfg (Embed.none (memoryLift Prelude.id editorSkill editorMems)))
+      let (mlDPass, mlDScore) = liftDelta (mlBase, mlLifted)
+      let getPassRate = ((.passRate) :: Report T.Text (Either DecodeError T.Text) -> Double)
+      TIO.putStrLn ("memoryLift: baseline pass " <> T.pack (show (getPassRate mlBase))
+                    <> ", lifted pass " <> T.pack (show (getPassRate mlLifted))
+                    <> "; delta (pass,score) = (" <> T.pack (show mlDPass)
+                    <> ", " <> T.pack (show mlDScore) <> ")")
       let ageFn :: Skill T.Text Int
           ageFn = skill "extract-age" str
             (object (field "age" Prelude.id
