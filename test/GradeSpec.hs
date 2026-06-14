@@ -318,7 +318,7 @@ errorRowSpec pool now = do
           Eval.Rubric r -> atomicModifyIORef' ref (\acc -> (acc ++ [r <> "|" <> t], ()))
           _ -> ioError (userError "expected a Rubric expectation")
         case t of
-          "out-a" -> pure (Right (Eval.Score { value = 1.0, rationale = "good", votes = Just (2, 1) }))
+          "out-a" -> pure (Right (Eval.Score { value = 1.0, rationale = "good", votes = Just (2, 1), dissent = Nothing }))
           "out-b" -> ioError (userError "kaboom")
           _       -> pure (Right (Eval.score 1.0 "fine"))
   outcome <- scoreRun pool 1 runner noCriterionJudge sd.runId [sd.gvId]

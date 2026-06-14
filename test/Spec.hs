@@ -3,9 +3,10 @@ import qualified ApiSpec
 import qualified CalibrationSpec
 import qualified ExecuteSpec
 import qualified GradeSpec
+import qualified HealthBenchSpec
 import qualified IngestSpec
 import qualified MetaEvalSpec
 import qualified SchemaSpec
 main :: IO ()
 -- ApiSpec first: fastest feedback (DTO round-trips fail before any DB spins up).
-main = CalibrationSpec.main >> ApiSpec.main >> SchemaSpec.main >> ExecuteSpec.main >> GradeSpec.main >> IngestSpec.main >> MetaEvalSpec.main
+main = CalibrationSpec.main >> HealthBenchSpec.main >> ApiSpec.main >> SchemaSpec.main >> ExecuteSpec.main >> GradeSpec.main >> IngestSpec.main >> MetaEvalSpec.main

@@ -143,9 +143,10 @@ data CriterionVerdict = CriterionVerdict
   { met :: Bool, explanation :: Text } deriving (Eq, Show)
 
 -- | The injected per-criterion judge for the pointed kind. Live:
--- "Evals.Grade.Live". NOTE the fidelity caveat: the live judge uses
--- crucible's hardened prompt + a Claude model, not HealthBench's published
--- GPT-4.1 grader — scores are directionally comparable, not benchmark-comparable.
+-- "Evals.Grade.Live". By default the live judge uses crucible's hardened
+-- prompt; a grader version whose config carries a @prompt@ string overrides it
+-- with that template (e.g. HealthBench's published GPT-4.1 grader prompt),
+-- substituting <<conversation>> and <<rubric_item>>.
 type CriterionJudge =
   GraderVersion -> Text -> Criterion' -> IO (Either ExecError CriterionVerdict)
 
