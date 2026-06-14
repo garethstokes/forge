@@ -231,11 +231,18 @@ exampleView m _ _ =
   remoteView (_exampleM m) $ \d ->
     div_ [ P.class_ "example" ]
       [ a_ [ P.href_ (runHash d.runId), P.class_ "back" ] [ text "← run" ]
-      , h2_ [] [ text ("example " <> ms d.exampleKey) ]
-      , exSection "Input" [ pre_ [ P.class_ "io" ] [ text (renderJson d.input) ] ]
-      , exSection "Generated prompt" (map promptMsg d.prompt)
-      , exSection "Response" [ responseBlock d.responseText d.responseError ]
-      , exSection "Grades" (map gradeBlock d.grades)
+      , div_ [ P.class_ "ex-card" ]
+          [ h2_ [] [ text ("example " <> ms d.exampleKey) ]
+          , div_ [ P.class_ "ex-cols" ]
+              [ div_ [ P.class_ "ex-main" ]
+                  [ exSection "Input" [ pre_ [ P.class_ "io" ] [ text (renderJson d.input) ] ]
+                  , exSection "Generated prompt" (map promptMsg d.prompt)
+                  , exSection "Response" [ responseBlock d.responseText d.responseError ]
+                  ]
+              , div_ [ P.class_ "ex-side" ]
+                  [ exSection "Grades" (map gradeBlock d.grades) ]
+              ]
+          ]
       ]
   where
     exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
