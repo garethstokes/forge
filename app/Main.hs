@@ -51,7 +51,9 @@ import Crucible.Eval (Case (..), Expectation (..), Score (..), Report (..), crit
 import Crucible.Eval.Judge (judgeOnce, votePanel)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent, Chat)
-import Crucible.Agents (subAgent, spawn, AgentFailure (..), runAgents, SubAgent)
+import Crucible.Agents (subAgent, spawn, spawnAll, AgentFailure (..), runAgents, SubAgent)
+import Effectful.Concurrent (Concurrent)
+import qualified Effectful.Concurrent as Conc
 import Crucible.Agents.Gate (gate, spawnGated)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
@@ -315,6 +317,17 @@ main = do
       case nestedRes of
         Right report -> TIO.putStrLn ("nested spawn: " <> report)
         Left failure -> TIO.putStrLn ("nested spawn: " <> T.pack (show failure))
+      -- Concurrent spawn: fan out three weather workers at once under one
+      -- shared budget; results come back in input order.
+      let cityWorker :: SubAgent '[Chat, Concurrent, IOE] T.Text T.Text
+          cityWorker =
+            subAgent "city-weather" str (object (field "summary" Prelude.id str))
+              "Use the get_weather tool and summarize the weather in one sentence."
+              (tools weatherBox)
+          cityPairs = [(cityWorker, "Brisbane"), (cityWorker, "Sydney"), (cityWorker, "Perth")]
+      concRes <- runEff (Conc.runConcurrent (Anthropic.runChat cfg
+                   (runAgents 6 (spawnAll cityPairs))))
+      mapM_ (\r -> TIO.putStrLn ("concurrent spawn: " <> either (T.pack . show) Prelude.id r)) concRes
       -- Work ledger: session 1 records and processes one item; a SEPARATE
       -- session 2 on the same file reads back what remains (outlives sessions).
       let ledgerPath = "/tmp/crucible-ledger-demo.jsonl"
