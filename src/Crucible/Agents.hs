@@ -16,10 +16,11 @@
 -- | Typed orchestrator-worker spawn. A 'SubAgent' is a worker: a 'Skill' whose
 -- body is a tool loop. The 'Agents' effect's 'spawn' runs the worker as a fresh
 -- transcript (the parent never sees it) and decodes its final answer through the
--- worker's output codec, the typed handoff no surveyed harness has. This release
--- is one level (workers are leaf, cannot spawn) and synchronous, with a built-in
--- spawn cap. 'runAgents' is the live interpreter; 'runAgentsScripted' is a
--- model-free interpreter for testing parent logic.
+-- worker's output codec, the typed handoff no surveyed harness has. A worker's
+-- tools run in a row that can 'spawn', so a worker can spawn sub-workers (an
+-- arbitrary-depth tree); 'runAgents' threads one spawn budget across the whole
+-- tree. Spawn is synchronous. 'runAgents' is the live interpreter;
+-- 'runAgentsScripted' is a model-free interpreter for testing parent logic.
 module Crucible.Agents
   ( SubAgent (..)
   , subAgent
@@ -68,7 +69,8 @@ data AgentFailure
   | GateRejected        Text Text         -- ^ worker name, the judge's critique
   deriving (Eq, Show)
 
--- | Orchestrator-worker spawn, indexed by the worker base row @es@.
+-- | Orchestrator-worker spawn, indexed by the worker base row @es@. Workers run
+-- in @Agents es : es@, so a worker tool can issue 'spawn' for sub-workers.
 data Agents (es :: [Effect]) :: Effect where
   Spawn :: SubAgent es i o -> i -> Agents es m (Either AgentFailure o)
 type instance DispatchOf (Agents es) = Dynamic
