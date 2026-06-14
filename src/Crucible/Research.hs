@@ -122,6 +122,66 @@ linkCodec :: JSONCodec Link
 linkCodec = object (Link <$> field "target" ((.target) :: Link -> Slug) slugCodec
                          <*> field "linkType" ((.linkType) :: Link -> LinkType) linkTypeCodec)
 
--- runResearchDir stub (Task 2 replaces this)
+-- The serialized page head (everything but the slug, which is the filename).
+data PageHead meta = PageHead { title :: Text, links :: [Link], meta :: meta }
+
+pageHeadCodec :: JSONCodec meta -> JSONCodec (PageHead meta)
+pageHeadCodec mc = object (PageHead <$> field "title" ((.title) :: PageHead meta -> Text) str
+                                    <*> field "links" ((.links) :: PageHead meta -> [Link]) (list' linkCodec)
+                                    <*> field "meta"  ((.meta)  :: PageHead meta -> meta)  mc)
+
+pagePath :: FilePath -> Slug -> FilePath
+pagePath dir s = dir </> T.unpack (unSlug s) <.> "md"
+
+renderPage :: JSONCodec meta -> Page meta -> Text
+renderPage mc p =
+  "---\n" <> encodeText (pageHeadCodec mc) (PageHead p.title p.links p.meta)
+    <> "\n---\n" <> p.body
+
+parsePage :: JSONCodec meta -> Slug -> Text -> Maybe (Page meta)
+parsePage mc s contents = case T.lines contents of
+  ("---" : rest) ->
+    let (headLines, afterHead) = break (== "---") rest
+        bodyText = T.intercalate "\n" (drop 1 afterHead)
+        headJson = T.intercalate "\n" headLines
+    in case decodeLLM (pageHeadCodec mc) headJson of
+         Right h -> Just (Page s h.title h.links bodyText h.meta)
+         Left _  -> Nothing
+  _ -> Nothing
+
+readPageFile :: JSONCodec meta -> FilePath -> Slug -> IO (Maybe (Page meta))
+readPageFile mc dir s = do
+  let path = pagePath dir s
+  exists <- doesFileExist path
+  if not exists then pure Nothing
+  else do
+    r <- try (TIO.readFile path) :: IO (Either IOException Text)
+    pure (either (const Nothing) (parsePage mc s) r)
+
+writePageFile :: JSONCodec meta -> FilePath -> Page meta -> IO ()
+writePageFile mc dir p = do
+  createDirectoryIfMissing True dir
+  TIO.writeFile (pagePath dir p.slug) (renderPage mc p)
+
+indexDir :: FilePath -> IO [Slug]
+indexDir dir = do
+  createDirectoryIfMissing True dir
+  fs <- listDirectory dir
+  pure (sort [ Slug (T.pack (takeBaseName f)) | f <- fs, takeExtension f == ".md", f /= "log.md" ])
+
+searchDir :: JSONCodec meta -> FilePath -> Text -> IO [Slug]
+searchDir mc dir q = do
+  slugs <- indexDir dir
+  matched <- mapM (\s -> maybe False (matchesQuery q) <$> readPageFile mc dir s) slugs
+  pure [ s | (s, True) <- zip slugs matched ]
+
+-- | Directory interpreter: one <slug>.md per page (--- JSON head --- + body),
+-- AppendLog -> log.md. Outlives sessions; git-diffable. Tolerant: a page file
+-- whose head does not decode reads as absent.
 runResearchDir :: (IOE :> es) => JSONCodec meta -> FilePath -> Eff (Research meta : es) a -> Eff es a
-runResearchDir = error "runResearchDir: defined in Task 2"
+runResearchDir mc dir = interpret $ \_ -> \case
+  ReadPage s   -> liftIO (readPageFile mc dir s)
+  WritePage p  -> liftIO (writePageFile mc dir p)
+  Index        -> liftIO (indexDir dir)
+  Search q     -> liftIO (searchDir mc dir q)
+  AppendLog ln -> liftIO (createDirectoryIfMissing True dir >> TIO.appendFile (dir </> "log.md") (ln <> "\n"))

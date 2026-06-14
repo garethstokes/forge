@@ -55,7 +55,7 @@ import Crucible.Partial (closeJson, runPartial)
 import Crucible.Usage (Usage(..), usTotalTokens, Rates(..), estimateCost)
 import qualified Data.ByteString.Char8 as BC
 import Control.Concurrent (threadDelay)
-import Control.Exception (try, throwIO, fromException, evaluate, SomeException, SomeAsyncException (..))
+import Control.Exception (try, throwIO, fromException, evaluate, SomeException, SomeAsyncException (..), catch)
 import Crucible.LLM.Anthropic.Stream
   (splitFrames, StreamEvent(..), parseEvent, StreamAcc(..), emptyAcc, stepAcc, timedRead)
 import Data.List (foldl')
@@ -72,7 +72,7 @@ import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryD
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
 import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
-import System.Directory (removeFile)
+import System.Directory (removeFile, createDirectoryIfMissing, removeDirectoryRecursive)
 import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
 import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
@@ -2423,4 +2423,21 @@ main = runChecks
   , check "research: linkCodec round-trips each link type"
       (Right (Link (Slug "t") Supersedes))
       (decodeLLM linkCodec (C.encodeText linkCodec (Link (Slug "t") Supersedes)))
+  , do let dir = "/tmp/crucible-research-test"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       let p = Page (Slug "alpha") "Alpha" [Link (Slug "beta") Extends] "body text here" ("m" :: Text)
+       _ <- runEff (runResearchDir C.str dir (writePage p))
+       got <- runEff (runResearchDir C.str dir (readPage (Slug "alpha")))
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: a written page reads back across sessions (title/links/meta)" (Just p) got
+  , do let dir = "/tmp/crucible-research-idx"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       (idx, hits) <- runEff (runResearchDir C.str dir (do
+                        writePage (Page (Slug "a") "Apple" [] "red fruit" ("" :: Text))
+                        writePage (Page (Slug "b") "Boat" [] "floats" ("" :: Text))
+                        i <- index @Text
+                        h <- search @Text "fruit"
+                        pure (i, h)))
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: index lists slugs, search greps body" ([Slug "a", Slug "b"], [Slug "a"]) (idx, hits)
   ]
