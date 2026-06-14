@@ -47,7 +47,7 @@ viewModel _ m =
       RunR i -> detailView m i
       CompareR a b -> compareView m a b
       ExampleR i k -> exampleView m i k
-      CalibrationR -> text "calibration (coming soon)"
+      CalibrationR -> calibrationView m
 
 -- | SSE connection status dot in the header: green while the change feed is
 -- connected, gray while the EventSource is reconnecting.
@@ -75,7 +75,10 @@ remoteView rd f =
 runsView :: Model -> View Model Action
 runsView m =
   remoteView (_runsM m) $ \rs ->
-    div_ [] (compareBar m rs : map (runGroup m) (groupRuns rs))
+    div_ []
+      ( a_ [ P.class_ "nav-link", P.href_ calibrationHash ] [ text "grader calibration \8594" ]
+      : compareBar m rs
+      : map (runGroup m) (groupRuns rs) )
 
 -- | Group runs under (datasetName, datasetVersion) headings, first-seen
 -- order (the API returns newest first).
@@ -527,6 +530,23 @@ ciStyle :: Double -> Double -> MisoString
 ciStyle lo hi =
   let l = max 0 (min 1 lo); h = max 0 (min 1 hi)
   in "left:" <> pct l <> ";width:" <> pct (max 0 (h - l))
+
+-- | The #/calibration page: a teaching legend then one card per grader series.
+calibrationView :: Model -> View Model Action
+calibrationView m =
+  remoteView (_calibrationM m) $ \ss ->
+    div_ [ P.class_ "calib calib-page" ]
+      [ backLink
+      , h2_ [] [ text "grader calibration" ]
+      , div_ [ P.class_ "calib-legend" ]
+          [ text ("\954 (Cohen's kappa) measures judge\8211human agreement beyond chance. "
+                  <> "The bar shows \954 with its 95% CI; the tick at 0.6 is the trust threshold "
+                  <> "\8212 a grader is \8220trustworthy\8221 when the CI lower bound clears it. "
+                  <> "fail precision/recall describe how well it catches real failures.") ]
+      , if null ss
+          then p_ [ P.class_ "empty" ] [ text "no calibration runs yet." ]
+          else div_ [] (map calibCard ss)
+      ]
 
 -- | Run-detail calibration block — omitted entirely when the run has no
 -- meta-evals (the common case for older runs).
