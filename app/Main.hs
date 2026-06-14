@@ -25,7 +25,7 @@ import System.Exit (exitFailure)
 import Effectful (Eff, runEff, liftIO, IOE)
 import Crucible.Tool.Generic (tools)
 
-import Crucible.LLM (Message (..), Role (..), complete)
+import Crucible.LLM (Message (..), Role (..), complete, LLM)
 import Crucible.LLM.Anthropic
   ( defaultAnthropicConfig
   )
@@ -52,6 +52,7 @@ import Crucible.Eval.Judge (judgeOnce, votePanel)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
 import Crucible.Chat (runToolAgent, Chat)
 import Crucible.Agents (subAgent, spawn, AgentFailure (..), runAgents, SubAgent)
+import Crucible.Agents.Gate (gate, spawnGated)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
@@ -278,6 +279,19 @@ main = do
       case spawnRes of
         Right summary -> TIO.putStrLn ("spawn: worker returned: " <> summary)
         Left failure  -> TIO.putStrLn ("spawn: worker failed: " <> T.pack (show failure))
+      -- Judge gate: verify the worker's summary before accepting it.
+      let gatedWorker :: SubAgent '[Chat, LLM, IOE] T.Text T.Text
+          gatedWorker =
+            subAgent "weather-worker" str
+              (object (field "summary" Prelude.id str))
+              "Use the get_weather tool, then summarize the weather in one sentence."
+              (tools weatherBox)
+          summaryGate = gate "the summary names a city and a temperature" Prelude.id
+      gatedRes <- runEff (Anthropic.run cfg (Anthropic.runChat cfg
+                    (runAgents 4 (spawnGated summaryGate gatedWorker "Brisbane"))))
+      case gatedRes of
+        Right summary -> TIO.putStrLn ("spawnGated: accepted: " <> summary)
+        Left failure  -> TIO.putStrLn ("spawnGated: " <> T.pack (show failure))
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
