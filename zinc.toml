@@ -35,7 +35,8 @@ depends = ["base", "text", "bytestring", "wai", "warp", "http-types", "filepath"
 repo = "https://github.com/garethstokes/manifest.git"
 # Includes recursive cascade deletes (manifest-va2) and the
 # HasRelation.Target -> Related family rename (manifest-jkq) + the change feed (z8h slice 1).
-rev = "0e414c29f77fe8668daefdcbbb5af56576ff1267"
+# Now manifest main + castText :: Expr a -> Expr Text (RLS int-column predicate cast).
+rev = "fb31e961e0b2f0486f668c3b2954c49f28d70260"
 
 [dependencies.crucible]
 repo = "https://github.com/garethstokes/crucible.git"
