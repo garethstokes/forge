@@ -133,7 +133,7 @@ metaLoad pool org opts = do
       Right (rows, nSkip) -> do
         now <- getCurrentTime
         withSession pool $ do
-          existing <- selectWhere [ #slug ==. opts.slug ]
+          existing <- selectWhere [ #slug ==. opts.slug, #org ==. org ]
           case (existing :: [Dataset]) of
             (d : _) -> do
               vers <- selectWhere [ #dataset ==. d.id, #version ==. opts.version ]

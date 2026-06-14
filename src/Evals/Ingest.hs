@@ -135,7 +135,7 @@ ingestFile pool org opts = do
       withSession pool $ do
         -- These reads are deliberately pre-transaction; the unique index is the
         -- race backstop (single-user CLI).
-        existing <- selectWhere [ #slug ==. opts.slug ]
+        existing <- selectWhere [ #slug ==. opts.slug, #org ==. org ]
         case (existing :: [Dataset]) of
           (d : _) -> do
             vers <- selectWhere [ #dataset ==. d.id, #version ==. opts.version ]

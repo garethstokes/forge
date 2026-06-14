@@ -26,7 +26,7 @@ import Text.Read (readMaybe)
 import Control.Monad.IO.Class (liftIO)
 import Data.Time (getCurrentTime)
 
-import Manifest (Cond, Db, add, selectWhere, withSession, (==.))
+import Manifest (Cond, Db, add, get, Key (..), selectWhere, withSession, (==.))
 import Manifest.Postgres (Pool, closePool, newPool)
 
 import Evals.Execute (RunOutcome (..), executeRun)
@@ -39,7 +39,6 @@ import Evals.MetaEval (metaReport, MetaMode (..), saveMetaEval)
 import Evals.MetaEval.Ingest (MetaLoadOpts (..), MetaLoadResult (..), metaLoad, renderMetaLoadError)
 import Evals.Migrate (migrateAll)
 import Evals.Schema
-import Evals.Tenant (withTenant)
 import qualified Crucible.Eval.Calibrate as Cal
 
 main :: IO ()
@@ -55,7 +54,7 @@ main = getArgs >>= \case
     conc <- concurrencyFrom nonFlagArgs
     withEnvPool $ \pool -> do
       org <- resolveOrg pool slug
-      withSession pool $ withTenant org $ pure ()  -- set tenant context
+      ensureRunOrg pool (RunId rid) org ridStr
       o <- executeRun pool conc (liveAnthropicRunner (T.pack key)) (RunId rid)
       putStrLn $ "run " <> ridStr <> ": "
         <> show o.total <> " examples, "
@@ -74,7 +73,8 @@ main = getArgs >>= \case
         ks   <- liveKeys
         conc <- concurrencyFrom concFlags
         withEnvPool $ \pool -> do
-          _org <- resolveOrg pool slug
+          org <- resolveOrg pool slug
+          ensureRunOrg pool (RunId rid) org ridStr
           o <- scoreRun pool conc (liveGradeRunner ks) (liveCriterionJudge ks) (RunId rid) gvs
           putStrLn $ "score " <> ridStr <> ": "
             <> show o.total <> " pairs, "
@@ -165,6 +165,18 @@ resolveOrg pool slug = withSession pool $ do
   case os of
     (o : _) -> pure o.id
     []      -> liftIO (die ("no such org: " <> slug))
+
+-- | Refuse to run/score a run that does not belong to the given org. The
+-- executor/grader run on the superuser connection (concurrent multi-session,
+-- RLS not active), so this guard is what enforces org ownership for those
+-- commands — without it @run \<id\> --org other@ would operate on any run.
+ensureRunOrg :: Pool -> RunId -> OrgId -> String -> IO ()
+ensureRunOrg pool rid org ridStr = do
+  mRun <- withSession pool (get @Run (Key rid))
+  case mRun of
+    Nothing                -> die ("run not found: " <> ridStr)
+    Just r | r.org /= org  -> die ("run " <> ridStr <> " does not belong to that org")
+           | otherwise     -> pure ()
 
 requireEnv :: String -> IO String
 requireEnv name =
