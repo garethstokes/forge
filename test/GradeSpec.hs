@@ -251,30 +251,30 @@ data SeededG = SeededG
 seedScoring :: Pool -> UTCTime -> Text -> Value -> IO SeededG
 seedScoring pool now kind config = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "g", slug = "g", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1"
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e1"
                      , input = Aeson (toJSON ("q1" :: Text)), expected = Just (Aeson (toJSON ("out-a" :: Text))), meta = Nothing } :: Example)
-  e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e2"
+  e2 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e2"
                      , input = Aeson (toJSON ("q2" :: Text)), expected = Just (Aeson (toJSON ("nope" :: Text))), meta = Nothing } :: Example)
-  e3 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e3"
+  e3 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e3"
                      , input = Aeson (toJSON ("q3" :: Text)), expected = Nothing, meta = Nothing } :: Example)
-  e4 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e4"
+  e4 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e4"
                      , input = Aeson (toJSON ("q4" :: Text)), expected = Nothing, meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "SYS"
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "SYS"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  _o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "out-a"
+  _o1 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e1.id, response = Nothing, text = Just "out-a"
                      , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
-  _o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "out-b"
+  _o2 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e2.id, response = Nothing, text = Just "out-b"
                      , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
-  _o3 <- add (Output { id = OutputId 0, run = r.id, example = e3.id, response = Nothing, text = Nothing
+  _o3 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e3.id, response = Nothing, text = Nothing
                      , error = Just "llm: boom", latencyMs = Just 1, tokens = Nothing } :: Output)
-  _o4 <- add (Output { id = OutputId 0, run = r.id, example = e4.id, response = Nothing, text = Just "out-d"
+  _o4 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e4.id, response = Nothing, text = Just "out-d"
                      , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
   g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = kind, createdAt = now } :: Grader)
-  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson config, createdAt = now } :: GraderVersion)
+  gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson config, createdAt = now } :: GraderVersion)
   pure SeededG { runId = r.id, gvId = gv.id }
 
 scoresFor :: Pool -> GraderVersionId -> IO [Score]
@@ -463,8 +463,8 @@ seedPointed pool now = withSession pool $ do
   let crit c p ts = object (["criterion" .= (c :: Text), "points" .= (p :: Double)]
                               ++ if null ts then [] else ["tags" .= (ts :: [Text])])
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "p", slug = "p", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "pe1"
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "pe1"
                      , input = Aeson (object ["messages" .= [object ["role" .= ("user" :: Text), "content" .= ("Q" :: Text)]]])
                      , expected = Just (Aeson (toJSON
                          [ crit "cites"    7.0  ([] :: [Text])
@@ -473,20 +473,20 @@ seedPointed pool now = withSession pool $ do
                          , crit "harmful"  (-6.0) ["axis:accuracy"]
                          ]))
                      , meta = Nothing } :: Example)
-  e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "pe2"
+  e2 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "pe2"
                      , input = Aeson (object ["messages" .= [object ["role" .= ("user" :: Text), "content" .= ("Q2" :: Text)]]])
                      , expected = Nothing, meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "pt", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "SYS"
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "SYS"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  _o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "the answer"
+  _o1 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e1.id, response = Nothing, text = Just "the answer"
                      , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
-  _o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "x"
+  _o2 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e2.id, response = Nothing, text = Just "x"
                      , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
   g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "pg", kind = "pointed", createdAt = now } :: Grader)
-  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
   pure SeededP { runId = r.id, gvId = gv.id }
 
 -- Four scenarios for the pointed engine: happy path, stop-at-first-error,
@@ -655,22 +655,22 @@ dimEngineSpec :: Pool -> UTCTime -> IO ()
 dimEngineSpec pool now = do
   sd <- withSession pool $ do
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "dim", slug = "dim", createdAt = now } :: Dataset)
-    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-    e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1"
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e1"
                        , input = Aeson (toJSON ("q" :: Text))
                        , expected = Just (Aeson (toJSON
                            [ object ["criterion" .= ("A"::Text), "points" .= (4::Double), "tags" .= (["axis:accuracy"]::[Text])]
                            , object ["criterion" .= ("B"::Text), "points" .= (6::Double), "tags" .= (["axis:completeness"]::[Text])] ]))
                        , meta = Just (Aeson (object ["example_tags" .= (["theme:x"]::[Text])])) } :: Example)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "SYS"
+    tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "SYS"
                              , params = Aeson (object []), createdAt = now } :: TargetVersion)
     r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded"
                    , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-    _  <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "ans"
+    _  <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e1.id, response = Nothing, text = Just "ans"
                       , error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
     g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "pg", kind = "pointed", createdAt = now } :: Grader)
-    gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
     pure (r.id, gv.id)
   let (rid, gvid) = sd
       judge _ _ c = pure (Right (CriterionVerdict { met = c.criterion == "A", explanation = "" }))

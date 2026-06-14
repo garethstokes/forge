@@ -88,12 +88,12 @@ caseTuples mode gv mtv (out, mExample, lbls, mScore) = mapM one lbls
               Right tx -> either (const Nothing) (Just . (\v -> v.met)) <$> judge gv tx c
 
 -- | Persist a calibration report as a 'MetaEval' row (append/history).
-saveMetaEval :: Pool -> RunId -> GraderVersionId -> Text -> Int
+saveMetaEval :: Pool -> OrgId -> RunId -> GraderVersionId -> Text -> Int
              -> Cal.CalibrationReport -> IO MetaEval
-saveMetaEval pool rid gvid modeT seed rep = do
+saveMetaEval pool org rid gvid modeT seed rep = do
   now <- getCurrentTime
   withSession pool $ add (MetaEval
-    { id = MetaEvalId 0, run = rid, graderVersion = gvid, mode = modeT, seed = seed
+    { id = MetaEvalId 0, org = org, run = rid, graderVersion = gvid, mode = modeT, seed = seed
     , agreement = rep.agreement, kappa = rep.kappa
     , kappaLow = fst rep.kappaCI, kappaHigh = snd rep.kappaCI
     , failPrecision = rep.failPrecision, failRecall = rep.failRecall

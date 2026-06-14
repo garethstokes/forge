@@ -126,19 +126,19 @@ executeRun pool concurrency runner runId = do
           Just tv -> do
             examples <- selectWhere [ #datasetVersion ==. run.datasetVersion ]
             done     <- selectWhere [ #run ==. runId ]
-            pure (Just (tv, examples :: [Example], map (.example) (done :: [Output])))
+            pure (Just (run, tv, examples :: [Example], map (.example) (done :: [Output])))
   case setup of
     Nothing -> do
       withSession pool $ update @Run (Key runId) [ #status =. "failed" ]
       pure RunOutcome { total = 0, succeeded = 0, errored = 0, skipped = 0 }
-    Just (tv, examples, doneIds) -> do
+    Just (run, tv, examples, doneIds) -> do
       startedAt <- getCurrentTime
       withSession pool $
         update @Run (Key runId) [ #status =. "running", #startedAt =. Just startedAt ]
       sem <- newQSem (max 1 concurrency)
       let todo = [ ex | ex <- examples, ex.id `notElem` doneIds ]
       oks <- forConcurrently todo $ \ex ->
-        bracket_ (waitQSem sem) (signalQSem sem) (runOne tv ex)
+        bracket_ (waitQSem sem) (signalQSem sem) (runOne run.org tv ex)
       finishedAt <- getCurrentTime
       withSession pool $
         update @Run (Key runId) [ #status =. "succeeded", #finishedAt =. Just finishedAt ]
@@ -152,8 +152,8 @@ executeRun pool concurrency runner runId = do
     -- One example: assemble, time the call, write the Output. Both error
     -- branches (assembly, model) record on the row; an unexpected exception
     -- from the runner is captured as an LlmError rather than killing the run.
-    runOne :: TargetVersion -> Example -> IO Bool
-    runOne tv ex = do
+    runOne :: OrgId -> TargetVersion -> Example -> IO Bool
+    runOne org tv ex = do
       t0 <- getCurrentTime
       result <- case assembleMessages tv ex of
         Left err   -> pure (Left err)
@@ -166,13 +166,13 @@ executeRun pool concurrency runner runId = do
       case result of
         Right (txt, u) -> do
           _ <- withSession pool $ add (Output
-            { id = OutputId 0, run = runId, example = ex.id
+            { id = OutputId 0, org = org, run = runId, example = ex.id
             , response = Nothing, text = Just txt, error = Nothing
             , latencyMs = Just ms, tokens = Just (Aeson (usageJson u)) } :: Output)
           pure True
         Left err -> do
           _ <- withSession pool $ add (Output
-            { id = OutputId 0, run = runId, example = ex.id
+            { id = OutputId 0, org = org, run = runId, example = ex.id
             , response = Nothing, text = Nothing
             , error = Just (renderExecError err)
             , latencyMs = Just ms, tokens = Nothing } :: Output)

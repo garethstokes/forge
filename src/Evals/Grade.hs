@@ -267,10 +267,10 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
               Just gs -> do
                 outputs  <- selectWhere [ #run ==. runId ]
                 existing <- concat <$> mapM (\gv -> existingFor gv.id) gvs
-                pure (Just (mtv, zip gs gvs, outputs :: [Output], existing))
+                pure (Just (run.org, mtv, zip gs gvs, outputs :: [Output], existing))
   case setup of
     Nothing -> pure ScoreOutcome { total = 0, scored = 0, errored = 0, skipped = 0 }
-    Just (mtv, graders, outputs, existing) -> do
+    Just (org, mtv, graders, outputs, existing) -> do
       let pairs = [ (g, gv, out) | (g, gv) <- graders, out <- outputs ]
           -- existing :: [(OutputId, (GraderVersionId, Maybe Text))]
           prior gv out = find (\(oid, (gvid, _)) -> oid == out.id && gvid == gv.id) existing
@@ -281,8 +281,8 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
           (skips, work) = partitionEithers (map classify pairs)
       sem <- newQSem (max 1 concurrency)
       oks <- forConcurrently work $ \(g, gv, out, regrade) ->
-        bracket_ (waitQSem sem) (signalQSem sem) (gradeOne mtv g gv out regrade)
-      mapM_ (recompute . snd) graders
+        bracket_ (waitQSem sem) (signalQSem sem) (gradeOne org mtv g gv out regrade)
+      mapM_ (recompute org . snd) graders
       pure ScoreOutcome
         { total   = length pairs
         , scored  = length (filter id oks)
@@ -293,8 +293,8 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
     -- One pair: grade, then write exactly one Score row — value + detail on
     -- success, error text (value NULL) on failure. A regrade first deletes
     -- the prior errored row.
-    gradeOne :: Maybe TargetVersion -> Grader -> GraderVersion -> Output -> Bool -> IO Bool
-    gradeOne mtv g gv out regrade = do
+    gradeOne :: OrgId -> Maybe TargetVersion -> Grader -> GraderVersion -> Output -> Bool -> IO Bool
+    gradeOne org mtv g gv out regrade = do
       -- The try covers gradePair WHOLE (including the exact kind's Example
       -- fetch), so even a transient DB error becomes this pair's error row
       -- rather than cancelling the concurrent batch.
@@ -308,14 +308,14 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
         case result of
           Right graded -> do
             _ <- add (Score
-              { id = ScoreId 0, output = out.id, graderVersion = gv.id
+              { id = ScoreId 0, org = org, output = out.id, graderVersion = gv.id
               , value = Just graded.value, passed = graded.passed
               , detail = Just (Aeson graded.detail), error = Nothing
               , createdAt = now } :: Score)
             pure True
           Left err -> do
             _ <- add (Score
-              { id = ScoreId 0, output = out.id, graderVersion = gv.id
+              { id = ScoreId 0, org = org, output = out.id, graderVersion = gv.id
               , value = Nothing, passed = Nothing
               , detail = Nothing, error = Just (renderExecError err)
               , createdAt = now } :: Score)
@@ -389,8 +389,8 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
     -- One grader version's RunMetric over this run, from scratch: errored
     -- rows (value NULL) are excluded; no graded rows means mean 0 and no
     -- pass rate.
-    recompute :: GraderVersion -> IO ()
-    recompute gv = do
+    recompute :: OrgId -> GraderVersion -> IO ()
+    recompute org gv = do
       now <- getCurrentTime
       withSession pool $ do
         rows <- runQuery $ do
@@ -406,7 +406,7 @@ scoreRun pool concurrency runner criterionJudge runId gvIds = do
               (map unwrap (rows :: [(Maybe Double, (Maybe Bool, (Maybe (Aeson Value), Maybe (Aeson Value))))]))
         deleteWhere ([ #run ==. runId, #graderVersion ==. gv.id ] :: [Cond RunMetric])
         mapM_ (\dm -> add (RunMetric
-          { id = RunMetricId 0, run = runId, graderVersion = gv.id
+          { id = RunMetricId 0, org = org, run = runId, graderVersion = gv.id
           , mean = dm.mean, passRate = dm.passRate, count = dm.count
           , tag = dm.tag, stderr = Just dm.stderr, computedAt = now } :: RunMetric)) dms
 

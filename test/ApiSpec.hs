@@ -357,44 +357,44 @@ serverSpec = withEphemeralDb $ \pool -> do
     -- Seed "zeta" dataset FIRST (alphabetically after "demo") to verify
     -- /api/datasets returns results in name order, not insertion order.
     dz <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "zeta", slug = "zeta", createdAt = now } :: Dataset)
-    _  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = dz.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    _  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = dz.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "demo", slug = "demo", createdAt = now } :: Dataset)
-    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     -- Insert e2 first so DB heap order is e2, e1 — the handler must sort by key.
-    e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e2", input = Aeson (object ["q" .= ("2" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
-    e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1", input = Aeson e1Input, expected = Nothing, meta = Nothing } :: Example)
+    e2 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e2", input = Aeson (object ["q" .= ("2" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
+    e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e1", input = Aeson e1Input, expected = Nothing, meta = Nothing } :: Example)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "tgt", createdAt = now } :: Target)
-    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "claude-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
+    tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "claude-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
     r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
     -- Insert o2 first (matching e2 which was inserted first).
-    _  <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Nothing, error = Just "llm: boom", latencyMs = Nothing, tokens = Nothing } :: Output)
-    o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "hello", error = Nothing, latencyMs = Just 42, tokens = Nothing } :: Output)
+    _  <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e2.id, response = Nothing, text = Nothing, error = Just "llm: boom", latencyMs = Nothing, tokens = Nothing } :: Output)
+    o1 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e1.id, response = Nothing, text = Just "hello", error = Nothing, latencyMs = Just 42, tokens = Nothing } :: Output)
     g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "exactness", kind = "exact", createdAt = now } :: Grader)
-    gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
-    _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True, detail = Just (Aeson (object ["rationale" .= ("exact match" :: Text)])), error = Nothing, createdAt = now } :: Score)
+    gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    _  <- add (Score { id = ScoreId 0, org = OrgId 1, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True, detail = Just (Aeson (object ["rationale" .= ("exact match" :: Text)])), error = Nothing, createdAt = now } :: Score)
     -- o2 has no score (errored output)
-    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.05 } :: RunMetric)
+    _  <- add (RunMetric { id = RunMetricId 0, org = OrgId 1, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Just 1.0, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.05 } :: RunMetric)
     -- A per-tag breakdown row: now surfaced as a nested `breakdowns` entry on
     -- the grader's MetricDto (asserted below), not excluded.
-    _  <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Nothing, count = 1, computedAt = now, tag = Just "axis:accuracy", stderr = Nothing } :: RunMetric)
+    _  <- add (RunMetric { id = RunMetricId 0, org = OrgId 1, run = r.id, graderVersion = gv.id, mean = 1.0, passRate = Nothing, count = 1, computedAt = now, tag = Just "axis:accuracy", stderr = Nothing } :: RunMetric)
     -- A pointed (rubric) grader: a criterion-bearing score on o1 + an overall
     -- RunMetric. The detail endpoint must surface its criteria union; the list
     -- endpoint must leave criteria empty.
     pg  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "rubric", kind = "pointed", createdAt = now } :: Grader)
-    pgv <- add (GraderVersion { id = GraderVersionId 0, grader = pg.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
-    _   <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = pgv.id, value = Just 0.5, passed = Nothing
+    pgv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = pg.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    _   <- add (Score { id = ScoreId 0, org = OrgId 1, output = o1.id, graderVersion = pgv.id, value = Just 0.5, passed = Nothing
                       , detail = Just (Aeson (object
                           [ "achieved" .= (5::Double), "possible" .= (10::Double)
                           , "criteria" .= [ object ["criterion" .= ("names the capital"::Text), "points" .= (5::Double), "tags" .= (["axis:accuracy"]::[Text]), "met" .= True, "explanation" .= (""::Text)] ] ]))
                       , error = Nothing, createdAt = now } :: Score)
-    _   <- add (RunMetric { id = RunMetricId 0, run = r.id, graderVersion = pgv.id, mean = 0.5, passRate = Nothing, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.0 } :: RunMetric)
-    _ <- add (MetaEval { id = MetaEvalId 0, run = r.id, graderVersion = gv.id
+    _   <- add (RunMetric { id = RunMetricId 0, org = OrgId 1, run = r.id, graderVersion = pgv.id, mean = 0.5, passRate = Nothing, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.0 } :: RunMetric)
+    _ <- add (MetaEval { id = MetaEvalId 0, org = OrgId 1, run = r.id, graderVersion = gv.id
                        , mode = "stored", seed = 1, agreement = 0.8, kappa = 0.6
                        , kappaLow = 0.5, kappaHigh = 0.7, failPrecision = 0.7, failRecall = 0.6
                        , passF1 = 0.65, failF1 = 0.55, balancedF1 = 0.6
                        , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
                        , computedAt = addUTCTime (-3600) now } :: MetaEval)
-    _ <- add (MetaEval { id = MetaEvalId 0, run = r.id, graderVersion = gv.id
+    _ <- add (MetaEval { id = MetaEvalId 0, org = OrgId 1, run = r.id, graderVersion = gv.id
                        , mode = "stored", seed = 1, agreement = 0.9, kappa = 0.78
                        , kappaLow = 0.66, kappaHigh = 0.9, failPrecision = 0.8, failRecall = 0.75
                        , passF1 = 0.77, failF1 = 0.73, balancedF1 = 0.75
@@ -557,47 +557,47 @@ compareSpec = withEphemeralDb $ \pool -> do
   -- c2 inserted FIRST to test sort order.
   (runAId, runBId, runCId) <- withSession pool $ do
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "cmp", slug = "cmp", createdAt = now } :: Dataset)
-    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     -- Insert c2 first — heap order != key order, so sort must be exercised.
-    c2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c2", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
-    c1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    c2 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c2", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    c1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c1", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
     -- c3: between c2 and c1 in insertion order; has output only in run A.
-    c3 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c3", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    c3 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c3", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
     -- c0: no output in either run (tests example-driven alignment).
-    _  <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c0", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    _  <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c0", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "tgt-cmp", createdAt = now } :: Target)
-    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "model-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
+    tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "model-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
     -- Grader "g" (scores both runs) — must be chosen over "h".
     g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
-    gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
     -- Grader "h" (scores only run A's c1 output) — must NOT be chosen.
     h  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "h", kind = "exact", createdAt = now } :: Grader)
-    hv <- add (GraderVersion { id = GraderVersionId 0, grader = h.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+    hv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = h.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
     -- Run A
     rA  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-    oA1 <- add (Output { id = OutputId 0, run = rA.id, example = c1.id, response = Nothing, text = Just "a1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-    oA2 <- add (Output { id = OutputId 0, run = rA.id, example = c2.id, response = Nothing, text = Just "a2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-    _   <- add (Output { id = OutputId 0, run = rA.id, example = c3.id, response = Nothing, text = Just "a3", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    oA1 <- add (Output { id = OutputId 0, org = OrgId 1, run = rA.id, example = c1.id, response = Nothing, text = Just "a1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    oA2 <- add (Output { id = OutputId 0, org = OrgId 1, run = rA.id, example = c2.id, response = Nothing, text = Just "a2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    _   <- add (Output { id = OutputId 0, org = OrgId 1, run = rA.id, example = c3.id, response = Nothing, text = Just "a3", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
     -- c0 intentionally has NO output in run A.
-    _   <- add (Score { id = ScoreId 0, output = oA1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
-    _   <- add (Score { id = ScoreId 0, output = oA2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (Score { id = ScoreId 0, org = OrgId 1, output = oA1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (Score { id = ScoreId 0, org = OrgId 1, output = oA2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
     -- h scores ONLY oA1 (run A, c1); must not affect grader choice.
-    _   <- add (Score { id = ScoreId 0, output = oA1.id, graderVersion = hv.id, value = Just 0.25, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
-    _   <- add (RunMetric { id = RunMetricId 0, run = rA.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
+    _   <- add (Score { id = ScoreId 0, org = OrgId 1, output = oA1.id, graderVersion = hv.id, value = Just 0.25, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (RunMetric { id = RunMetricId 0, org = OrgId 1, run = rA.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
     -- Run B (same dataset version, reversed scores; c3 and c0 have no output)
     rB  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-    oB1 <- add (Output { id = OutputId 0, run = rB.id, example = c1.id, response = Nothing, text = Just "b1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-    oB2 <- add (Output { id = OutputId 0, run = rB.id, example = c2.id, response = Nothing, text = Just "b2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    oB1 <- add (Output { id = OutputId 0, org = OrgId 1, run = rB.id, example = c1.id, response = Nothing, text = Just "b1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    oB2 <- add (Output { id = OutputId 0, org = OrgId 1, run = rB.id, example = c2.id, response = Nothing, text = Just "b2", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
     -- c3 and c0 intentionally have NO output in run B.
-    _   <- add (Score { id = ScoreId 0, output = oB1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
-    _   <- add (Score { id = ScoreId 0, output = oB2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
-    _   <- add (RunMetric { id = RunMetricId 0, run = rB.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
+    _   <- add (Score { id = ScoreId 0, org = OrgId 1, output = oB1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False, detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (Score { id = ScoreId 0, org = OrgId 1, output = oB2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True,  detail = Nothing, error = Nothing, createdAt = now } :: Score)
+    _   <- add (RunMetric { id = RunMetricId 0, org = OrgId 1, run = rB.id, graderVersion = gv.id, mean = 0.5, passRate = Just 0.5, count = 2, computedAt = now, tag = Nothing, stderr = Nothing } :: RunMetric)
     -- Run C: different dataset version (separate dataset, one example, no scores)
     d2 <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "other", slug = "other", createdAt = now } :: Dataset)
-    v2 <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d2.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-    cx <- add (Example { id = ExampleId 0, datasetVersion = v2.id, key = "cx", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
+    v2 <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d2.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    cx <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v2.id, key = "cx", input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
     rC <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v2.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-    _  <- add (Output { id = OutputId 0, run = rC.id, example = cx.id, response = Nothing, text = Just "cx1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
+    _  <- add (Output { id = OutputId 0, org = OrgId 1, run = rC.id, example = cx.id, response = Nothing, text = Just "cx1", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
     pure (rA.id, rB.id, rC.id)
   mgr <- newManager defaultManagerSettings
   hub <- newEventHub
@@ -702,9 +702,9 @@ seedUntilData pool now body = do
   -- Create shared entities once outside the loop.
   (dvId, tvId) <- withSession pool $ do
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "sse-ds", slug = "sse-ds", createdAt = now } :: Dataset)
-    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "sse-tgt", createdAt = now } :: Target)
-    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p", params = Aeson (object []), createdAt = now } :: TargetVersion)
+    tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "p", params = Aeson (object []), createdAt = now } :: TargetVersion)
     pure (v.id, tv.id)
   accRef <- newIORef BS.empty
   go accRef dvId tvId (50 :: Int)

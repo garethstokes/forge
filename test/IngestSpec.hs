@@ -110,9 +110,10 @@ hb = maybe (error "no healthbench format") id (formatFor "healthbench")
 driverSpec :: IO ()
 driverSpec = withEphemeralDb $ \pool -> do
   _ <- withSession pool migrateAll
+  let org1 = OrgId 1
 
   -- 1. generic happy
-  r1 <- ingestFile pool (optsFor gen "test/fixtures/generic.jsonl" "ds1" False Nothing False)
+  r1 <- ingestFile pool org1 (optsFor gen "test/fixtures/generic.jsonl" "ds1" False Nothing False)
   expect "driver/1: generic happy result" (r1 == Right (IngestResult 2 0))
   exs1 <- examplesOf pool "ds1"
   expect "driver/1: two examples" (length exs1 == 2)
@@ -128,7 +129,7 @@ driverSpec = withEphemeralDb $ \pool -> do
     [] -> expect "driver/1: example a present" False
 
   -- 2. healthbench happy
-  r2 <- ingestFile pool (optsFor hb "test/fixtures/healthbench.jsonl" "hb" False Nothing False)
+  r2 <- ingestFile pool org1 (optsFor hb "test/fixtures/healthbench.jsonl" "hb" False Nothing False)
   expect "driver/2: healthbench happy result" (r2 == Right (IngestResult 1 0))
   exs2 <- examplesOf pool "hb"
   expect "driver/2: one example" (length exs2 == 1)
@@ -154,24 +155,24 @@ driverSpec = withEphemeralDb $ \pool -> do
     [] -> expect "driver/2: example present" False
 
   -- 3. refuse existing
-  r3a <- ingestFile pool (optsFor gen "test/fixtures/generic.jsonl" "ds2" False Nothing False)
+  r3a <- ingestFile pool org1 (optsFor gen "test/fixtures/generic.jsonl" "ds2" False Nothing False)
   expect "driver/3: first ingest ok" (r3a == Right (IngestResult 2 0))
-  r3b <- ingestFile pool (optsFor gen "test/fixtures/generic.jsonl" "ds2" False Nothing False)
+  r3b <- ingestFile pool org1 (optsFor gen "test/fixtures/generic.jsonl" "ds2" False Nothing False)
   expect "driver/3: re-ingest refused" (r3b == Left (AlreadyExists "ds2" 1))
   exs3 <- examplesOf pool "ds2"
   expect "driver/3: still exactly 2 (no dup)" (length exs3 == 2)
 
   -- 4. --force replaces (proves the Task-1 flush fix)
-  r4a <- ingestFile pool (optsFor gen "test/fixtures/generic.jsonl" "ds3" False Nothing False)
+  r4a <- ingestFile pool org1 (optsFor gen "test/fixtures/generic.jsonl" "ds3" False Nothing False)
   expect "driver/4: seed generic ok" (r4a == Right (IngestResult 2 0))
-  r4b <- ingestFile pool (optsFor hb "test/fixtures/healthbench.jsonl" "ds3" True Nothing False)
+  r4b <- ingestFile pool org1 (optsFor hb "test/fixtures/healthbench.jsonl" "ds3" True Nothing False)
   expect "driver/4: force replace ok (flush fix)" (r4b == Right (IngestResult 1 0))
   exs4 <- examplesOf pool "ds3"
   expect "driver/4: exactly one example after force"
     (map (.key) exs4 == ["hb-1"])
 
   -- 5. --force blocked by a Run
-  r5a <- ingestFile pool (optsFor gen "test/fixtures/generic.jsonl" "ds4" False Nothing False)
+  r5a <- ingestFile pool org1 (optsFor gen "test/fixtures/generic.jsonl" "ds4" False Nothing False)
   expect "driver/5: seed generic ok" (r5a == Right (IngestResult 2 0))
   now <- getCurrentTime
   dvId <- withSession pool $ do
@@ -185,32 +186,32 @@ driverSpec = withEphemeralDb $ \pool -> do
       [] -> liftIO (ioError (userError "scenario 5 seed missing"))
   _ <- withSession pool $ do
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m"
+    tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m"
                              , prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
     _r <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = dvId, targetVersion = tv.id
                    , status = "succeeded", startedAt = Just now, finishedAt = Just now
                    , meta = Nothing, createdAt = now } :: Run)
     pure ()
-  r5b <- ingestFile pool (optsFor gen "test/fixtures/generic.jsonl" "ds4" True Nothing False)
+  r5b <- ingestFile pool org1 (optsFor gen "test/fixtures/generic.jsonl" "ds4" True Nothing False)
   expect "driver/5: force blocked by run" (r5b == Left (HasRuns "ds4" 1))
   exs5 <- examplesOf pool "ds4"
   expect "driver/5: version kept, still 2 examples" (length exs5 == 2)
 
   -- 6. --limit
-  r6 <- ingestFile pool (optsFor gen "test/fixtures/generic.jsonl" "ds5" False (Just 1) False)
+  r6 <- ingestFile pool org1 (optsFor gen "test/fixtures/generic.jsonl" "ds5" False (Just 1) False)
   expect "driver/6: limit result" (r6 == Right (IngestResult 1 0))
   exs6 <- examplesOf pool "ds5"
   expect "driver/6: exactly 1 example, key a" (map (.key) exs6 == ["a"])
 
   -- 7. skip-bad off
-  r7 <- ingestFile pool (optsFor gen "test/fixtures/skip-bad.jsonl" "ds6" False Nothing False)
+  r7 <- ingestFile pool org1 (optsFor gen "test/fixtures/skip-bad.jsonl" "ds6" False Nothing False)
   expect "driver/7: bad line at 2"
     (case r7 of Left (BadLine n _) -> n == 2; _ -> False)
   exs7 <- examplesOf pool "ds6"
   expect "driver/7: nothing ingested" (null exs7)
 
   -- 8. skip-bad on
-  r8 <- ingestFile pool (optsFor gen "test/fixtures/skip-bad.jsonl" "ds7" False Nothing True)
+  r8 <- ingestFile pool org1 (optsFor gen "test/fixtures/skip-bad.jsonl" "ds7" False Nothing True)
   expect "driver/8: skip-bad result" (r8 == Right (IngestResult 2 1))
   exs8 <- examplesOf pool "ds7"
   expect "driver/8: exactly 2 examples, keys g1,g2"

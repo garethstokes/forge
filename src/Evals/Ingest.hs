@@ -122,8 +122,8 @@ renderIngestError = \case
 -- | Read the file, adapt rows, and write the graph in one transaction.
 -- Refuses an existing (slug, version) unless 'force'; 'force' is blocked when
 -- Runs reference the version (a clean error, not a cascade-Restrict throw).
-ingestFile :: Pool -> IngestOpts -> IO (Either IngestError IngestResult)
-ingestFile pool opts = do
+ingestFile :: Pool -> OrgId -> IngestOpts -> IO (Either IngestError IngestResult)
+ingestFile pool org opts = do
   contents <- BS.readFile opts.file
   let numbered = zip [1 :: Int ..] (BC.lines contents)
       nonBlank = [ (n, ln) | (n, ln) <- numbered, not (BC.all isSpace ln) ]
@@ -151,18 +151,18 @@ ingestFile pool opts = do
                         flush         -- the queued DELETE must hit the DB before
                                       -- writeVersion's eager INSERT, or the
                                       -- unique (dataset, version) index throws
-                        writeVersion d.id opts rows now nSkip
-              [] -> withTransaction (writeVersion d.id opts rows now nSkip)
+                        writeVersion org d.id opts rows now nSkip
+              [] -> withTransaction (writeVersion org d.id opts rows now nSkip)
           [] -> withTransaction $ do
-            d <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = opts.name
+            d <- add (Dataset { id = DatasetId 0, org = org, name = opts.name
                               , slug = opts.slug, createdAt = now } :: Dataset)
-            writeVersion d.id opts rows now nSkip
+            writeVersion org d.id opts rows now nSkip
 
-writeVersion :: DatasetId -> IngestOpts -> [IngestRow] -> UTCTime -> Int -> Db (Either IngestError IngestResult)
-writeVersion did opts rows now nSkip = do
-  v <- add (DatasetVersion { id = DatasetVersionId 0, dataset = did, version = opts.version
+writeVersion :: OrgId -> DatasetId -> IngestOpts -> [IngestRow] -> UTCTime -> Int -> Db (Either IngestError IngestResult)
+writeVersion org did opts rows now nSkip = do
+  v <- add (DatasetVersion { id = DatasetVersionId 0, org = org, dataset = did, version = opts.version
                            , note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  mapM_ (\r -> add (Example { id = ExampleId 0, datasetVersion = v.id, key = r.key
+  mapM_ (\r -> add (Example { id = ExampleId 0, org = org, datasetVersion = v.id, key = r.key
                             , input = Aeson r.input, expected = fmap Aeson r.expected
                             , meta = fmap Aeson r.meta } :: Example)) rows
   pure (Right (IngestResult { ingested = length rows, skipped = nSkip }))

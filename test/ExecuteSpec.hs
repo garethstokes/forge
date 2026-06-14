@@ -93,12 +93,12 @@ data Seeded = Seeded { runId :: RunId, exampleIds :: [ExampleId] }
 seedRun :: Pool -> UTCTime -> [Value] -> IO Seeded
 seedRun pool now inputs = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "x", slug = "x", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  exs <- mapM (\(i, inp) -> add (Example { id = ExampleId 0, datasetVersion = v.id, key = T.pack ("e" <> show (i :: Int))
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  exs <- mapM (\(i, inp) -> add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = T.pack ("e" <> show (i :: Int))
                                          , input = Aeson inp, expected = Nothing, meta = Nothing } :: Example))
               (zip [1 ..] inputs)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "SYS"
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "SYS"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "queued"
                  , startedAt = Nothing, finishedAt = Nothing, meta = Nothing, createdAt = now } :: Run)
@@ -153,7 +153,7 @@ resumeSpec pool now = do
   sd <- seedRun pool now [toJSON ("a" :: Text), toJSON ("b" :: Text), toJSON ("c" :: Text)]
   let preDone = head sd.exampleIds
   _ <- withSession pool $ add (Output
-    { id = OutputId 0, run = sd.runId, example = preDone, response = Nothing
+    { id = OutputId 0, org = OrgId 1, run = sd.runId, example = preDone, response = Nothing
     , text = Just "already", error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
   runner <- scriptedRunner ["new"]
   outcome <- executeRun pool 2 runner sd.runId

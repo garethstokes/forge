@@ -40,8 +40,8 @@ main = withEphemeralDb $ \pool -> do
 
   result <- withSession pool $ do
     d <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "demo", slug = "demo", createdAt = now } :: Dataset)
-    v <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-    _ <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1"
+    v <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    _ <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c1"
                       , input = Aeson (object ["q" .= ("2+2" :: Text)])
                       , expected = Just (Aeson (object ["a" .= (4 :: Int)])), meta = Nothing } :: Example)
     got <- get @Dataset (Key d.id)
@@ -99,23 +99,23 @@ data CascadeResult = CascadeResult
 expectCascade :: Pool -> UTCTime -> IO CascadeResult
 expectCascade pool now = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "casc", slug = "casc", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  ex <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "k1"
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  ex <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "k1"
                      , input = Aeson (object ["q" .= ("hi" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "p"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
-  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
   -- Output o1 carries a Score; o2 doesn't. ONE Run delete must remove both
   -- outputs (Run->Output Cascade) and o1's score transitively (Output->Score).
-  o1 <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "scored"
+  o1 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = ex.id, response = Nothing, text = Just "scored"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+  _  <- add (Score { id = ScoreId 0, org = OrgId 1, output = o1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
                    , detail = Nothing, error = Nothing, createdAt = now } :: Score)
-  _  <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "byrun"
+  _  <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = ex.id, response = Nothing, text = Just "byrun"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
   withTransaction $ delete r
   scores <- selectWhere [ #output ==. o1.id ]
@@ -141,9 +141,9 @@ expectRestrict pool now = do
   -- Create the dataset version and a Run referencing it.
   vid <- withSession pool $ do
     d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "restr", slug = "restr", createdAt = now } :: Dataset)
-    v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+    v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t2", createdAt = now } :: Target)
-    tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+    tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "p"
                              , params = Aeson (object []), createdAt = now } :: TargetVersion)
     _  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                    , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
@@ -177,25 +177,25 @@ data AggregateResult = AggregateResult
 expectAggregate :: Pool -> UTCTime -> IO AggregateResult
 expectAggregate pool now = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "agg", slug = "agg", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1"
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c1"
                      , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
-  e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c2"
+  e2 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c2"
                      , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "p"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
-  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  o1 <- add (Output { id = OutputId 0, run = r.id, example = e1.id, response = Nothing, text = Just "a"
+  o1 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e1.id, response = Nothing, text = Just "a"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  o2 <- add (Output { id = OutputId 0, run = r.id, example = e2.id, response = Nothing, text = Just "b"
+  o2 <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e2.id, response = Nothing, text = Just "b"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _  <- add (Score { id = ScoreId 0, output = o1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
+  _  <- add (Score { id = ScoreId 0, org = OrgId 1, output = o1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
                    , detail = Nothing, error = Nothing, createdAt = now } :: Score)
-  _  <- add (Score { id = ScoreId 0, output = o2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+  _  <- add (Score { id = ScoreId 0, org = OrgId 1, output = o2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
                    , detail = Nothing, error = Nothing, createdAt = now } :: Score)
   rows <- runQuery $ do
     o <- from @Output
@@ -229,37 +229,37 @@ data CompareResult = CompareResult
 expectCompareRuns :: Pool -> UTCTime -> IO CompareResult
 expectCompareRuns pool now = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "cmp", slug = "cmp", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c1"
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c1"
                      , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
-  e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "c2"
+  e2 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "c2"
                      , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "p"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "g", kind = "exact", createdAt = now } :: Grader)
-  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
   -- Run A: c1 -> 1.0, c2 -> 0.0
   rA <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  aO1 <- add (Output { id = OutputId 0, run = rA.id, example = e1.id, response = Nothing, text = Nothing
+  aO1 <- add (Output { id = OutputId 0, org = OrgId 1, run = rA.id, example = e1.id, response = Nothing, text = Nothing
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  aO2 <- add (Output { id = OutputId 0, run = rA.id, example = e2.id, response = Nothing, text = Nothing
+  aO2 <- add (Output { id = OutputId 0, org = OrgId 1, run = rA.id, example = e2.id, response = Nothing, text = Nothing
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _ <- add (Score { id = ScoreId 0, output = aO1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+  _ <- add (Score { id = ScoreId 0, org = OrgId 1, output = aO1.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
                   , detail = Nothing, error = Nothing, createdAt = now } :: Score)
-  _ <- add (Score { id = ScoreId 0, output = aO2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
+  _ <- add (Score { id = ScoreId 0, org = OrgId 1, output = aO2.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
                   , detail = Nothing, error = Nothing, createdAt = now } :: Score)
   -- Run B: c1 -> 0.0, c2 -> 1.0
   rB <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  bO1 <- add (Output { id = OutputId 0, run = rB.id, example = e1.id, response = Nothing, text = Nothing
+  bO1 <- add (Output { id = OutputId 0, org = OrgId 1, run = rB.id, example = e1.id, response = Nothing, text = Nothing
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  bO2 <- add (Output { id = OutputId 0, run = rB.id, example = e2.id, response = Nothing, text = Nothing
+  bO2 <- add (Output { id = OutputId 0, org = OrgId 1, run = rB.id, example = e2.id, response = Nothing, text = Nothing
                      , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _ <- add (Score { id = ScoreId 0, output = bO1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
+  _ <- add (Score { id = ScoreId 0, org = OrgId 1, output = bO1.id, graderVersion = gv.id, value = Just 0.0, passed = Just False
                   , detail = Nothing, error = Nothing, createdAt = now } :: Score)
-  _ <- add (Score { id = ScoreId 0, output = bO2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
+  _ <- add (Score { id = ScoreId 0, org = OrgId 1, output = bO2.id, graderVersion = gv.id, value = Just 1.0, passed = Just True
                   , detail = Nothing, error = Nothing, createdAt = now } :: Score)
   let scoresFor rid = do
         rows <- runQuery $ do
@@ -288,17 +288,17 @@ data CriterionLabelResult = CriterionLabelResult
 expectCriterionLabel :: Pool -> UTCTime -> IO CriterionLabelResult
 expectCriterionLabel pool now = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "lbl", slug = "lbl", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  ex <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "k1"
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  ex <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "k1"
                      , input = Aeson (object []), expected = Nothing, meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "p"
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "p"
                            , params = Aeson (object []), createdAt = now } :: TargetVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "done"
                  , startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  o  <- add (Output { id = OutputId 0, run = r.id, example = ex.id, response = Nothing, text = Just "candidate"
+  o  <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = ex.id, response = Nothing, text = Just "candidate"
                     , error = Nothing, latencyMs = Nothing, tokens = Nothing } :: Output)
-  _  <- add (CriterionLabel { id = CriterionLabelId 0, output = o.id
+  _  <- add (CriterionLabel { id = CriterionLabelId 0, org = OrgId 1, output = o.id
                             , criterion = "is accurate", human = True
                             , source = Just "physician", createdAt = now } :: CriterionLabel)
   got <- selectWhere [ #output ==. o.id ]

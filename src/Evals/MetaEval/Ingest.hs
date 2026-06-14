@@ -121,8 +121,8 @@ healthbenchRow i = first T.pack . AT.parseEither
        })
 
 -- | Read the file, adapt + validate rows, seed the graph in one transaction.
-metaLoad :: Pool -> MetaLoadOpts -> IO (Either MetaLoadError MetaLoadResult)
-metaLoad pool opts = do
+metaLoad :: Pool -> OrgId -> MetaLoadOpts -> IO (Either MetaLoadError MetaLoadResult)
+metaLoad pool org opts = do
   contents <- BS.readFile opts.file
   let numbered = zip [1 :: Int ..] (BC.lines contents)
       nonBlank = [ (n, ln) | (n, ln) <- numbered, not (BC.all isSpace ln) ]
@@ -146,33 +146,33 @@ metaLoad pool opts = do
                       flush               -- runs + subtree gone before deleting the version
                       delete v            -- no runs reference it now (Restrict ok); cascades Examples
                       flush               -- version gone before seedGraph's eager inserts
-                      Right <$> seedGraph d.id opts rows now nSkip
-                [] -> withTransaction (Right <$> seedGraph d.id opts rows now nSkip)
+                      Right <$> seedGraph org d.id opts rows now nSkip
+                [] -> withTransaction (Right <$> seedGraph org d.id opts rows now nSkip)
             [] -> withTransaction $ do
-              d <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = opts.name
+              d <- add (Dataset { id = DatasetId 0, org = org, name = opts.name
                                 , slug = opts.slug, createdAt = now } :: Dataset)
-              Right <$> seedGraph d.id opts rows now nSkip
+              Right <$> seedGraph org d.id opts rows now nSkip
 
 -- | Seed Version + synthetic Target/TargetVersion/Run + per-row Example/Output/Labels.
-seedGraph :: DatasetId -> MetaLoadOpts -> [MetaRow] -> UTCTime -> Int -> Db MetaLoadResult
-seedGraph did opts rows now nSkip = do
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = did, version = opts.version
+seedGraph :: OrgId -> DatasetId -> MetaLoadOpts -> [MetaRow] -> UTCTime -> Int -> Db MetaLoadResult
+seedGraph org did opts rows now nSkip = do
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = org, dataset = did, version = opts.version
                             , note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "metaeval", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "n/a"
+  t  <- add (Target { id = TargetId 0, org = org, name = "metaeval", createdAt = now } :: Target)
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = org, target = t.id, version = 1, model = "n/a"
                            , prompt = "", params = Aeson (object []), createdAt = now } :: TargetVersion)
-  r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id
+  r  <- add (Run { id = RunId 0, org = org, datasetVersion = v.id, targetVersion = tv.id
                  , status = "succeeded", startedAt = Just now, finishedAt = Just now
                  , meta = Nothing, createdAt = now } :: Run)
   nLabels <- foldM (\acc row -> do
-    e <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = row.key
+    e <- add (Example { id = ExampleId 0, org = org, datasetVersion = v.id, key = row.key
                       , input = Aeson row.input, expected = Just (Aeson row.rubric)
                       , meta = Nothing } :: Example)
-    o <- add (Output { id = OutputId 0, run = r.id, example = e.id, response = Nothing
+    o <- add (Output { id = OutputId 0, org = org, run = r.id, example = e.id, response = Nothing
                      , text = Just row.completion, error = Nothing
                      , latencyMs = Nothing, tokens = Nothing } :: Output)
     forM_ row.labels $ \(c, h) ->
-      add (CriterionLabel { id = CriterionLabelId 0, output = o.id, criterion = c
+      add (CriterionLabel { id = CriterionLabelId 0, org = org, output = o.id, criterion = c
                           , human = h, source = Nothing, createdAt = now } :: CriterionLabel)
     pure (acc + length row.labels)) 0 rows
   pure MetaLoadResult { runId = r.id, examples = length rows, labels = nLabels, skipped = nSkip }

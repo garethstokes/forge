@@ -41,28 +41,28 @@ main = withEphemeralDb $ \pool -> do
 seedRun :: Pool -> UTCTime -> IO (RunId, GraderVersionId, OutputId)
 seedRun pool now = withSession pool $ do
   d  <- add (Dataset { id = DatasetId 0, org = OrgId 1, name = "d", slug = "seed-x", createdAt = now } :: Dataset)
-  v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
-  e  <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "k1"
+  v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
+  e  <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "k1"
                      , input = Aeson (object ["messages" .= ([] :: [Value])])
                      , expected = Just (Aeson (toJSON
                          [ object ["criterion" .= ("c-good"::Text), "points" .= (5::Double), "tags" .= ([]::[Text])]
                          , object ["criterion" .= ("c-bad"::Text),  "points" .= (5::Double), "tags" .= ([]::[Text])] ]))
                      , meta = Nothing } :: Example)
   t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "t", createdAt = now } :: Target)
-  tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "m", prompt = "", params = Aeson (object []), createdAt = now } :: TargetVersion)
+  tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "m", prompt = "", params = Aeson (object []), createdAt = now } :: TargetVersion)
   r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
-  o  <- add (Output { id = OutputId 0, run = r.id, example = e.id, response = Nothing, text = Just "ans", error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
+  o  <- add (Output { id = OutputId 0, org = OrgId 1, run = r.id, example = e.id, response = Nothing, text = Just "ans", error = Nothing, latencyMs = Just 1, tokens = Nothing } :: Output)
   g  <- add (Grader { id = GraderId 0, org = OrgId 1, name = "pg", kind = "pointed", createdAt = now } :: Grader)
-  gv <- add (GraderVersion { id = GraderVersionId 0, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
-  _  <- add (CriterionLabel { id = CriterionLabelId 0, output = o.id, criterion = "c-good", human = True,  source = Nothing, createdAt = now } :: CriterionLabel)
-  _  <- add (CriterionLabel { id = CriterionLabelId 0, output = o.id, criterion = "c-bad",  human = False, source = Nothing, createdAt = now } :: CriterionLabel)
+  gv <- add (GraderVersion { id = GraderVersionId 0, org = OrgId 1, grader = g.id, version = 1, config = Aeson (object []), createdAt = now } :: GraderVersion)
+  _  <- add (CriterionLabel { id = CriterionLabelId 0, org = OrgId 1, output = o.id, criterion = "c-good", human = True,  source = Nothing, createdAt = now } :: CriterionLabel)
+  _  <- add (CriterionLabel { id = CriterionLabelId 0, org = OrgId 1, output = o.id, criterion = "c-bad",  human = False, source = Nothing, createdAt = now } :: CriterionLabel)
   pure (r.id, gv.id, o.id)
 
 storedSpec :: Pool -> UTCTime -> IO ()
 storedSpec pool now = do
   (rid, gvid, oid) <- seedRun pool now
   _ <- withSession pool $ add (Score
-        { id = ScoreId 0, output = oid, graderVersion = gvid
+        { id = ScoreId 0, org = OrgId 1, output = oid, graderVersion = gvid
         , value = Just 0.5, passed = Nothing
         , detail = Just (Aeson (object
             [ "criteria" .= [ object ["criterion" .= ("c-good"::Text), "met" .= True]
@@ -92,7 +92,7 @@ persistSpec :: Pool -> UTCTime -> IO ()
 persistSpec pool now = do
   (rid, gvid, oid) <- seedRun pool now
   _ <- withSession pool $ add (Score
-        { id = ScoreId 0, output = oid, graderVersion = gvid
+        { id = ScoreId 0, org = OrgId 1, output = oid, graderVersion = gvid
         , value = Just 0.5, passed = Nothing
         , detail = Just (Aeson (object
             [ "criteria" .= [ object ["criterion" .= ("c-good"::Text), "met" .= True]
@@ -102,7 +102,7 @@ persistSpec pool now = do
   case rep of
     Left e  -> expect ("persist metaReport: " <> T.unpack e) False
     Right r -> do
-      _ <- saveMetaEval pool rid gvid "stored" 0 r
+      _ <- saveMetaEval pool (OrgId 1) rid gvid "stored" 0 r
       rows <- withSession pool (selectWhere [ #run ==. rid ]) :: IO [MetaEval]
       expect "persist: one row" (length rows == 1)
       case rows of
@@ -114,7 +114,7 @@ persistSpec pool now = do
           expect "balancedF1 = mean of class F1s" (abs (m.balancedF1 - (m.passF1 + m.failF1) / 2) < 1e-9)
           expect "F1s in range" (m.passF1 >= 0 && m.passF1 <= 1 && m.failF1 >= 0 && m.failF1 <= 1)
         _ -> expect "persist: exactly one" False
-      _ <- saveMetaEval pool rid gvid "stored" 0 r
+      _ <- saveMetaEval pool (OrgId 1) rid gvid "stored" 0 r
       rows2 <- withSession pool (selectWhere [ #run ==. rid ]) :: IO [MetaEval]
       expect "persist: append -> two rows" (length rows2 == 2)
 
@@ -125,10 +125,11 @@ opts skip = MetaLoadOpts
 
 ingestSpec :: Pool -> IO ()
 ingestSpec pool = do
-  bad <- metaLoad pool (opts False)
+  let org1 = OrgId 1
+  bad <- metaLoad pool org1 (opts False)
   expect "metaLoad refuses unknown-criterion row"
     (case bad of Left (NoSuchCriterion 3 _) -> True; _ -> False)
-  good <- metaLoad pool (opts True)
+  good <- metaLoad pool org1 (opts True)
   case good of
     Left e -> expect ("metaLoad --skip-bad should succeed: " <> show e) False
     Right r -> do
@@ -143,10 +144,10 @@ ingestSpec pool = do
         (any (\o -> o.text == Just "4") outs)
       -- re-loading the same slug+version is refused; --force is still refused
       -- because metaLoad always seeds a synthetic Run (DatasetVersion->Run is Restrict).
-      again <- metaLoad pool (opts True)
+      again <- metaLoad pool org1 (opts True)
       expect "metaLoad refuses an existing version"
         (case again of Left (AlreadyExists "meta" 1) -> True; _ -> False)
-      forced <- metaLoad pool (MetaLoadOpts
+      forced <- metaLoad pool org1 (MetaLoadOpts
         { file = "test/fixtures/metaeval.jsonl", name = "Meta", slug = "meta"
         , version = 1, format = "generic", skipBad = True, force = True })
       case forced of

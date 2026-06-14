@@ -2,8 +2,10 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | The eval CLI: @manifest-evals migrate@ reconciles the schema;
 -- @manifest-evals run \<runId\> [--concurrency N]@ executes a queued run with
@@ -24,7 +26,7 @@ import Text.Read (readMaybe)
 import Control.Monad.IO.Class (liftIO)
 import Data.Time (getCurrentTime)
 
-import Manifest (Cond, add, selectWhere, withSession)
+import Manifest (Cond, Db, add, selectWhere, withSession, (==.))
 import Manifest.Postgres (Pool, closePool, newPool)
 
 import Evals.Execute (RunOutcome (..), executeRun)
@@ -37,6 +39,7 @@ import Evals.MetaEval (metaReport, MetaMode (..), saveMetaEval)
 import Evals.MetaEval.Ingest (MetaLoadOpts (..), MetaLoadResult (..), metaLoad, renderMetaLoadError)
 import Evals.Migrate (migrateAll)
 import Evals.Schema
+import Evals.Tenant (withTenant)
 import qualified Crucible.Eval.Calibrate as Cal
 
 main :: IO ()
@@ -45,10 +48,14 @@ main = getArgs >>= \case
     _ <- withSession pool migrateAll
     putStrLn "schema migrated"
   ("run" : ridStr : rest) -> do
-    rid <- maybe (die ("not a run id: " <> ridStr)) pure (readMaybe ridStr)
-    key <- requireEnv "ANTHROPIC_API_KEY"
-    conc <- concurrencyFrom rest
+    let (nonFlagArgs, flags) = break (== "--org") rest
+    slug <- reqFlag "--org" flags
+    rid  <- maybe (die ("not a run id: " <> ridStr)) pure (readMaybe ridStr)
+    key  <- requireEnv "ANTHROPIC_API_KEY"
+    conc <- concurrencyFrom nonFlagArgs
     withEnvPool $ \pool -> do
+      org <- resolveOrg pool slug
+      withSession pool $ withTenant org $ pure ()  -- set tenant context
       o <- executeRun pool conc (liveAnthropicRunner (T.pack key)) (RunId rid)
       putStrLn $ "run " <> ridStr <> ": "
         <> show o.total <> " examples, "
@@ -56,15 +63,18 @@ main = getArgs >>= \case
         <> show o.errored <> " errored, "
         <> show o.skipped <> " skipped (resume)"
   ("score" : ridStr : rest) -> do
-    let (gvStrs, flags) = break (== "--concurrency") rest
+    let (nonFlagArgs, afterOrg) = break (== "--org") rest
+        (gvStrs, concFlags)     = break (== "--concurrency") nonFlagArgs
     if null gvStrs
       then die usage
       else do
+        slug <- reqFlag "--org" afterOrg
         rid  <- maybe (die ("not a run id: " <> ridStr)) pure (readMaybe ridStr)
         gvs  <- mapM (\s -> maybe (die ("not a grader version id: " <> s)) (pure . GraderVersionId) (readMaybe s)) gvStrs
         ks   <- liveKeys
-        conc <- concurrencyFrom flags
+        conc <- concurrencyFrom concFlags
         withEnvPool $ \pool -> do
+          _org <- resolveOrg pool slug
           o <- scoreRun pool conc (liveGradeRunner ks) (liveCriterionJudge ks) (RunId rid) gvs
           putStrLn $ "score " <> ridStr <> ": "
             <> show o.total <> " pairs, "
@@ -72,8 +82,9 @@ main = getArgs >>= \case
             <> show o.errored <> " errored, "
             <> show o.skipped <> " skipped"
   ("ingest" : fileArg : flags) -> do
+    slug <- reqFlag "--org" flags
     name <- reqFlag "--name" flags
-    slug <- reqFlag "--slug" flags
+    dslug <- reqFlag "--slug" flags
     ver  <- maybe (pure 1) parseIntFlag (lookupFlag "--version" flags)
     let fmtN = maybe "generic" id (lookupFlag "--format" flags)
     fmt  <- maybe (die ("unknown --format: " <> fmtN)) pure (formatFor (T.pack fmtN))
@@ -82,28 +93,34 @@ main = getArgs >>= \case
       Just n | n < 1 -> die "--limit must be at least 1"
       _              -> pure ()
     let opts = IngestOpts
-          { file = fileArg, name = T.pack name, slug = T.pack slug, version = ver
+          { file = fileArg, name = T.pack name, slug = T.pack dslug, version = ver
           , format = fmt, limit = lim
           , skipBad = "--skip-bad" `elem` flags, force = "--force" `elem` flags }
-    withEnvPool $ \pool -> ingestFile pool opts >>= \case
-      Left e  -> die (T.unpack (renderIngestError e))
-      Right r -> putStrLn $ "ingested " <> slug <> " v" <> show ver <> ": "
-                   <> show r.ingested <> " examples (" <> show r.skipped <> " skipped)"
+    withEnvPool $ \pool -> do
+      org <- resolveOrg pool slug
+      ingestFile pool org opts >>= \case
+        Left e  -> die (T.unpack (renderIngestError e))
+        Right r -> putStrLn $ "ingested " <> dslug <> " v" <> show ver <> ": "
+                     <> show r.ingested <> " examples (" <> show r.skipped <> " skipped)"
   ("metaeval" : "load" : fileArg : flags) -> do
+    slug <- reqFlag "--org" flags
     name <- reqFlag "--name" flags
-    slug <- reqFlag "--slug" flags
+    dslug <- reqFlag "--slug" flags
     ver  <- maybe (pure 1) parseIntFlag (lookupFlag "--version" flags)
     let opts = MetaLoadOpts
-          { file = fileArg, name = T.pack name, slug = T.pack slug, version = ver
+          { file = fileArg, name = T.pack name, slug = T.pack dslug, version = ver
           , format = maybe "generic" T.pack (lookupFlag "--format" flags)
           , skipBad = "--skip-bad" `elem` flags, force = "--force" `elem` flags }
-    withEnvPool $ \pool -> metaLoad pool opts >>= \case
-      Left e  -> die (T.unpack (renderMetaLoadError e))
-      Right r -> let RunId rid = r.runId in
-        putStrLn $ "loaded " <> slug <> " v" <> show ver <> ": run " <> show rid
-          <> ", " <> show r.examples <> " examples, " <> show r.labels <> " labels ("
-          <> show r.skipped <> " skipped)"
+    withEnvPool $ \pool -> do
+      org <- resolveOrg pool slug
+      metaLoad pool org opts >>= \case
+        Left e  -> die (T.unpack (renderMetaLoadError e))
+        Right r -> let RunId rid = r.runId in
+          putStrLn $ "loaded " <> dslug <> " v" <> show ver <> ": run " <> show rid
+            <> ", " <> show r.examples <> " examples, " <> show r.labels <> " labels ("
+            <> show r.skipped <> " skipped)"
   ("metaeval" : "report" : ridStr : gvStr : flags) -> do
+    slug <- reqFlag "--org" flags
     rid  <- maybe (die ("not a run id: " <> ridStr)) (pure . RunId) (readMaybe ridStr)
     gvid <- maybe (die ("not a grader version id: " <> gvStr)) (pure . GraderVersionId) (readMaybe gvStr)
     seed <- maybe (pure 0) parseIntFlag (lookupFlag "--seed" flags)
@@ -112,11 +129,13 @@ main = getArgs >>= \case
       "stored" -> pure Stored
       "live"   -> Live . liveCriterionJudge <$> liveKeys
       other    -> die ("unknown --mode: " <> other)
-    withEnvPool $ \pool -> metaReport pool seed mode rid gvid >>= \case
-      Left e  -> die (T.unpack e)
-      Right r -> do
-        _ <- saveMetaEval pool rid gvid (T.pack modeName) seed r
-        putStrLn (T.unpack (Cal.renderCalibration r))
+    withEnvPool $ \pool -> do
+      org <- resolveOrg pool slug
+      metaReport pool seed mode rid gvid >>= \case
+        Left e  -> die (T.unpack e)
+        Right r -> do
+          _ <- saveMetaEval pool org rid gvid (T.pack modeName) seed r
+          putStrLn (T.unpack (Cal.renderCalibration r))
   ("org" : "create" : flags) -> do
     slug <- reqFlag "--slug" flags
     name <- reqFlag "--name" flags
@@ -132,12 +151,20 @@ main = getArgs >>= \case
   _ -> die usage
 
 usage :: String
-usage = "usage: manifest-evals migrate | run <runId> [--concurrency N] | "
-     <> "score <runId> <graderVersionId>... [--concurrency N] | "
-     <> "ingest <file.jsonl> --name N --slug S [--version N] [--format generic|healthbench] [--limit N] [--skip-bad] [--force]"
-     <> " | metaeval load <file.jsonl> --name N --slug S [--version N] [--format generic|healthbench] [--skip-bad] [--force]"
-     <> " | metaeval report <runId> <graderVersionId> [--mode live|stored] [--seed N]"
+usage = "usage: manifest-evals migrate | run <runId> --org <slug> [--concurrency N] | "
+     <> "score <runId> <graderVersionId>... --org <slug> [--concurrency N] | "
+     <> "ingest <file.jsonl> --org <slug> --name N --slug S [--version N] [--format generic|healthbench] [--limit N] [--skip-bad] [--force]"
+     <> " | metaeval load <file.jsonl> --org <slug> --name N --slug S [--version N] [--format generic|healthbench] [--skip-bad] [--force]"
+     <> " | metaeval report <runId> <graderVersionId> --org <slug> [--mode live|stored] [--seed N]"
      <> " | org create --slug S --name N | org list"
+
+-- | Resolve an org slug to its OrgId. Dies if no such org exists.
+resolveOrg :: Pool -> String -> IO OrgId
+resolveOrg pool slug = withSession pool $ do
+  os <- selectWhere ([ #slug ==. T.pack slug ] :: [Cond Org])
+  case os of
+    (o : _) -> pure o.id
+    []      -> liftIO (die ("no such org: " <> slug))
 
 requireEnv :: String -> IO String
 requireEnv name =

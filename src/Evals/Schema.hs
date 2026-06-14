@@ -55,6 +55,7 @@ type Dataset = DatasetT Identity
 
 data DatasetVersionT f = DatasetVersion
   { id          :: Field f (Pk DatasetVersionId)
+  , org         :: Field f OrgId
   , dataset     :: Field f DatasetId
   , version     :: Field f Int
   , note        :: Field f (Maybe Text)
@@ -65,6 +66,7 @@ type DatasetVersion = DatasetVersionT Identity
 
 data ExampleT f = Example
   { id             :: Field f (Pk ExampleId)
+  , org            :: Field f OrgId
   , datasetVersion :: Field f DatasetVersionId
   , key            :: Field f Text
   , input          :: Field f (Aeson Value)
@@ -85,6 +87,7 @@ type Target = TargetT Identity
 
 data TargetVersionT f = TargetVersion
   { id        :: Field f (Pk TargetVersionId)
+  , org       :: Field f OrgId
   , target    :: Field f TargetId
   , version   :: Field f Int
   , model     :: Field f Text
@@ -107,6 +110,7 @@ type Grader = GraderT Identity
 
 data GraderVersionT f = GraderVersion
   { id        :: Field f (Pk GraderVersionId)
+  , org       :: Field f OrgId
   , grader    :: Field f GraderId
   , version   :: Field f Int
   , config    :: Field f (Aeson Value)
@@ -131,6 +135,7 @@ type Run = RunT Identity
 
 data OutputT f = Output
   { id        :: Field f (Pk OutputId)
+  , org       :: Field f OrgId
   , run       :: Field f RunId
   , example   :: Field f ExampleId
   , response  :: Field f (Maybe (Aeson Value))
@@ -143,6 +148,7 @@ type Output = OutputT Identity
 
 data ScoreT f = Score
   { id            :: Field f (Pk ScoreId)
+  , org           :: Field f OrgId
   , output        :: Field f OutputId
   , graderVersion :: Field f GraderVersionId
   , value         :: Field f (Maybe Double)  -- NULL = errored, excluded from aggregates
@@ -155,6 +161,7 @@ type Score = ScoreT Identity
 
 data RunMetricT f = RunMetric
   { id            :: Field f (Pk RunMetricId)
+  , org           :: Field f OrgId
   , run           :: Field f RunId
   , graderVersion :: Field f GraderVersionId
   , mean          :: Field f Double
@@ -168,6 +175,7 @@ type RunMetric = RunMetricT Identity
 
 data CriterionLabelT f = CriterionLabel
   { id        :: Field f (Pk CriterionLabelId)
+  , org       :: Field f OrgId
   , output    :: Field f OutputId       -- the candidate response this labels
   , criterion :: Field f Text           -- rubric criterion text (matches Score.detail's criterion)
   , human     :: Field f Bool           -- the gold verdict (met / not-met)
@@ -178,6 +186,7 @@ type CriterionLabel = CriterionLabelT Identity
 
 data MetaEvalT f = MetaEval
   { id            :: Field f (Pk MetaEvalId)
+  , org           :: Field f OrgId
   , run           :: Field f RunId
   , graderVersion :: Field f GraderVersionId
   , mode          :: Field f Text          -- "live" | "stored"
@@ -202,6 +211,10 @@ type MetaEval = MetaEvalT Identity
 instance Entity Dataset where
   tableMeta    = genericTableMeta @DatasetT "datasets"
   cascadeRules = [ cascade (Proxy @DatasetVersion) (Proxy @"dataset") Cascade ]
+  rlsPolicies  =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance HasRelation Dataset "versions" where
   type Related     Dataset "versions" = [DatasetVersion]
@@ -213,6 +226,10 @@ instance Entity DatasetVersion where
   cascadeRules = [ cascade (Proxy @Example) (Proxy @"datasetVersion") Cascade
                  , cascade (Proxy @Run)     (Proxy @"datasetVersion") Restrict ]
   indexes      = [ unique [#dataset, #version] ]
+  rlsPolicies  =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance HasRelation DatasetVersion "examples" where
   type Related     DatasetVersion "examples" = [Example]
@@ -220,14 +237,22 @@ instance HasRelation DatasetVersion "examples" where
   relSpec = hasMany (Proxy @"datasetVersion")
 
 instance Entity Example where
-  tableMeta = genericTableMeta @ExampleT "examples"
-  indexes   = [ gin #input, btree #datasetVersion ]
+  tableMeta   = genericTableMeta @ExampleT "examples"
+  indexes     = [ gin #input, btree #datasetVersion ]
+  rlsPolicies =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 -- Targets: instances ----------------------------------------------------------------
 
 instance Entity Target where
   tableMeta    = genericTableMeta @TargetT "targets"
   cascadeRules = [ cascade (Proxy @TargetVersion) (Proxy @"target") Cascade ]
+  rlsPolicies  =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance HasRelation Target "versions" where
   type Related     Target "versions" = [TargetVersion]
@@ -238,12 +263,20 @@ instance Entity TargetVersion where
   tableMeta    = genericTableMeta @TargetVersionT "target_versions"
   cascadeRules = [ cascade (Proxy @Run) (Proxy @"targetVersion") Restrict ]
   indexes      = [ unique [#target, #version] ]
+  rlsPolicies  =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 -- Graders: instances ----------------------------------------------------------------
 
 instance Entity Grader where
   tableMeta    = genericTableMeta @GraderT "graders"
   cascadeRules = [ cascade (Proxy @GraderVersion) (Proxy @"grader") Cascade ]
+  rlsPolicies  =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance HasRelation Grader "versions" where
   type Related     Grader "versions" = [GraderVersion]
@@ -254,6 +287,10 @@ instance Entity GraderVersion where
   tableMeta    = genericTableMeta @GraderVersionT "grader_versions"
   cascadeRules = [ cascade (Proxy @Score) (Proxy @"graderVersion") Restrict ]
   indexes      = [ unique [#grader, #version] ]
+  rlsPolicies  =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 -- Run / Output / Score: instances -----------------------------------------------------
 
@@ -263,6 +300,10 @@ instance Entity Run where
                   , cascade (Proxy @RunMetric) (Proxy @"run") Cascade ]
   indexes       = [ gin #meta, btree #datasetVersion, btree #targetVersion ]
   notifyChanges = True
+  rlsPolicies   =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance HasRelation Run "outputs" where
   type Related     Run "outputs" = [Output]
@@ -285,6 +326,10 @@ instance Entity Output where
                   , cascade (Proxy @CriterionLabel) (Proxy @"output") Cascade ]
   indexes       = [ gin #response, btree #run ]
   notifyChanges = True
+  rlsPolicies   =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance HasRelation Output "scores" where
   type Related     Output "scores" = [Score]
@@ -305,6 +350,10 @@ instance Entity Score where
   tableMeta     = genericTableMeta @ScoreT "scores"
   indexes       = [ unique [#output, #graderVersion] ]  -- also serves output lookups (leading column)
   notifyChanges = True
+  rlsPolicies   =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance HasRelation Score "grader" where
   type Related     Score "grader" = GraderVersion
@@ -314,11 +363,23 @@ instance HasRelation Score "grader" where
 instance Entity RunMetric where
   tableMeta     = genericTableMeta @RunMetricT "run_metrics"
   notifyChanges = True
+  rlsPolicies   =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance Entity CriterionLabel where
-  tableMeta = genericTableMeta @CriterionLabelT "criterion_labels"
-  indexes   = [ unique [#output, #criterion] ]  -- leading column also serves output lookups
+  tableMeta   = genericTableMeta @CriterionLabelT "criterion_labels"
+  indexes     = [ unique [#output, #criterion] ]  -- leading column also serves output lookups
+  rlsPolicies =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
 
 instance Entity MetaEval where
-  tableMeta = genericTableMeta @MetaEvalT "meta_evals"
-  indexes   = [ btree #run ]
+  tableMeta   = genericTableMeta @MetaEvalT "meta_evals"
+  indexes     = [ btree #run ]
+  rlsPolicies =
+    [ policy "org_isolation"
+        `using`     (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0")
+        `withCheck` (\s -> castText (s ^. #org) .== currentSettingOr "app.org" "0") ]
