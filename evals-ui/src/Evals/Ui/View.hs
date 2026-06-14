@@ -24,6 +24,8 @@ import Miso.Event.Types (Options (..))
 import Miso.Html
 import qualified Miso.Html.Property as P
 import Miso.String (MisoString, ms)
+import qualified Miso.Svg.Element as S
+import qualified Miso.Svg.Property as SP
 
 import Evals.Api
 import Evals.Ui.Model
@@ -154,6 +156,7 @@ detailView m _ =
       [ backLink
       , runHeader (_expandedM m) d.run
       , outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
+      , calibrationSection d.calibration
       ]
 
 runHeader :: [MisoString] -> RunSummaryDto -> View Model Action
@@ -457,6 +460,81 @@ breakdownChart mc =
       , span_ [ P.class_ "val" ] [ text (fmtD b.mean) ]
       , span_ [ P.class_ "ci" ]  [ text (ciCol b.stderr) ]
       , span_ [ P.class_ "n" ]   [ text (msShow b.count) ] ]
+
+-- | One grader version's calibration: headline κ bar + verdict, sparkline,
+-- and the secondary precision/recall/agreement line. Reused by the run-detail
+-- section and (later) the cross-run view.
+calibCard :: CalibrationSeriesDto -> View Model Action
+calibCard s =
+  div_ [ P.class_ "calib-card" ]
+    [ div_ [ P.class_ "calib-head" ]
+        [ span_ [ P.class_ "gname" ] [ text (ms s.graderName <> " v" <> msShow s.graderVersion) ]
+        , span_ [ P.class_ ("kind " <> ms s.graderKind) ] [ text (ms s.graderKind) ]
+        , span_ [ P.class_ "mode" ] [ text (ms s.mode) ]
+        ]
+    , kappaBar s.latest
+    , calibSpark s.trend
+    , div_ [ P.class_ "calib-sub" ]
+        [ text ("fail precision " <> fmtD s.latest.failPrecision
+                <> " \183 fail recall " <> fmtD s.latest.failRecall
+                <> " \183 agreement " <> pct s.latest.agreement
+                <> " \183 n=" <> msShow s.latest.measured
+                <> (if s.latest.judgeErrors > 0
+                      then " \183 " <> msShow s.latest.judgeErrors <> " judge errors" else ""))
+        ]
+    , div_ [ P.class_ "calib-band" ]
+        [ text ("\954 " <> fmtD s.latest.kappa <> " \8212 \8220" <> ms s.latest.band
+                <> "\8221 on the Landis\8211Koch scale") ]
+    ]
+
+-- | κ value + 95% CI on a 0–1 track with a trust-threshold tick at 0.6 and a
+-- verdict driven by the CI lower bound.
+kappaBar :: MetaEvalDto -> View Model Action
+kappaBar me =
+  div_ [ P.class_ "calib-bar" ]
+    [ div_ [ P.class_ "calib-track" ]
+        [ span_ [ P.class_ "calib-ci", styleInline_ (ciStyle me.kappaLow me.kappaHigh) ] []
+        , span_ [ P.class_ "calib-mark", styleInline_ ("left:" <> pct me.kappa) ] []
+        , span_ [ P.class_ "calib-threshold", styleInline_ ("left:" <> pct 0.6) ] []
+        ]
+    , span_ [ P.class_ ("calib-verdict " <> if me.trusted then "trusted" else "untrusted") ]
+        [ text ("\954 " <> fmtD me.kappa
+                <> " (95% CI " <> fmtD me.kappaLow <> "\8211" <> fmtD me.kappaHigh <> ") \8212 "
+                <> (if me.trusted then "trustworthy" else "below trust threshold")) ]
+    ]
+
+-- | Inline-SVG sparkline of κ over runs; current/latest point highlighted, a
+-- faint line at the 0.6 threshold. Empty trend → nothing.
+calibSpark :: [TrendPointDto] -> View Model Action
+calibSpark [] = text ""
+calibSpark pts =
+  S.svg_ [ SP.viewBox_ "0 0 100 30", P.class_ "calib-spark" ]
+    ( S.line_ [ SP.x1_ "0", SP.y1_ (ms (showD (yOf 0.6))), SP.x2_ "100", SP.y2_ (ms (showD (yOf 0.6))), P.class_ "thr" ]
+    : S.polyline_ [ SP.points_ (ms polyPts), P.class_ "line" ]
+    : [ S.circle_ [ SP.cx_ (ms (showD (xOf i))), SP.cy_ (ms (showD (yOf p.kappa)))
+                  , SP.r_ (if p.isCurrent then "2.5" else "1.5")
+                  , P.class_ (if p.isCurrent then "pt cur" else "pt") ]
+      | (i, p) <- zip [0 :: Int ..] pts ] )
+  where
+    n      = length pts
+    xOf i  = if n <= 1 then 50 else fromIntegral i / fromIntegral (n - 1) * 100 :: Double
+    yOf k  = 30 - max 0 (min 1 k) * 30 :: Double   -- κ 0 at bottom, 1 at top
+    polyPts = T.intercalate " " [ showD (xOf i) <> "," <> showD (yOf p.kappa) | (i, p) <- zip [0 ..] pts ]
+    showD d = T.pack (showFFloat (Just 1) d "")
+
+-- | Inline @left:..%;width:..%@ for the CI band span (clamped to [0,1]).
+ciStyle :: Double -> Double -> MisoString
+ciStyle lo hi =
+  let l = max 0 (min 1 lo); h = max 0 (min 1 hi)
+  in "left:" <> pct l <> ";width:" <> pct (max 0 (h - l))
+
+-- | Run-detail calibration block — omitted entirely when the run has no
+-- meta-evals (the common case for older runs).
+calibrationSection :: [CalibrationSeriesDto] -> View Model Action
+calibrationSection [] = text ""
+calibrationSection ss =
+  div_ [ P.class_ "calib" ]
+    ( h3_ [] [ text "grader calibration" ] : map calibCard ss )
 
 nsHint :: Text -> MisoString
 nsHint n = case n of
