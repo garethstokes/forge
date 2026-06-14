@@ -293,6 +293,26 @@ main = do
       case gatedRes of
         Right summary -> TIO.putStrLn ("spawnGated: accepted: " <> summary)
         Left failure  -> TIO.putStrLn ("spawnGated: " <> T.pack (show failure))
+      -- Nested spawn: a coordinator worker delegates a sub-task to a child
+      -- worker through a tool, all under one shared spawn budget.
+      let weatherChild :: SubAgent '[Chat, IOE] T.Text T.Text
+          weatherChild =
+            subAgent "weather-child" str (object (field "summary" Prelude.id str))
+              "Use the get_weather tool and summarize the weather in one sentence."
+              (tools weatherBox)
+          delegateWeather =
+            Tl.toolWith "delegate_weather" str str (\city -> do
+              r <- spawn weatherChild city
+              pure (either (\f -> "delegation failed: " <> T.pack (show f)) Prelude.id r))
+          coordinator :: SubAgent '[Chat, IOE] T.Text T.Text
+          coordinator =
+            subAgent "coordinator" str (object (field "report" Prelude.id str))
+              "Delegate the weather lookup to the delegate_weather tool, then report what it returns."
+              [delegateWeather]
+      nestedRes <- runEff (Anthropic.runChat cfg (runAgents 6 (spawn coordinator "Brisbane")))
+      case nestedRes of
+        Right report -> TIO.putStrLn ("nested spawn: " <> report)
+        Left failure -> TIO.putStrLn ("nested spawn: " <> T.pack (show failure))
       -- Work ledger: session 1 records and processes one item; a SEPARATE
       -- session 2 on the same file reads back what remains (outlives sessions).
       let ledgerPath = "/tmp/crucible-ledger-demo.jsonl"
