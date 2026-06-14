@@ -150,13 +150,13 @@ INSERT INTO run_metrics (id, run, grader_version, mean, pass_rate, count, comput
 -- rubric sits borderline with its CI low below 0.6 (→ "below threshold", amber).
 INSERT INTO meta_evals
   (id, run, grader_version, mode, seed, agreement, kappa, kappa_low, kappa_high,
-   fail_precision, fail_recall, measured, judge_errors, computed_at) VALUES
-  -- exactness (gv 1): trustworthy, rising
-  (1, 1, 1, 'stored', 1, 0.86, 0.70, 0.58, 0.82, 0.83, 0.80, 4, '[]', now() - interval '25 hours'),
-  (2, 2, 1, 'stored', 1, 0.92, 0.80, 0.66, 0.92, 0.88, 0.85, 4, '[]', now() - interval '1 hour'),
+   fail_precision, fail_recall, pass_f1, fail_f1, balanced_f1, measured, judge_errors, computed_at) VALUES
+  -- exactness (gv 1): trustworthy, rising. balanced_f1 = (pass_f1 + fail_f1)/2
+  (1, 1, 1, 'stored', 1, 0.86, 0.70, 0.58, 0.82, 0.83, 0.80, 0.88, 0.78, 0.83, 4, '[]', now() - interval '25 hours'),
+  (2, 2, 1, 'stored', 1, 0.92, 0.80, 0.66, 0.92, 0.88, 0.85, 0.92, 0.80, 0.86, 4, '[]', now() - interval '1 hour'),
   -- rubric (gv 2): borderline, below threshold
-  (3, 1, 2, 'stored', 1, 0.74, 0.52, 0.34, 0.70, 0.66, 0.60, 4, '["capital-au"]', now() - interval '25 hours'),
-  (4, 2, 2, 'stored', 1, 0.78, 0.55, 0.38, 0.72, 0.70, 0.64, 4, '[]', now() - interval '1 hour');
+  (3, 1, 2, 'stored', 1, 0.74, 0.52, 0.34, 0.70, 0.66, 0.60, 0.66, 0.54, 0.60, 4, '["capital-au"]', now() - interval '25 hours'),
+  (4, 2, 2, 'stored', 1, 0.78, 0.55, 0.38, 0.72, 0.70, 0.64, 0.70, 0.58, 0.64, 4, '[]', now() - interval '1 hour');
 
 -- keep the sequences ahead of the explicit ids
 SELECT setval('datasets_id_seq', 10), setval('dataset_versions_id_seq', 10),
