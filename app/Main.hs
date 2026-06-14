@@ -56,6 +56,7 @@ import Crucible.Agents.Gate (gate, spawnGated)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
+import qualified Crucible.Ledger as Ledger
 import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
 import Crucible.Memory.Eval (memoryLift, liftDelta)
@@ -292,6 +293,18 @@ main = do
       case gatedRes of
         Right summary -> TIO.putStrLn ("spawnGated: accepted: " <> summary)
         Left failure  -> TIO.putStrLn ("spawnGated: " <> T.pack (show failure))
+      -- Work ledger: session 1 records and processes one item; a SEPARATE
+      -- session 2 on the same file reads back what remains (outlives sessions).
+      let ledgerPath = "/tmp/crucible-ledger-demo.jsonl"
+      TIO.writeFile ledgerPath ""  -- fresh ledger
+      _ <- runEff (Ledger.runLedgerFile ledgerPath (do
+        a <- Ledger.record "summarize the inbox"
+        _ <- Ledger.record "draft the reply"
+        ok <- Ledger.claim a "worker-1"
+        if ok then Ledger.complete a else pure ()))
+      ledgerRemaining <- runEff (Ledger.runLedgerFile ledgerPath
+        (map (\it -> it.payload) <$> Ledger.listReady))
+      TIO.putStrLn ("ledger: remaining ready = " <> T.pack (show ledgerRemaining))
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
