@@ -77,7 +77,7 @@ import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
 import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
 import qualified Data.ByteString as BSTEST
-import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), spawn, workerPrompt, runAgentsScripted, runAgents)
+import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), Agents, spawn, workerPrompt, runAgentsScripted, runAgents)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
 import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
@@ -2197,22 +2197,22 @@ main = runChecks
   , do ts <- runEff (timeEach pure [1, 2, 3 :: Int])
        check "timeEach: times each input, values preserved" True
          (map (.value) ts == [1, 2, 3] && all (\x -> x.latencyMs >= 0) ts)
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[] : '[])])
     in check "spawn: canned answer decodes to typed output"
          (Right (6 :: Int))
          (runPureEff (runAgentsScripted 5 ["{\"n\": 6}"] (spawn w 3)))
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[] : '[])])
     in check "spawn: undecodable answer -> WorkerDecodeFailed"
          True
          (case runPureEff (runAgentsScripted 5 ["not json"] (spawn w 3)) of
             Left (WorkerDecodeFailed nm _) -> nm == "double"
             _ -> False)
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[] : '[])])
     in check "spawn: budget cap exceeded on the second spawn"
          (Right (1 :: Int), Left (SpawnBudgetExceeded 1))
          (runPureEff (runAgentsScripted 1 ["{\"n\": 1}", "{\"n\": 2}"]
             (do a <- spawn w 0; b <- spawn w 0; pure (a, b))))
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[] : '[])])
     in check "spawn: parent branches on a typed result then spawns again"
          (Right (2 :: Int))
          (runPureEff (runAgentsScripted 2 ["{\"n\": 1}", "{\"n\": 2}"]
@@ -2220,7 +2220,7 @@ main = runChecks
                 case r of
                   Right v -> spawn w v
                   Left e  -> pure (Left e))))
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[] : '[])])
     in check "spawn: exhausted script -> WorkerDecodeFailed"
          True
          (case runPureEff (runAgentsScripted 5 [] (spawn w 0)) of
@@ -2228,27 +2228,27 @@ main = runChecks
             _ -> False)
   , check "workerPrompt contains system, schema, and input"
       True
-      (let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[]])
+      (let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[] : '[])])
            p = workerPrompt w 7
        in T.isInfixOf "double the input" p && T.isInfixOf "<input>\n7" p && T.isInfixOf "\"n\"" p)
   , check "AgentFailure Eq/Show round value"
       (SpawnBudgetExceeded 3) (SpawnBudgetExceeded 3)
-  , do let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[Chat.Chat, IOE]])
+  , do let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[Chat.Chat, IOE] : '[Chat.Chat, IOE])])
        r <- runEff (runChatScripted [Turn "{\"n\": 42}" []] (runAgents 5 (spawn w 21)))
        check "runAgents (scripted Chat): worker answer decodes to typed output" (Right (42 :: Int)) r
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[LLM] : '[LLM])])
         g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
     in check "spawnGated: judge passes -> Right o"
          (Right (6 :: Int))
          (runPureEff (runLLMScripted ["{\"verdict\":\"pass\",\"why\":\"ok\"}"]
             (runAgentsScripted 5 ["{\"n\": 6}"] (spawnGated g w 3))))
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[LLM] : '[LLM])])
         g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
     in check "spawnGated: reject then accept on retry"
          (Right (7 :: Int))
          (runPureEff (runLLMScripted ["{\"verdict\":\"fail\",\"why\":\"too small\"}", "{\"verdict\":\"pass\",\"why\":\"ok\"}"]
             (runAgentsScripted 5 ["{\"n\": 1}", "{\"n\": 7}"] (spawnGated g w 3))))
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[LLM] : '[LLM])])
         g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
     in check "spawnGated: reject past retries -> GateRejected"
          True
@@ -2256,7 +2256,7 @@ main = runChecks
                  (runAgentsScripted 5 ["{\"n\": 1}", "{\"n\": 2}"] (spawnGated g w 3))) of
             Left (GateRejected nm w') -> nm == "double" && T.isInfixOf "still bad" w'
             _ -> False)
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[LLM] : '[LLM])])
         g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
     in check "spawnGated: spawn decode failure short-circuits (no judging)"
          True
@@ -2264,7 +2264,7 @@ main = runChecks
                  (runAgentsScripted 5 ["not json"] (spawnGated g w 3))) of
             Left (WorkerDecodeFailed nm _) -> nm == "double"
             _ -> False)
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[LLM] : '[LLM])])
         g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
     in check "spawnGated: spawn budget exhausted on the retry -> SpawnBudgetExceeded"
          True
@@ -2272,7 +2272,7 @@ main = runChecks
                  (runAgentsScripted 1 ["{\"n\": 1}"] (spawnGated g w 3))) of
             Left (SpawnBudgetExceeded _) -> True
             _ -> False)
-  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool (Agents '[LLM] : '[LLM])])
         g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
     in check "spawnGated: judge AllErrored -> GateRejected with judge-error tag"
          True
