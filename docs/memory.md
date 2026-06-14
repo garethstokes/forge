@@ -309,7 +309,8 @@ memories actually help: does putting a memory in a skill's context raise the
 skill's scores, or does it add noise that changes nothing? `memoryLift`
 answers that question by running a set ablation: the skill's attached test
 cases run once without the candidate memories (baseline) and once with them
-rendered in (lifted). A positive delta means the memories paid rent.
+rendered into the preamble (lifted). A positive delta means the memories paid
+rent.
 
 ### Rendering memories into a skill
 
@@ -381,8 +382,8 @@ scores, it is not contributing anything the skill could not already do on its
 own.
 
 Like consolidation, crucible reports the delta and leaves the policy to the
-host. The typical threshold is straightforward - keep if `dPass > 0` or
-`dScore > 0` - but the host can set a stricter bar (for example, requiring a
+host. The typical threshold is straightforward: keep if `dPass > 0` or
+`dScore > 0`. The host can set a stricter bar (for example, requiring a
 minimum delta to justify the token cost) or a looser one (retaining memories
 that break even but carry provenance the operator wants to preserve). crucible
 provides the measurement; the decision is yours.
