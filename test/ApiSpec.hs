@@ -280,6 +280,7 @@ main = do
         { graderName = "rubric", graderVersion = 1, graderKind = "pointed"
         , mode = "stored", agreement = 0.88, kappa = 0.78
         , kappaLow = 0.66, kappaHigh = 0.9, failPrecision = 0.8, failRecall = 0.75
+        , passF1 = 0.86, failF1 = 0.66, balancedF1 = 0.76
         , measured = 40, judgeErrors = 0, computedAt = "2026-06-14T00:00:00Z"
         , trusted = True, band = "substantial" }
     , trend = [ TrendPointDto { runId = 1, kappa = 0.7, kappaLow = 0.55
@@ -477,6 +478,10 @@ serverSpec = withEphemeralDb $ \pool -> do
           && s.latest.band == "substantial"
           && map (\p -> p.kappa) s.trend == [0.6, 0.78]
           && all (\p -> p.isCurrent) s.trend
+        _ -> False
+    expect "run-detail calibration: balancedF1 surfaced" $
+      case decode (responseBody r3) :: Maybe RunDetailDto of
+        Just d | [s] <- d.calibration -> s.latest.balancedF1 == 0.75
         _ -> False
     rCal <- getReq "/api/calibration"
     expect "calibration 200" (statusCode (responseStatus rCal) == 200)

@@ -120,6 +120,9 @@ data MetaEvalDto = MetaEvalDto
   , kappaHigh     :: Double
   , failPrecision :: Double
   , failRecall    :: Double
+  , passF1        :: Double
+  , failF1        :: Double
+  , balancedF1    :: Double
   , measured      :: Int
   , judgeErrors   :: Int
   , computedAt    :: Text
