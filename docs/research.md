@@ -43,6 +43,12 @@ a running activity log.
 a call is not next to a `readPage` or `writePage` that fixes it, give the type
 explicitly: `index @MyMeta`, `search @MyMeta "term"`.
 
+A slug becomes a filename in the directory interpreter, so validate model-chosen
+slugs with `mkSlug :: Text -> Maybe Slug` (it rejects an empty slug, a path
+separator, or a parent reference). The directory interpreter also refuses a
+path-unsafe slug itself: a read returns `Nothing` and a write is a no-op, so a
+slug can never escape the directory.
+
 ## Interpreters
 
 ```haskell
@@ -53,10 +59,12 @@ runResearchDir   :: (IOE :> es) => JSONCodec meta -> FilePath -> Eff (Research m
 `runResearchState` keeps the pages in memory and returns the final pages and log
 alongside the result, for tests. `runResearchDir` stores one `<slug>.md` file per
 page in a directory: a `---`-delimited JSON frontmatter (`title`, `links`,
-`meta`) followed by the markdown body, with the activity log in `log.md`. The
-files are plain markdown in a repo, so they are human-readable, git-diffable, and
-get version history for free. A later session reading the same directory sees the
-earlier pages.
+`meta`) followed by the markdown body, with the activity log in `activity.log`
+(a non-`.md` name, so no page slug collides with it). The files are plain
+markdown in a repo, so they are human-readable, git-diffable, and get version
+history for free. A later session reading the same directory sees the earlier
+pages. `index` lists the `.md` files on disk, which may include a file whose
+head no longer decodes.
 
 ## Planned follow-on work
 

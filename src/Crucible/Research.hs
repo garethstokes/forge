@@ -21,6 +21,7 @@
 -- this a "Wiki"; it ships as "Research".)
 module Crucible.Research
   ( Slug (..)
+  , mkSlug
   , LinkType (..)
   , Link (..)
   , Page (..)
@@ -52,6 +53,21 @@ newtype Slug = Slug Text deriving (Eq, Ord, Show)
 
 unSlug :: Slug -> Text
 unSlug (Slug s) = s
+
+-- | A slug is safe as a filename when it is non-empty, is not a parent
+-- reference, and has no path separator, so the directory interpreter cannot
+-- read or write outside its directory.
+safeSlug :: Slug -> Bool
+safeSlug (Slug s) =
+  not (T.null s) && s /= ".." && s /= "." && not (T.any (\c -> c == '/' || c == '\\') s)
+
+-- | A validated 'Slug': 'Nothing' if it is empty, a parent reference, or
+-- contains a path separator. Use this for agent-chosen slugs so a directory
+-- store cannot be escaped. The 'Slug' constructor stays available for the pure
+-- interpreter (a slug is just a key there); the directory interpreter ignores
+-- reads and writes for path-unsafe slugs regardless.
+mkSlug :: Text -> Maybe Slug
+mkSlug s = let sl = Slug s in if safeSlug sl then Just sl else Nothing
 
 data LinkType = Relates | Contradicts | Extends | Supersedes
   deriving (Eq, Show)
@@ -133,41 +149,56 @@ pageHeadCodec mc = object (PageHead <$> field "title" ((.title) :: PageHead meta
 pagePath :: FilePath -> Slug -> FilePath
 pagePath dir s = dir </> T.unpack (unSlug s) <.> "md"
 
+-- The head is a single line (compact 'encodeText' has no embedded newlines), so
+-- the page is @---\\n<json>\\n---\\n<body>@. Parsing splits on the first
+-- @\\n---\\n@ and keeps the body verbatim (trailing newlines and any later
+-- @---@ lines survive); never reconstruct the body from 'T.lines', which drops
+-- the trailing newline.
 renderPage :: JSONCodec meta -> Page meta -> Text
 renderPage mc p =
   "---\n" <> encodeText (pageHeadCodec mc) (PageHead p.title p.links p.meta)
     <> "\n---\n" <> p.body
 
 parsePage :: JSONCodec meta -> Slug -> Text -> Maybe (Page meta)
-parsePage mc s contents = case T.lines contents of
-  ("---" : rest) ->
-    let (headLines, afterHead) = break (== "---") rest
-        bodyText = T.intercalate "\n" (drop 1 afterHead)
-        headJson = T.intercalate "\n" headLines
-    in case decodeLLM (pageHeadCodec mc) headJson of
-         Right h -> Just (Page s h.title h.links bodyText h.meta)
-         Left _  -> Nothing
-  _ -> Nothing
+parsePage mc s contents = case T.stripPrefix "---\n" contents of
+  Just afterOpen ->
+    let (headJson, rest) = T.breakOn "\n---\n" afterOpen
+    in if T.null rest
+         then Nothing
+         else let bodyText = T.drop (T.length "\n---\n") rest
+              in case decodeLLM (pageHeadCodec mc) headJson of
+                   Right h -> Just (Page s h.title h.links bodyText h.meta)
+                   Left _  -> Nothing
+  Nothing -> Nothing
 
 readPageFile :: JSONCodec meta -> FilePath -> Slug -> IO (Maybe (Page meta))
-readPageFile mc dir s = do
-  let path = pagePath dir s
-  exists <- doesFileExist path
-  if not exists then pure Nothing
-  else do
-    r <- try (TIO.readFile path) :: IO (Either IOException Text)
-    pure (either (const Nothing) (parsePage mc s) r)
+readPageFile mc dir s
+  | not (safeSlug s) = pure Nothing
+  | otherwise = do
+      let path = pagePath dir s
+      exists <- doesFileExist path
+      if not exists then pure Nothing
+      else do
+        r <- try (TIO.readFile path) :: IO (Either IOException Text)
+        pure (either (const Nothing) (parsePage mc s) r)
 
 writePageFile :: JSONCodec meta -> FilePath -> Page meta -> IO ()
-writePageFile mc dir p = do
-  createDirectoryIfMissing True dir
-  TIO.writeFile (pagePath dir p.slug) (renderPage mc p)
+writePageFile mc dir p
+  | not (safeSlug p.slug) = pure ()   -- refuse path-unsafe slugs (cannot escape dir)
+  | otherwise = do
+      createDirectoryIfMissing True dir
+      TIO.writeFile (pagePath dir p.slug) (renderPage mc p)
+
+-- | The activity log file. Not a @.md@ file, so no page slug can collide with it
+-- and 'indexDir' (which lists @.md@) excludes it.
+logFile :: FilePath -> FilePath
+logFile dir = dir </> "activity.log"
 
 indexDir :: FilePath -> IO [Slug]
 indexDir dir = do
   createDirectoryIfMissing True dir
   fs <- listDirectory dir
-  pure (sort [ Slug (T.pack (takeBaseName f)) | f <- fs, takeExtension f == ".md", f /= "log.md" ])
+  pure (sort [ Slug (T.pack (takeBaseName f)) | f <- fs, takeExtension f == ".md" ])
 
 searchDir :: JSONCodec meta -> FilePath -> Text -> IO [Slug]
 searchDir mc dir q = do
@@ -175,13 +206,16 @@ searchDir mc dir q = do
   matched <- mapM (\s -> maybe False (matchesQuery q) <$> readPageFile mc dir s) slugs
   pure [ s | (s, True) <- zip slugs matched ]
 
--- | Directory interpreter: one <slug>.md per page (--- JSON head --- + body),
--- AppendLog -> log.md. Outlives sessions; git-diffable. Tolerant: a page file
--- whose head does not decode reads as absent.
+-- | Directory interpreter: one @\<slug\>.md@ per page (--- JSON head --- +
+-- body), AppendLog appends to @activity.log@. Outlives sessions; git-diffable.
+-- Tolerant: a page file whose head does not decode reads as absent. Path-unsafe
+-- slugs (see 'mkSlug') are refused (read returns Nothing, write is a no-op), so
+-- a model-chosen slug cannot escape the directory. 'index' lists the @.md@ files
+-- on disk, which may include a file whose head no longer decodes.
 runResearchDir :: (IOE :> es) => JSONCodec meta -> FilePath -> Eff (Research meta : es) a -> Eff es a
 runResearchDir mc dir = interpret $ \_ -> \case
   ReadPage s   -> liftIO (readPageFile mc dir s)
   WritePage p  -> liftIO (writePageFile mc dir p)
   Index        -> liftIO (indexDir dir)
   Search q     -> liftIO (searchDir mc dir q)
-  AppendLog ln -> liftIO (createDirectoryIfMissing True dir >> TIO.appendFile (dir </> "log.md") (ln <> "\n"))
+  AppendLog ln -> liftIO (createDirectoryIfMissing True dir >> TIO.appendFile (logFile dir) (ln <> "\n"))

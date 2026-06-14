@@ -72,7 +72,7 @@ import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryD
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
 import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
-import System.Directory (removeFile, createDirectoryIfMissing, removeDirectoryRecursive)
+import System.Directory (removeFile, createDirectoryIfMissing, removeDirectoryRecursive, doesFileExist)
 import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
 import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
@@ -82,7 +82,7 @@ import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
 import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
-import Crucible.Research (Slug (..), LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec)
+import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec)
 
 -- Sample types for codec tests
 
@@ -2440,4 +2440,26 @@ main = runChecks
                         pure (i, h)))
        removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
        check "research dir: index lists slugs, search greps body" ([Slug "a", Slug "b"], [Slug "a"]) (idx, hits)
+  , do let dir = "/tmp/crucible-research-nl"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       let p = Page (Slug "nl") "NL" [] "line one\nline two\n" ("" :: Text)   -- trailing newline + multi-line
+       _ <- runEff (runResearchDir C.str dir (writePage p))
+       got <- runEff (runResearchDir C.str dir (readPage (Slug "nl")))
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: body round-trips verbatim (trailing newline + multi-line)" (Just p) got
+  , check "research: mkSlug accepts a plain slug, rejects path-unsafe ones"
+      (Just (Slug "ok"), Nothing, Nothing, Nothing)
+      (mkSlug "ok", mkSlug "../escape", mkSlug "a/b", mkSlug "")
+  , do let dir = "/tmp/crucible-research-safe"
+           escapeDir = "/tmp/crucible-research-ESCAPED.md"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       removeFile escapeDir `catch` \(_ :: SomeException) -> pure ()
+       -- a path-unsafe slug must not be written (no escape), and reads Nothing
+       got <- runEff (runResearchDir C.str dir (do
+                writePage (Page (Slug "../crucible-research-ESCAPED") "X" [] "pwned" ("" :: Text))
+                readPage (Slug "../crucible-research-ESCAPED")))
+       escaped <- doesFileExist escapeDir
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       check "research dir: a path-unsafe slug is refused (no escape, reads Nothing)"
+         (Nothing :: Maybe (Page Text), False) (got, escaped)
   ]
