@@ -48,6 +48,7 @@ import qualified Data.Aeson.Types as AT
 import qualified Data.Vector as V
 
 import Crucible.LLM (Role (Assistant, User))
+import Crucible.Media (Media (..))
 import Crucible.Tool (Tool (..), ToolName, ToolError (..), invoke, renderToolError)
 
 type ToolUseId = Text
@@ -65,6 +66,8 @@ data Block
   = TextBlock       Text
   | ToolUseBlock    ToolUse
   | ToolResultBlock ToolUseId Value   -- ^ a result (or error) for a prior tool_use
+  | ImageBlock      Media             -- ^ an image attachment (request side only)
+  | DocumentBlock   Media             -- ^ a PDF/document attachment (request side only)
   deriving (Eq, Show)
 
 data Message = Message Role [Block]
@@ -156,6 +159,24 @@ blockJson (ToolResultBlock i v) =
   where
     resultText (String s) = A.String s
     resultText other      = A.String (TE.decodeUtf8 (LBS.toStrict (A.encode other)))
+blockJson (ImageBlock m) =
+  A.object
+    [ "type" .= A.String "image"
+    , "source" .= A.object
+        [ "type" .= A.String "base64"
+        , "media_type" .= m.mediaType
+        , "data" .= m.dataB64
+        ]
+    ]
+blockJson (DocumentBlock m) =
+  A.object
+    [ "type" .= A.String "document"
+    , "source" .= A.object
+        [ "type" .= A.String "base64"
+        , "media_type" .= m.mediaType
+        , "data" .= m.dataB64
+        ]
+    ]
 
 -- | Encode a 'Turn' as a content-block object, for recording to a chat
 -- cassette. Round-trips: @parseTurn (encode (turnContentJson t)) == Right t@.

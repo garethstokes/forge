@@ -26,6 +26,7 @@ module Crucible.Skill
   , examplesFromTests
   , withReasoning
   , prompt
+  , instructionText
   , call
   , testSkill
   ) where
@@ -144,6 +145,25 @@ withReasoning fn = fn { output = reasoned fn.output }
 jsonText :: A.Value -> Text
 jsonText = TE.decodeUtf8 . LB.toStrict . A.encode
 
+-- | The user-facing instruction text for an input: preamble, task, the
+-- @\<input\>@ JSON block, constraints, and the trailing machine-only reminder.
+-- Does not include the output-schema contract (the System message carries that
+-- in 'prompt'; 'Crucible.Skill.Multimodal.callMedia' folds it into its text
+-- block). Exposed so both share one assembly.
+instructionText :: Skill i o -> i -> Text
+instructionText sk i' =
+  T.concat
+    [ block sk.instruction.preamble
+    , (sk.instruction.task) i'
+    , "\n\n<input>\n"
+    , jsonText (toJSONVia sk.input i')
+    , "\n</input>\n\n"
+    , block sk.instruction.constraints
+    , "Respond with JSON only; your reply is parsed by a machine."
+    ]
+  where
+    block t = if T.null t then "" else t <> "\n\n"
+
 -- | The seed messages 'call' sends for a given input: a System message
 -- carrying the output-schema contract, one User/Assistant pair per attached
 -- example (the User turn is the instruction applied to the example input;
@@ -160,20 +180,7 @@ prompt sk inp =
       Respond ONLY with JSON matching this schema:
       ${schema}
       Your reply is parsed by a machine; any text outside the JSON is an error.|]
-    -- assembled by concatenation, not [text| |]: the slot blocks are
-    -- conditional, and interpolated trailing newlines are not preserved
-    -- reliably by the quasiquoter. Empty slots contribute nothing.
-    userMsg i' =
-      Message User $ T.concat
-        [ block sk.instruction.preamble
-        , (sk.instruction.task) i'
-        , "\n\n<input>\n"
-        , jsonText (toJSONVia sk.input i')
-        , "\n</input>\n\n"
-        , block sk.instruction.constraints
-        , "Respond with JSON only; your reply is parsed by a machine."
-        ]
-    block t = if T.null t then "" else t <> "\n\n"
+    userMsg i' = Message User (instructionText sk i')
     pair (ei, eo) = [userMsg ei, Message Assistant (jsonText (toJSONVia sk.output eo))]
 
 -- | Run a typed skill: build the prompt, call the model, and decode the reply

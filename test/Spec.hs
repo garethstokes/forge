@@ -16,7 +16,7 @@ import Autodocodec (toJSONVia, parseJSONVia)
 import qualified Crucible.Codec as C
 import Crucible.Codec (JSONCodec, schemaValue, schemaText, refine, checked, Checked (..), allPassed)
 import Crucible.Codec.Generic (HasCodec(..), genericCodec)
-import Crucible.Skill (Skill (..), Instruction (..), skill, skillWith, withPreamble, withConstraints, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, call, testSkill)
+import Crucible.Skill (Skill (..), Instruction (..), skill, skillWith, withPreamble, withConstraints, withRetries, withTests, withExamples, examplesFromTests, withReasoning, prompt, instructionText, call, testSkill)
 import Data.Text (Text)
 import qualified Data.Text
 import qualified Data.Text as T
@@ -72,6 +72,10 @@ import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..)
 import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
 import System.Directory (removeFile)
+import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
+import Crucible.Skill.Multimodal (mediaMessage, callMedia)
+import qualified Data.ByteString.Base64 as B64TEST
+import qualified Data.ByteString as BSTEST
 
 -- Sample types for codec tests
 
@@ -595,6 +599,11 @@ main = runChecks
         [ "\"hello there\""                                  -- the skill's reply
         , "{\"pass\":true,\"why\":\"greets the user\"}" ]    -- the judge's verdict
         (Embed.none (testSkill id (withTests [Case "hi" "greets" (Rubric "must be a greeting")] classifyFn))))).passRate)
+  , check "instructionText contains the task and the input JSON"
+      True
+      (let s = skill "t" C.str C.str (\x -> "Do the thing with " <> x)
+           out = instructionText s "ABC"
+       in T.isInfixOf "Do the thing with ABC" out && T.isInfixOf "<input>\n\"ABC\"" out)
   -- M12 Task 1: schemaValue shape checks (robust — autodocodec schema shape may differ)
   , check "schemaValue: object codec has type=object"
       (Just (String "object"))
@@ -2093,4 +2102,69 @@ main = runChecks
     in check "memoryLift positive delta when lifted arm passes"
          (1.0, 1.0)
          (liftDelta (base, lifted))
+  , check "Media.imageB64 sets fields, no filename"
+      (Media "image/png" "QUJD" Nothing)
+      (imageB64 "image/png" "QUJD")
+  , check "Media.pdfB64 sets application/pdf, no filename"
+      (Media "application/pdf" "JVBERg==" Nothing)
+      (pdfB64 "JVBERg==")
+  , do (p, h) <- openTempFile "/tmp" "crucible-media-test.png"
+       BSTEST.hPut h (BSTEST.pack [1,2,3,4]) >> hClose h
+       m <- imageFile p
+       removeFile p
+       let okType = m.mediaType == "image/png"
+           okData = B64TEST.decode (TE.encodeUtf8 m.dataB64) == Right (BSTEST.pack [1,2,3,4])
+           okName = m.filename == Nothing
+       check "Media.imageFile infers png + round-trips bytes" True (okType && okData && okName)
+  , do (p, h) <- openTempFile "/tmp" "crucible-media-test.pdf"
+       BSTEST.hPut h (BSTEST.pack [37,80,68,70]) >> hClose h
+       m <- pdfFile p
+       removeFile p
+       let okType = m.mediaType == "application/pdf"
+           okName = maybe False (T.isSuffixOf ".pdf") m.filename
+       check "Media.pdfFile sets pdf type + filename" True (okType && okName)
+  , check "blockJson: ImageBlock -> base64 image source"
+      "{\"source\":{\"data\":\"QUJD\",\"media_type\":\"image/png\",\"type\":\"base64\"},\"type\":\"image\"}"
+      (C.encodeText C.anyValue (Chat.blockJson (Chat.ImageBlock (imageB64 "image/png" "QUJD"))))
+  , check "blockJson: DocumentBlock -> base64 document source"
+      "{\"source\":{\"data\":\"JVBERg==\",\"media_type\":\"application/pdf\",\"type\":\"base64\"},\"type\":\"document\"}"
+      (C.encodeText C.anyValue (Chat.blockJson (Chat.DocumentBlock (pdfB64 "JVBERg=="))))
+  , check "OpenAI chatMessagesJson: text-only user stays a flat string"
+      "[{\"content\":\"hi\",\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue) (OpenAI.chatMessagesJson (Chat.Message User [Chat.TextBlock "hi"])))
+  , check "OpenAI chatMessagesJson: image user becomes a parts array"
+      "[{\"content\":[{\"text\":\"look\",\"type\":\"text\"},{\"image_url\":{\"url\":\"data:image/png;base64,QUJD\"},\"type\":\"image_url\"}],\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue)
+        (OpenAI.chatMessagesJson (Chat.Message User [Chat.TextBlock "look", Chat.ImageBlock (imageB64 "image/png" "QUJD")])))
+  , check "OpenAI chatMessagesJson: pdf without filename defaults to document.pdf"
+      "[{\"content\":[{\"file\":{\"file_data\":\"data:application/pdf;base64,JVBERg==\",\"filename\":\"document.pdf\"},\"type\":\"file\"}],\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue)
+        (OpenAI.chatMessagesJson (Chat.Message User [Chat.DocumentBlock (pdfB64 "JVBERg==")])))
+  , check "OpenAI chatMessagesJson: tool-result + media -> tool msg then user parts"
+      "[{\"content\":\"done\",\"role\":\"tool\",\"tool_call_id\":\"u1\"},{\"content\":[{\"image_url\":{\"url\":\"data:image/png;base64,QUJD\"},\"type\":\"image_url\"}],\"role\":\"user\"}]"
+      (C.encodeText (C.list' C.anyValue)
+        (OpenAI.chatMessagesJson (Chat.Message User [Chat.ToolResultBlock "u1" (String "done"), Chat.ImageBlock (imageB64 "image/png" "QUJD")])))
+  , check "mediaMessage: image then text, image routed to ImageBlock"
+      True
+      (case mediaMessage (skill "s" C.str C.str (const "extract")) ("" :: Text) [imageB64 "image/png" "QUJD"] of
+         Chat.Message User (Chat.ImageBlock m : Chat.TextBlock _ : []) -> m.mediaType == "image/png"
+         _ -> False)
+  , check "mediaMessage: pdf routed to DocumentBlock"
+      True
+      (case mediaMessage (skill "s" C.str C.str (const "extract")) ("" :: Text) [pdfB64 "JVBERg=="] of
+         Chat.Message User (Chat.DocumentBlock _ : Chat.TextBlock _ : []) -> True
+         _ -> False)
+  , check "callMedia: valid reply decodes to output"
+      (Right ("hello" :: Text))
+      (runPureEff (runChatScripted [Turn "\"hello\"" []]
+        (callMedia (skill "s" C.str C.str (const "extract")) ("" :: Text) [imageB64 "image/png" "QUJD"])))
+  , check "callMedia: bad reply then good reply recovers"
+      (Right ("ok" :: Text))
+      (runPureEff (runChatScripted [Turn "not json" [], Turn "\"ok\"" []]
+        (callMedia (skill "s" C.str C.str (const "extract")) ("" :: Text) [imageB64 "image/png" "QUJD"])))
+  , check "callMedia: all-bad past retries returns Left (isLeft)"
+      True
+      (either (const True) (const False)
+        (runPureEff (runChatScripted [Turn "x" [], Turn "y" [], Turn "z" [], Turn "w" []]
+          (callMedia (withRetries 1 (skill "s" C.str C.str (const "extract"))) ("" :: Text) [imageB64 "image/png" "QUJD"]))))
   ]

@@ -56,6 +56,8 @@ import Crucible.Emit (runEmitIO)
 import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
 import Crucible.Memory.Eval (memoryLift, liftDelta)
+import Crucible.Skill.Multimodal (callMedia)
+import Crucible.Media (imageB64)
 import Crucible.Partial (runPartialWith)
 import System.IO (hFlush, stdout)
 import Data.IORef (newIORef, modifyIORef', readIORef)
@@ -143,6 +145,15 @@ main = do
                     <> ", lifted pass " <> T.pack (show (getPassRate mlLifted))
                     <> "; delta (pass,score) = (" <> T.pack (show mlDPass)
                     <> ", " <> T.pack (show mlDScore) <> ")")
+      -- Multimodal: send a tiny image to a typed skill via the Chat path.
+      let onePxPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+          describeImage = skill "describe-image" str str
+            (const "Describe this image in one short sentence.")
+      mmRes <- runEff (Anthropic.runChat cfg
+                 (callMedia describeImage ("" :: T.Text) [imageB64 "image/png" onePxPng]))
+      case mmRes of
+        Right d -> TIO.putStrLn ("multimodal: " <> d)
+        Left e  -> TIO.putStrLn ("multimodal decode error: " <> (e.message :: T.Text))
       let ageFn :: Skill T.Text Int
           ageFn = skill "extract-age" str
             (object (field "age" Prelude.id
