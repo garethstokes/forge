@@ -2117,4 +2117,10 @@ main = runChecks
        let okType = m.mediaType == "application/pdf"
            okName = maybe False (T.isSuffixOf ".pdf") m.filename
        check "Media.pdfFile sets pdf type + filename" True (okType && okName)
+  , check "blockJson: ImageBlock -> base64 image source"
+      "{\"source\":{\"data\":\"QUJD\",\"media_type\":\"image/png\",\"type\":\"base64\"},\"type\":\"image\"}"
+      (C.encodeText C.anyValue (Chat.blockJson (Chat.ImageBlock (imageB64 "image/png" "QUJD"))))
+  , check "blockJson: DocumentBlock -> base64 document source"
+      "{\"source\":{\"data\":\"JVBERg==\",\"media_type\":\"application/pdf\",\"type\":\"base64\"},\"type\":\"document\"}"
+      (C.encodeText C.anyValue (Chat.blockJson (Chat.DocumentBlock (pdfB64 "JVBERg=="))))
   ]
