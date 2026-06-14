@@ -111,6 +111,8 @@ persistSpec pool now = do
           expect "persist: kappa matches"     (m.kappa == r.kappa)
           expect "persist: measured matches"  (m.measured == r.measured)
           expect "persist: mode/seed"         (m.mode == "stored" && m.seed == 0)
+          expect "balancedF1 = mean of class F1s" (abs (m.balancedF1 - (m.passF1 + m.failF1) / 2) < 1e-9)
+          expect "F1s in range" (m.passF1 >= 0 && m.passF1 <= 1 && m.failF1 >= 0 && m.failF1 <= 1)
         _ -> expect "persist: exactly one" False
       _ <- saveMetaEval pool rid gvid "stored" 0 r
       rows2 <- withSession pool (selectWhere [ #run ==. rid ]) :: IO [MetaEval]

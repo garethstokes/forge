@@ -97,6 +97,7 @@ saveMetaEval pool rid gvid modeT seed rep = do
     , agreement = rep.agreement, kappa = rep.kappa
     , kappaLow = fst rep.kappaCI, kappaHigh = snd rep.kappaCI
     , failPrecision = rep.failPrecision, failRecall = rep.failRecall
+    , passF1 = rep.passF1, failF1 = rep.failF1, balancedF1 = rep.balancedF1
     , measured = rep.measured, judgeErrors = Aeson (toJSON rep.judgeErrors)
     , computedAt = now } :: MetaEval)
 

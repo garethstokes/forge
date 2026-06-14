@@ -390,11 +390,13 @@ serverSpec = withEphemeralDb $ \pool -> do
     _ <- add (MetaEval { id = MetaEvalId 0, run = r.id, graderVersion = gv.id
                        , mode = "stored", seed = 1, agreement = 0.8, kappa = 0.6
                        , kappaLow = 0.5, kappaHigh = 0.7, failPrecision = 0.7, failRecall = 0.6
+                       , passF1 = 0.65, failF1 = 0.55, balancedF1 = 0.6
                        , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
                        , computedAt = addUTCTime (-3600) now } :: MetaEval)
     _ <- add (MetaEval { id = MetaEvalId 0, run = r.id, graderVersion = gv.id
                        , mode = "stored", seed = 1, agreement = 0.9, kappa = 0.78
                        , kappaLow = 0.66, kappaHigh = 0.9, failPrecision = 0.8, failRecall = 0.75
+                       , passF1 = 0.77, failF1 = 0.73, balancedF1 = 0.75
                        , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
                        , computedAt = now } :: MetaEval)
     pure (r.id, v.id)

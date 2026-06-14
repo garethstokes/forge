@@ -172,6 +172,9 @@ data MetaEvalT f = MetaEval
   , kappaHigh     :: Field f Double
   , failPrecision :: Field f Double
   , failRecall    :: Field f Double
+  , passF1        :: Field f Double
+  , failF1        :: Field f Double
+  , balancedF1    :: Field f Double
   , measured      :: Field f Int
   , judgeErrors   :: Field f (Aeson Value)
   , computedAt    :: Field f UTCTime
