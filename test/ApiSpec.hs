@@ -43,6 +43,12 @@ rt msg x = expect (msg <> ": " <> show x) (decode (encode x) == Just x)
 t0 :: UTCTime
 t0 = UTCTime (fromGregorian 2026 6 11) 0
 
+-- | The seeded input for example e1: a {"messages":[...]} conversation so the
+-- detail endpoint's assembleMessages yields system + user turns.
+e1Input :: Value
+e1Input = object
+  [ "messages" .= [ object ["role" .= ("user" :: Text), "content" .= ("hi" :: Text)] ] ]
+
 main :: IO ()
 main = do
   rt "MetricDto" MetricDto
@@ -341,7 +347,7 @@ serverSpec = withEphemeralDb $ \pool -> do
     v  <- add (DatasetVersion { id = DatasetVersionId 0, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     -- Insert e2 first so DB heap order is e2, e1 — the handler must sort by key.
     e2 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e2", input = Aeson (object ["q" .= ("2" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
-    e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1", input = Aeson (object ["q" .= ("1" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
+    e1 <- add (Example { id = ExampleId 0, datasetVersion = v.id, key = "e1", input = Aeson e1Input, expected = Nothing, meta = Nothing } :: Example)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "tgt", createdAt = now } :: Target)
     tv <- add (TargetVersion { id = TargetVersionId 0, target = t.id, version = 1, model = "claude-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
     r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
@@ -438,6 +444,32 @@ serverSpec = withEphemeralDb $ \pool -> do
     -- unknown api route -> 404
     r5 <- getReq "/api/nope"
     expect "unknown api route 404" (statusCode (responseStatus r5) == 404)
+    -- example detail: GET /api/runs/:id/ex/e1 (the ok output o1)
+    rEx <- getReq ("/api/runs/" <> show runIdInt <> "/ex/e1")
+    expect "example detail 200" (statusCode (responseStatus rEx) == 200)
+    expect "example detail shape" (case decode (responseBody rEx) :: Maybe ExampleDetailDto of
+      Just ed ->
+        ed.input == e1Input
+        && length ed.prompt >= 2
+        && (head ed.prompt).role == "system"
+        && (head ed.prompt).content == "SYS"
+        && ed.responseText == Just "hello"
+        && (case filter (\g -> g.graderName == "rubric") ed.grades of
+              [g] -> g.graderKind == "pointed"
+                       && (case g.criteria of
+                             [c] -> c.criterion == "names the capital"
+                                      && c.points == 5.0
+                                      && c.met == True
+                                      && c.explanation == ""
+                             _   -> False)
+              _   -> False)
+        && (case filter (\g -> g.graderName == "exactness") ed.grades of
+              [g] -> null g.criteria
+              _   -> False)
+      _ -> False)
+    -- unknown example key -> 404
+    rExMiss <- getReq ("/api/runs/" <> show runIdInt <> "/ex/no-such-key")
+    expect "example detail unknown key 404" (statusCode (responseStatus rExMiss) == 404)
     -- filter by datasetVersion with the real id
     let DatasetVersionId dvInt = dvId
     r6 <- getReq ("/api/runs?datasetVersion=" <> show dvInt)

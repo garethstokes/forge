@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -29,8 +30,10 @@ import Text.Read (readMaybe)
 import Manifest (Aeson (..), Cond, Db, get, selectWhere, withSession, Key (..), (==.))
 import Manifest.Postgres (Pool)
 
+import Crucible.LLM (Message (..), Role (..))
 import Evals.Api
 import Evals.Dashboard.Events (EventHub, sseResponse)
+import Evals.Execute (assembleMessages)
 import Evals.Ids
 import Evals.Schema
 
@@ -44,6 +47,10 @@ dashboardApp pool staticDir hub req respond =
       case readMaybe (T.unpack nTxt) :: Maybe Int of
         Nothing  -> respond (badRequest "invalid run id")
         Just n   -> apiWith (runDetailHandler pool (RunId n) respond)
+    ["api", "runs", nTxt, "ex", key] ->
+      case readMaybe (T.unpack nTxt) :: Maybe Int of
+        Nothing  -> respond (badRequest "invalid run id")
+        Just n   -> apiWith (exampleDetailHandler pool (RunId n) key respond)
     ["api", "compare"]      -> apiWith (compareHandler pool req respond)
     ["api", "events"]       -> respond (sseResponse hub)
     ("api" : _)             -> respond notFound
@@ -296,6 +303,66 @@ scoreDto s = do
     , scoreError    = s.error
     , rationale     = rationale
     }
+
+-- ---------------------------------------------------------------------------
+-- /api/runs/:id/ex/:key
+
+exampleDetailHandler :: Pool -> RunId -> T.Text -> (Response -> IO a) -> IO a
+exampleDetailHandler pool rid key respond = do
+  mDto <- withSession pool $ do
+    mRun <- get @Run (Key rid)
+    case mRun of
+      Nothing  -> pure Nothing
+      Just run -> do
+        mtv    <- get @TargetVersion (Key run.targetVersion)
+        outs   <- selectWhere [ #run ==. rid ] :: Db [Output]
+        paired <- mapM (\o -> do { me <- get @Example (Key o.example); pure (o, me) }) outs
+        case sortOn (\(o, _) -> outIdInt o.id) [ (o, e) | (o, Just e) <- paired, e.key == key ] of
+          []           -> pure Nothing
+          ((o, e) : _) -> do
+            scores <- selectWhere [ #output ==. o.id ] :: Db [Score]
+            grades <- mapM gradeDto scores
+            let Aeson inputV = e.input
+                prompt = case mtv of
+                  Just tv -> either (const []) (map msgDto) (assembleMessages tv e)
+                  Nothing -> []
+                RunId rn = rid
+            pure (Just ExampleDetailDto
+              { runId = rn, exampleKey = key, input = inputV, prompt = prompt
+              , responseText = o.text, responseError = o.error
+              , grades = sortOn (\g -> g.graderName) grades })
+  case mDto of
+    Nothing  -> respond notFound
+    Just dto -> respond (json status200 dto)
+  where outIdInt (OutputId n) = n
+
+msgDto :: Message -> PromptMsgDto
+msgDto (Message r c) = PromptMsgDto { role = renderRole r, content = c }
+  where renderRole = \case
+          System -> "system"; User -> "user"; Assistant -> "assistant"; Tool -> "tool"
+
+gradeDto :: Score -> Db GradeDto
+gradeDto s = do
+  mgv <- get @GraderVersion (Key s.graderVersion)
+  mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
+  let gName = maybe "?" (.name) mg
+      gVersion = maybe 0 (.version) mgv
+      gKind = maybe "?" (.kind) mg
+      rationale = s.detail >>= \(Aeson v) -> AT.parseMaybe (AT.withObject "d" (AT..: "rationale")) v
+  pure GradeDto
+    { graderName = gName, graderVersion = gVersion, graderKind = gKind
+    , value = s.value, passed = s.passed, rationale = rationale
+    , gradeError = s.error, criteria = verdictsFromDetail s.detail }
+
+verdictsFromDetail :: Maybe (Aeson Value) -> [CriterionVerdictDto]
+verdictsFromDetail Nothing = []
+verdictsFromDetail (Just (Aeson v)) = maybe [] id (AT.parseMaybe p v)
+  where p = AT.withObject "detail" $ \o -> do
+              arr <- o AT..: "criteria"
+              mapM (AT.withObject "criterion" $ \c ->
+                      CriterionVerdictDto <$> c AT..: "criterion" <*> c AT..: "points"
+                                          <*> c AT..: "tags" <*> c AT..: "met" <*> c AT..: "explanation")
+                   (arr :: [Value])
 
 -- ---------------------------------------------------------------------------
 -- /api/compare
