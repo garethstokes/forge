@@ -45,7 +45,7 @@ import NeatInterpolation (text)
 import Crucible.Skill (Skill, skill, call, withExamples, withTests)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Decode (DecodeError (..))
-import Crucible.Codec (str, int, object, field, refine)
+import Crucible.Codec (str, int, object, field, refine, encodeText)
 import Crucible.Eval (Case (..), Expectation (..), Score (..), criterion, penalty, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
 import Crucible.Eval.Judge (judgeOnce, votePanel)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
@@ -53,6 +53,7 @@ import Crucible.Chat (runToolAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
+import Crucible.Memory (MemoryKind (..), Provenance (..), MemoryDraft (..), Query (..), remember, recallAs, runMemoryFile)
 import Crucible.Partial (runPartialWith)
 import System.IO (hFlush, stdout)
 import Data.IORef (newIORef, modifyIORef', readIORef)
@@ -106,6 +107,13 @@ main = do
       case typed of
         Right o  -> TIO.putStrLn ("typed fn: " <> sentLabel o)
         Left e   -> TIO.putStrLn ("typed fn decode error: " <> e.message)
+      let memPath = "/tmp/crucible-memory-demo.jsonl"
+      _ <- runEff (runMemoryFile memPath (case typed of
+             Right s -> remember (MemoryDraft Episodic (encodeText (codec @Sentiment) s) ["sentiment"] (BySkill "classify"))
+             Left _  -> remember (MemoryDraft Episodic "decode failed" ["sentiment"] (BySkill "classify"))))
+      recalled <- runEff (runMemoryFile memPath (recallAs (codec @Sentiment) (Query "" ["sentiment"] 5)))
+      TIO.putStrLn ("memory: recalled " <> T.pack (show (length recalled)) <> " item(s); "
+                    <> T.pack (show [either (const "stale") sentLabel v | (_, v) <- recalled]))
       let ageFn :: Skill T.Text Int
           ageFn = skill "extract-age" str
             (object (field "age" Prelude.id

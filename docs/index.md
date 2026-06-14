@@ -98,6 +98,7 @@ main = do
   instructions, codecs, schema injection, tolerant decode, retries, few-shot
   examples, `improveSkill`.
 - [Evals](evals.md): expectations, checklists, the judge, voting, calibration.
+- [Memory](memory.md): the Memory effect, provenance, interpreters, typed recall.
 - [Tool calling](tool-calling.md): record toolboxes, `runToolAgent`, the loop,
   the cap, tool schemas and errors.
 - [Streaming](streaming.md): the `Emit` effect and the streaming interpreters.
