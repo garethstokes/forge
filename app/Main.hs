@@ -300,8 +300,10 @@ main = do
             subAgent "weather-child" str (object (field "summary" Prelude.id str))
               "Use the get_weather tool and summarize the weather in one sentence."
               (tools weatherBox)
+          -- Anthropic requires a tool input_schema of type object, so the
+          -- delegate tool takes {city: ...} rather than a bare string.
           delegateWeather =
-            Tl.toolWith "delegate_weather" str str (\city -> do
+            Tl.toolWith "delegate_weather" (object (field "city" Prelude.id str)) str (\city -> do
               r <- spawn weatherChild city
               pure (either (\f -> "delegation failed: " <> T.pack (show f)) Prelude.id r))
           coordinator :: SubAgent '[Chat, IOE] T.Text T.Text
