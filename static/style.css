@@ -96,17 +96,27 @@ td.key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; 
 .chip.theme   { background:#fdf0e3; color:#9a5b13; }
 .chip.axis    { background:#e3f5f4; color:#0f6e69; }
 .chip.cluster { background:#efe7fb; color:#5b21b6; }
-.chip.metric.expandable { cursor:pointer; }
-.chip.metric.expandable:hover { box-shadow:0 0 0 2px #c9d7f6; }
 .chip .kind { font-size:10px; text-transform:uppercase; letter-spacing:.04em; opacity:.7; margin-left:6px;
               border-left:1px solid rgba(30,58,138,.25); padding-left:6px; }
-.chip .caret { margin-left:4px; opacity:.65; }
 .gdetail { margin:8px 0 4px; border:1px solid var(--line); border-radius:10px; background:#fbfcfe; overflow:hidden; }
 .gdetail-head { padding:11px 14px; border-bottom:1px solid var(--muted-bg); }
 .gdetail-head strong { font-size:14px; }
 .kind.big { background:#ede9fe; color:#5b21b6; border-radius:5px; font-size:11px; padding:1px 7px; margin-left:8px;
             text-transform:none; letter-spacing:0; border-left:none; opacity:1; }
 .gdesc { display:block; color:var(--muted); font-size:12px; margin-top:4px; }
+.gvals { display:block; font-variant-numeric:tabular-nums; color:#1e3a8a; font-size:12.5px; margin-top:5px; }
+.criteria { padding:10px 14px; border-bottom:1px solid var(--muted-bg); }
+.crit-cap { font-size:11px; font-weight:600; color:#4b5563; margin-bottom:7px; }
+.crit { display:flex; align-items:baseline; gap:9px; padding:4px 0; font-size:12.5px; border-top:1px dotted var(--muted-bg); }
+.crit:first-of-type { border-top:none; }
+.crit .pts { font-variant-numeric:tabular-nums; font-weight:600; font-size:11px; border-radius:4px; padding:0 5px; }
+.crit .pts.pos { background:#e3f6e8; color:#166534; }
+.crit .pts.neg { background:#fde8e8; color:#991b1b; }
+.crit-txt { flex:1; }
+.crit-tags .tag { font-size:11px; border-radius:999px; padding:0 8px; margin-left:4px; white-space:nowrap; }
+.crit-tags .tag.axis  { background:#e3f5f4; color:#0f6e69; }
+.crit-tags .tag.theme { background:#fdf0e3; color:#9a5b13; }
+.crit-tags .tag.cluster { background:#efe7fb; color:#5b21b6; }
 .gnote { display:block; color:#9aa1ad; font-size:11.5px; padding:0 14px 11px; }
 .chart { padding:12px 16px; }
 .chart-head, .brow { display:grid; grid-template-columns:120px 1fr 52px 56px 28px; align-items:center; gap:10px; }

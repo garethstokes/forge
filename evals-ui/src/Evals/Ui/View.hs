@@ -149,7 +149,7 @@ detailView m _ =
       ]
 
 runHeader :: [MisoString] -> RunSummaryDto -> View Model Action
-runHeader expanded r =
+runHeader _ r =
   div_
     [ P.class_ "run-header" ]
     [ h2_ [] [ text ("run #" <> msShow r.runId <> " — " <> ms r.datasetName <> " · v" <> msShow r.datasetVersion) ]
@@ -159,8 +159,7 @@ runHeader expanded r =
         , statusChip r.status
         , span_ [] [ text ("started " <> fmtMaybeTime r.startedAt <> " · finished " <> fmtMaybeTime r.finishedAt) ]
         ]
-    , div_ [ P.class_ "metrics" ] (map (graderPill expanded r.runId) r.metrics)
-    , div_ [ P.class_ "grader-details" ] [ graderDetailSection mc | mc <- r.metrics, gKey r.runId mc `elem` expanded ]
+    , div_ [ P.class_ "grader-details" ] (map graderDetailSection r.metrics)
     ]
 
 outputsTable :: [MisoString] -> [OutputRowDto] -> View Model Action
@@ -310,27 +309,37 @@ ciTxt = maybe "" (\s -> " ±" <> fmtD (1.96 * s))
 passTxt :: Maybe Double -> MisoString
 passTxt = maybe "" (\p -> " · pass " <> msShow (round (p * 100) :: Int) <> "%")
 
--- | A run-detail grader pill: always clickable, opens the grader-detail section.
-graderPill :: [MisoString] -> Int -> MetricDto -> View Model Action
-graderPill expanded rid mc =
-  span_ [ P.class_ "chip metric expandable", onClick (ToggleExpand (gKey rid mc)) ]
-    [ text (chipText mc), kindTag mc.graderKind
-    , span_ [ P.class_ "caret" ] [ text (if gKey rid mc `elem` expanded then " ▾" else " ▸") ] ]
-
-gKey :: Int -> MetricDto -> MisoString
-gKey rid mc = "m:" <> msShow rid <> ":" <> ms mc.graderName <> "v" <> msShow mc.graderVersion
-
--- | Full-width run-level grader detail: how it scores + the charted breakdown.
+-- | Full-width run-level grader detail: a values sub-heading, the run's
+-- distinct rubric criteria, and the charted breakdown.
 graderDetailSection :: MetricDto -> View Model Action
 graderDetailSection mc =
   div_ [ P.class_ "gdetail" ]
     ( div_ [ P.class_ "gdetail-head" ]
         [ strong_ [] [ text (ms mc.graderName) ], text (" v" <> msShow mc.graderVersion)
         , span_ [ P.class_ "kind big" ] [ text (ms mc.graderKind) ]
+        , span_ [ P.class_ "gvals" ] [ text (valsLine mc) ]
         , span_ [ P.class_ "gdesc" ] [ text (methodLine mc.graderKind) ] ]
-      : [ breakdownChart mc | not (null mc.breakdowns) ]
-      ++ [ span_ [ P.class_ "gnote" ] [ text "criteria vary per example — open an example to see its criteria" ]
+      : [ criteriaBlock mc.criteria | not (null mc.criteria) ]
+      ++ [ breakdownChart mc | not (null mc.breakdowns) ]
+      ++ [ span_ [ P.class_ "gnote" ] [ text "per-answer verdicts: open an example below" ]
          | mc.graderKind == "pointed" ] )
+
+valsLine :: MetricDto -> MisoString
+valsLine mc = "μ " <> fmtD mc.mean <> ciTxt mc.stderr <> passTxt mc.passRate
+
+criteriaBlock :: [RubricCriterionDto] -> View Model Action
+criteriaBlock cs =
+  div_ [ P.class_ "criteria" ]
+    ( div_ [ P.class_ "crit-cap" ] [ text ("what it checks · " <> msShow (length cs) <> " criteria") ]
+      : map critRow cs )
+  where
+    critRow c =
+      div_ [ P.class_ "crit" ]
+        [ span_ [ P.class_ (if c.points < 0 then "pts neg" else "pts pos") ]
+            [ text ((if c.points < 0 then "" else "+") <> fmtD c.points) ]
+        , span_ [ P.class_ "crit-txt" ] [ text (ms c.criterion) ]
+        , span_ [ P.class_ "crit-tags" ] (map tagChip c.tags) ]
+    tagChip t = span_ [ P.class_ ("tag " <> ms (namespace t)) ] [ text (ms (labelOf t)) ]
 
 methodLine :: Text -> MisoString
 methodLine k = case k of
