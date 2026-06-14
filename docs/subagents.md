@@ -15,9 +15,9 @@ leaves as prose or loose JSON.
 ```haskell
 data SubAgent es i o = SubAgent
   { name :: Text, input :: JSONCodec i, output :: JSONCodec o
-  , system :: Text, tools :: [Tool es], maxIters :: Int }
+  , system :: Text, tools :: [Tool (Agents es : es)], maxIters :: Int }
 
-subAgent :: Text -> JSONCodec i -> JSONCodec o -> Text -> [Tool es] -> SubAgent es i o
+subAgent :: Text -> JSONCodec i -> JSONCodec o -> Text -> [Tool (Agents es : es)] -> SubAgent es i o
 ```
 
 A `SubAgent` is a `Skill` whose body is a tool loop: an input codec, an output
