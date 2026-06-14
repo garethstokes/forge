@@ -59,11 +59,13 @@ VALUES (1, 1, 'gpt-mini', now() - interval '2 days');
 INSERT INTO target_versions (id, target, version, model, prompt, params, created_at)
 VALUES (1, 1, 1, 'claude-x', 'Answer the question concisely.', '{}', now() - interval '2 days');
 
-INSERT INTO graders (id, org, name, kind, created_at)
-VALUES (1, 1, 'exactness', 'exact', now() - interval '2 days');
+INSERT INTO graders (id, org, name, kind, created_at) VALUES
+  (1, 1, 'exactness', 'exact',   now() - interval '2 days'),
+  (2, 1, 'rubric',    'pointed', now() - interval '2 days');
 
-INSERT INTO grader_versions (id, grader, version, config, created_at)
-VALUES (1, 1, 1, '{"field": "a"}', now() - interval '2 days');
+INSERT INTO grader_versions (id, grader, version, config, created_at) VALUES
+  (1, 1, 1, '{"field": "a"}', now() - interval '2 days'),
+  (2, 2, 1, '{"votes": 1}',   now() - interval '2 days');
 
 INSERT INTO runs (id, org, dataset_version, target_version, status, started_at, finished_at, created_at) VALUES
   (1, 1, 1, 1, 'succeeded', now() - interval '26 hours', now() - interval '25 hours', now() - interval '26 hours'),
@@ -85,9 +87,27 @@ INSERT INTO scores (id, output, grader_version, value, passed, detail, error, cr
   (5, 5, 1, 0.0, false, '{"rationale": "Bonn is not the capital"}',   NULL,                          now() - interval '30 minutes'),
   (6, 6, 1, 1.0, true,  '{"rationale": "mentions Canberra"}',         NULL,                          now() - interval '30 minutes');
 
+-- pointed grader (rubric v1) scores run 1's outputs with per-criterion detail
+-- (axis tags), so the run-detail score column is populated for the new grader.
+INSERT INTO scores (id, output, grader_version, value, passed, detail, error, created_at) VALUES
+  (7, 1, 2, 0.7, NULL, '{"achieved":7,"possible":10,"criteria":[{"criterion":"names the capital","points":5,"tags":["axis:accuracy"],"met":true,"explanation":"says Paris"},{"criterion":"is concise","points":5,"tags":["axis:completeness"],"met":false,"explanation":"overly long"}]}', NULL, now() - interval '24 hours'),
+  (8, 2, 2, 1.0, NULL, '{"achieved":10,"possible":10,"criteria":[{"criterion":"names the capital","points":5,"tags":["axis:accuracy"],"met":true,"explanation":"Berlin"},{"criterion":"is concise","points":5,"tags":["axis:completeness"],"met":true,"explanation":"one word"}]}', NULL, now() - interval '24 hours'),
+  (9, 3, 2, 0.0, NULL, '{"achieved":0,"possible":10,"criteria":[{"criterion":"names the capital","points":5,"tags":["axis:accuracy"],"met":false,"explanation":"said Sydney"},{"criterion":"is concise","points":5,"tags":["axis:completeness"],"met":false,"explanation":"no"}]}', NULL, now() - interval '24 hours');
+
 INSERT INTO run_metrics (id, run, grader_version, mean, pass_rate, count, computed_at) VALUES
   (1, 1, 1, 0.6666666666666666, 0.6666666666666666, 3, now() - interval '24 hours'),
   (2, 2, 1, 0.5,                0.5,                 2, now() - interval '30 minutes');
+
+-- pointed grader on run 1: overall (tag NULL) + per-tag breakdowns with a
+-- bootstrap stderr, so the dashboard shows the ±CI chip and the expandable
+-- theme/axis breakdown panel in the run-detail view.
+INSERT INTO run_metrics (id, run, grader_version, mean, pass_rate, count, computed_at, tag, stderr) VALUES
+  (3, 1, 2, 0.62, NULL, 3, now() - interval '24 hours', NULL,                0.04),
+  (4, 1, 2, 0.58, NULL, 2, now() - interval '24 hours', 'theme:cardiology',  0.06),
+  (5, 1, 2, 0.71, NULL, 1, now() - interval '24 hours', 'theme:triage',      NULL),
+  (6, 1, 2, 0.80, NULL, 3, now() - interval '24 hours', 'axis:accuracy',     0.03),
+  (7, 1, 2, 0.45, NULL, 3, now() - interval '24 hours', 'axis:completeness', 0.07),
+  (8, 1, 2, 0.66, NULL, 2, now() - interval '24 hours', 'axis:safety',       0.05);
 
 -- keep the sequences ahead of the explicit ids
 SELECT setval('datasets_id_seq', 10), setval('dataset_versions_id_seq', 10),
