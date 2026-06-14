@@ -5,8 +5,11 @@
 -- are accessed with record-dot syntax ("Evals.Api" uses DuplicateRecordFields).
 module Evals.Ui.View (viewModel) where
 
-import Data.Aeson (Value)
+import Data.Aeson (Value (..))
+import qualified Data.Aeson.Key as AK
+import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Text (encodeToLazyText)
+import Data.Foldable (toList)
 import Data.List (nub)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
@@ -247,8 +250,25 @@ exampleView m _ _ =
   where
     exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
 
+-- | Pretty-print a JSON value with 2-space indentation. Scalars are encoded
+-- via aeson (correct escaping); objects/arrays are hand-indented.
 renderJson :: Value -> MisoString
-renderJson = ms . LT.toStrict . encodeToLazyText
+renderJson = ms . go 0
+  where
+    ind n = T.replicate n "  "
+    enc   = LT.toStrict . encodeToLazyText
+    go _ (Object o) | KM.null o = "{}"
+    go n (Object o) =
+      "{\n"
+        <> T.intercalate ",\n"
+             [ ind (n + 1) <> enc (String (AK.toText k)) <> ": " <> go (n + 1) v | (k, v) <- KM.toList o ]
+        <> "\n" <> ind n <> "}"
+    go _ (Array a) | null a = "[]"
+    go n (Array a) =
+      "[\n"
+        <> T.intercalate ",\n" [ ind (n + 1) <> go (n + 1) v | v <- toList a ]
+        <> "\n" <> ind n <> "]"
+    go _ v = enc v
 
 promptMsg :: PromptMsgDto -> View Model Action
 promptMsg p =
