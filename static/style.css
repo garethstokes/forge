@@ -159,6 +159,10 @@ td.score { white-space: nowrap; }
 .mark.fail { color: var(--fail-fg); }
 td.score-error { color: var(--fail-fg); }
 
+/* outputs means footer */
+.outputs tfoot .means td { border-top:2px solid var(--line); padding-top:8px; font-weight:600; color:var(--fg); font-variant-numeric:tabular-nums; }
+.outputs tfoot .means .mean-lab { color:var(--muted); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.05em; }
+
 /* compare */
 tr.disagree td { background: #fff7e0; }
 td.delta.pos { color: var(--ok-fg); font-weight: 600; }

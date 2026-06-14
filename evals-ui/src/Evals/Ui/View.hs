@@ -145,7 +145,7 @@ detailView m _ =
       [ P.class_ "detail" ]
       [ backLink
       , runHeader (_expandedM m) d.run
-      , outputsTable (_expandedM m) d.outputs
+      , outputsTable (_expandedM m) d.run.metrics d.outputs
       ]
 
 runHeader :: [MisoString] -> RunSummaryDto -> View Model Action
@@ -162,16 +162,22 @@ runHeader _ r =
     , div_ [ P.class_ "grader-details" ] (map graderDetailSection r.metrics)
     ]
 
-outputsTable :: [MisoString] -> [OutputRowDto] -> View Model Action
-outputsTable expandedKeys outputs =
+outputsTable :: [MisoString] -> [MetricDto] -> [OutputRowDto] -> View Model Action
+outputsTable expandedKeys metrics outputs =
   table_
     [ P.class_ "outputs" ]
     [ thead_ [] [ tr_ [] (map thTxt ([ "example", "output", "latency ms" ] <> map graderHeading gs)) ]
     , tbody_ [] (map row outputs)
+    , tfoot_ [] [ tr_ [ P.class_ "means" ]
+        ( td_ [ P.class_ "mean-lab" ] [ text "mean" ] : td_ [] [] : td_ [] []
+          : [ td_ [ P.class_ "score" ] [ text (meanFor g) ] | g <- gs ] ) ]
     ]
   where
     gs = nub [ (s.graderName, s.graderVersion) | o <- outputs, s <- o.scores ]
     graderHeading (g, v) = ms g <> " v" <> msShow v
+    meanFor (g, v) = case [ m | m <- metrics, m.graderName == g, m.graderVersion == v ] of
+      (m : _) -> fmtD m.mean
+      []      -> "–"
     row o =
       tr_
         [ P.class_ (if isJust o.outputError then "error-row" else "") ]
