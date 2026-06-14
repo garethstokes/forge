@@ -79,6 +79,8 @@ import qualified Data.ByteString.Base64 as B64TEST
 import qualified Data.ByteString as BSTEST
 import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), spawn, workerPrompt, runAgentsScripted, runAgents)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
+import qualified Crucible.Ledger as Ledger
+import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
 
 -- Sample types for codec tests
 
@@ -2273,4 +2275,42 @@ main = runChecks
   , check "gate defaults: votes = 1, retries = 1"
       (1 :: Int, 1 :: Int)
       (let g = gate "r" (id :: Text -> Text) in (g.votes, g.retries))
+  , check "ledger: record yields sequential ids"
+      ([WorkId 0, WorkId 1])
+      (fst (runPureEff (runLedgerState (do a <- Ledger.record "A"; b <- Ledger.record "B"; pure [a, b]))))
+  , check "ledger: both recorded items are Ready in record order"
+      [WorkId 0, WorkId 1]
+      (map ((.wid) :: WorkItem -> WorkId) (snd (runPureEff (runLedgerState (do _ <- Ledger.record "A"; _ <- Ledger.record "B"; Ledger.listReady)))))
+  , check "ledger: claim a Ready item succeeds and sets claimant"
+      (True, Just "worker-1", Claimed)
+      (let (ok, final) = runPureEff (runLedgerState (do
+                 w <- Ledger.record "A"
+                 Ledger.claim w "worker-1"))
+           it = head (filter (\i -> i.wid == WorkId 0) final)
+       in (ok, it.claimant, it.state))
+  , check "ledger: a second claim of the same item fails"
+      (True, False)
+      (fst (runPureEff (runLedgerState (do
+                 w <- Ledger.record "A"
+                 a <- Ledger.claim w "worker-1"
+                 b <- Ledger.claim w "worker-2"
+                 pure (a, b)))))
+  , check "ledger: claiming an unknown id fails"
+      False
+      (fst (runPureEff (runLedgerState (Ledger.claim (WorkId 99) "x"))))
+  , check "ledger: claimed item drops from listReady"
+      ([] :: [WorkId])
+      (map ((.wid) :: WorkItem -> WorkId) (fst (runPureEff (runLedgerState (do w <- Ledger.record "A"; _ <- Ledger.claim w "w1"; Ledger.listReady)))))
+  , check "ledger: complete marks Done and drops from listReady"
+      (Ledger.Done, ([] :: [WorkId]))
+      (let (readyIds, final) = runPureEff (runLedgerState (do
+                 w <- Ledger.record "A"
+                 Ledger.complete w
+                 rs <- Ledger.listReady
+                 pure (map ((.wid) :: WorkItem -> WorkId) rs)))
+           it = head final
+       in (it.state, readyIds))
+  , check "ledger: workItemCodec round-trips a Ready item"
+      (Right (WorkItem (WorkId 3) "do it" Ready Nothing))
+      (decodeLLM workItemCodec (C.encodeText workItemCodec (WorkItem (WorkId 3) "do it" Ready Nothing)))
   ]
