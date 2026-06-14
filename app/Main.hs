@@ -145,14 +145,16 @@ main = do
                     <> ", lifted pass " <> T.pack (show (getPassRate mlLifted))
                     <> "; delta (pass,score) = (" <> T.pack (show mlDPass)
                     <> ", " <> T.pack (show mlDScore) <> ")")
-      -- Multimodal: send a tiny image to a typed skill via the Chat path.
-      let onePxPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
-          describeImage = skill "describe-image" str str
-            (const "Describe this image in one short sentence.")
+      -- Multimodal: send a small image to a typed skill via the Chat path.
+      let bluePng = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABAAQMAAACQp+OdAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGUExURSBg0P///x0TVD8AAAABYktHRAH/Ai3eAAAAB3RJTUUH6gYOBAgJopiKpwAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNi0wNi0xNFQwNDowODowOSswMDowMPbQ3xQAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjYtMDYtMTRUMDQ6MDg6MDkrMDA6MDCHjWeoAAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA2LTE0VDA0OjA4OjA5KzAwOjAw0JhGdwAAAA9JREFUKM9jYBgFo4B8AAACQAABjMWrdwAAAABJRU5ErkJggg=="
+          describeImage :: Skill T.Text T.Text
+          describeImage = skill "describe-image" str
+            (object (field "color" Prelude.id str))
+            (const "What is the dominant color of this image?")
       mmRes <- runEff (Anthropic.runChat cfg
-                 (callMedia describeImage ("" :: T.Text) [imageB64 "image/png" onePxPng]))
+                 (callMedia describeImage ("" :: T.Text) [imageB64 "image/png" bluePng]))
       case mmRes of
-        Right d -> TIO.putStrLn ("multimodal: " <> d)
+        Right d -> TIO.putStrLn ("multimodal: dominant color = " <> d)
         Left e  -> TIO.putStrLn ("multimodal decode error: " <> (e.message :: T.Text))
       let ageFn :: Skill T.Text Int
           ageFn = skill "extract-age" str
