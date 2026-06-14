@@ -22,7 +22,9 @@ subAgent :: Text -> JSONCodec i -> JSONCodec o -> Text -> [Tool es] -> SubAgent 
 
 A `SubAgent` is a `Skill` whose body is a tool loop: an input codec, an output
 codec, an instruction, its own toolbox, and a tool-loop cap. Each worker carries
-its own toolbox, so a worker has only the authority it needs.
+its own toolbox, so a worker has only the authority it needs. A tool in that
+toolbox can itself call `spawn`, so a worker can delegate a sub-task to a child
+worker.
 
 If a worker has tools, its `system` instruction must tell it to use them before
 replying. The base prompt only asks the worker to finish with JSON; it does not
@@ -42,8 +44,10 @@ spawn :: (Agents es :> r) => SubAgent es i o -> i -> Eff r (Either AgentFailure 
 ```
 
 `spawn` runs the worker and decodes its final answer through the output codec.
-The parent gets `Either AgentFailure o` and never sees the worker transcript. A
-worker cannot spawn its own workers in this release: spawn is one level.
+The parent gets `Either AgentFailure o` and never sees the worker transcript.
+A worker spawns sub-workers by carrying a tool whose handler calls `spawn`, so
+decomposition can recurse to any depth. The spawn cap bounds the whole tree,
+root spawn included, so a runaway recursion stops at `SpawnBudgetExceeded`.
 
 ## Interpreters
 
@@ -54,9 +58,10 @@ runAgentsScripted :: Int -> [Text] -> Eff (Agents es : es) a -> Eff es a
 
 `runAgents` is the live interpreter: it drives each worker's tool loop under the
 ambient `Chat`, capped at the given number of spawns (exhaustion is
-`SpawnBudgetExceeded`). `runAgentsScripted` is model-free: each spawn pops the
-next canned final-answer text and decodes it, honoring the same cap, so you can
-test an orchestrator's logic without a model.
+`SpawnBudgetExceeded`). The cap is the budget for the entire spawn tree, not per
+worker. `runAgentsScripted` is model-free: each spawn pops the next canned
+final-answer text and decodes it, honoring the same cap, so you can test an
+orchestrator's logic without a model.
 
 ```haskell
 orchestrate :: (Agents es :> r) => Eff r (Either AgentFailure Summary)
@@ -103,6 +108,4 @@ spawn cap to leave room: a cap that runs out mid-retry surfaces as
 
 ## What is not covered
 
-Workers are leaf (no nested trees) and spawn is synchronous. A work-ledger
-effect, nested trees with tree-wide budgets, and concurrent spawn are planned as
-separate work.
+Spawn is synchronous. Concurrent spawn is planned as separate work.
