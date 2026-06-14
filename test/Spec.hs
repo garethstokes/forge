@@ -73,6 +73,7 @@ import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta
 import System.IO (openTempFile, hClose)
 import System.Directory (removeFile)
 import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
+import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
 import qualified Data.ByteString as BSTEST
 
@@ -2139,4 +2140,27 @@ main = runChecks
       "[{\"content\":[{\"file\":{\"file_data\":\"data:application/pdf;base64,JVBERg==\",\"filename\":\"document.pdf\"},\"type\":\"file\"}],\"role\":\"user\"}]"
       (C.encodeText (C.list' C.anyValue)
         (OpenAI.chatMessagesJson (Chat.Message User [Chat.DocumentBlock (pdfB64 "JVBERg==")])))
+  , check "mediaMessage: image then text, image routed to ImageBlock"
+      True
+      (case mediaMessage (skill "s" C.str C.str (const "extract")) ("" :: Text) [imageB64 "image/png" "QUJD"] of
+         Chat.Message User (Chat.ImageBlock m : Chat.TextBlock _ : []) -> m.mediaType == "image/png"
+         _ -> False)
+  , check "mediaMessage: pdf routed to DocumentBlock"
+      True
+      (case mediaMessage (skill "s" C.str C.str (const "extract")) ("" :: Text) [pdfB64 "JVBERg=="] of
+         Chat.Message User (Chat.DocumentBlock _ : Chat.TextBlock _ : []) -> True
+         _ -> False)
+  , check "callMedia: valid reply decodes to output"
+      (Right ("hello" :: Text))
+      (runPureEff (runChatScripted [Turn "\"hello\"" []]
+        (callMedia (skill "s" C.str C.str (const "extract")) ("" :: Text) [imageB64 "image/png" "QUJD"])))
+  , check "callMedia: bad reply then good reply recovers"
+      (Right ("ok" :: Text))
+      (runPureEff (runChatScripted [Turn "not json" [], Turn "\"ok\"" []]
+        (callMedia (skill "s" C.str C.str (const "extract")) ("" :: Text) [imageB64 "image/png" "QUJD"])))
+  , check "callMedia: all-bad past retries returns Left (isLeft)"
+      True
+      (either (const True) (const False)
+        (runPureEff (runChatScripted [Turn "x" [], Turn "y" [], Turn "z" [], Turn "w" []]
+          (callMedia (withRetries 1 (skill "s" C.str C.str (const "extract"))) ("" :: Text) [imageB64 "image/png" "QUJD"]))))
   ]
