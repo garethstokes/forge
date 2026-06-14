@@ -45,6 +45,7 @@ viewModel _ m =
       RunR i -> detailView m i
       CompareR a b -> compareView m a b
       ExampleR i k -> exampleView m i k
+      CalibrationR -> text "calibration (coming soon)"
 
 -- | SSE connection status dot in the header: green while the change feed is
 -- connected, gray while the EventSource is reconnecting.

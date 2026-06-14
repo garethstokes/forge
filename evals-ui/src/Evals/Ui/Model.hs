@@ -18,6 +18,7 @@ module Evals.Ui.Model
   , detailL
   , compareL
   , exampleL
+  , calibrationL
   , selectedL
   , expandedL
   , liveL
@@ -31,6 +32,7 @@ module Evals.Ui.Model
   , runHash
   , compareHash
   , exampleHash
+  , calibrationHash
   , encodeSegment
     -- * Small helpers
   , fromEither
@@ -55,6 +57,7 @@ data Route
   | RunR Int
   | CompareR Int Int
   | ExampleR Int T.Text
+  | CalibrationR
   deriving (Show, Eq)
 
 -- | Lifecycle of a fetched resource.
@@ -78,6 +81,7 @@ data Model = Model
   , _detailM :: RemoteData RunDetailDto
   , _compareM :: RemoteData CompareDto
   , _exampleM :: RemoteData ExampleDetailDto
+  , _calibrationM :: RemoteData [CalibrationSeriesDto]
   , _selectedM :: [Int]
     -- ^ run ids ticked for comparison on the runs view (at most two)
   , _expandedM :: [MisoString]
@@ -93,7 +97,7 @@ data Model = Model
   } deriving (Show, Eq)
 
 emptyModel :: Model
-emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked [] [] LiveReconnecting False False
+emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked [] [] LiveReconnecting False False
 
 data Action
   = Startup
@@ -114,6 +118,7 @@ data Action
   -- ^ carries the requested (a, b) ids for the same stale-response guard
   | GotExample Int T.Text (Either MisoString ExampleDetailDto)
   -- ^ carries the requested (run id, example key) for the same stale-response guard
+  | GotCalibration (Either MisoString [CalibrationSeriesDto])
   | SseOpen
   -- ^ the EventSource (re)connected
   | SseError
@@ -144,6 +149,9 @@ compareL = lens _compareM $ \r x -> r { _compareM = x }
 exampleL :: Lens Model (RemoteData ExampleDetailDto)
 exampleL = lens _exampleM $ \r x -> r { _exampleM = x }
 
+calibrationL :: Lens Model (RemoteData [CalibrationSeriesDto])
+calibrationL = lens _calibrationM $ \r x -> r { _calibrationM = x }
+
 selectedL :: Lens Model [Int]
 selectedL = lens _selectedM $ \r x -> r { _selectedM = x }
 
@@ -171,6 +179,7 @@ relevantTo route table =
     RunR _ -> table `elem` detailTables
     CompareR _ _ -> table `elem` detailTables
     ExampleR _ _ -> table `elem` detailTables
+    CalibrationR -> table == "meta_evals"
   where
     detailTables = ["runs", "outputs", "scores", "run_metrics"]
 
@@ -184,6 +193,7 @@ parseHash h =
     ["", "runs", n] | Just i <- readInt n -> RunR i
     ["", "compare", a, b] | Just x <- readInt a, Just y <- readInt b -> CompareR x y
     ["", "runs", n, "ex", k] | Just i <- readInt n -> ExampleR i (decodeSegment k)
+    ["", "calibration"] -> CalibrationR
     _ -> RunsR
   where
     readInt t = case TR.decimal t of
@@ -201,6 +211,9 @@ compareHash a b = "#/compare/" <> msShow a <> "/" <> msShow b
 
 exampleHash :: Int -> T.Text -> MisoString
 exampleHash i k = "#/runs/" <> msShow i <> "/ex/" <> ms (encodeSegment k)
+
+calibrationHash :: MisoString
+calibrationHash = "#/calibration"
 
 encodeSegment :: T.Text -> T.Text
 encodeSegment = T.concatMap enc

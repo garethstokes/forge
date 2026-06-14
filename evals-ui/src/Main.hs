@@ -64,6 +64,8 @@ updateModel = \case
       ExampleR _ _ -> do
         exampleL .= Loading
         expandedL .= []
+      CalibrationR ->
+        calibrationL .= Loading
     fetchRoute r
   Navigate h ->
     io_ (setHash h)
@@ -94,6 +96,8 @@ updateModel = \case
     case route of
       ExampleR i kk | i == rid, kk == k -> exampleL %= \old -> keepStale old (fromEither e)
       _ -> pure ()
+  GotCalibration e ->
+    calibrationL %= \old -> keepStale old (fromEither e)
   SseOpen -> do
     -- Track whether this is the very first connect or a genuine reconnect.
     -- On the first connect SetRoute has already issued a fetch, so we must NOT
@@ -139,3 +143,5 @@ fetchRoute = \case
     fetchJson ("/api/compare?a=" <> msShow a <> "&b=" <> msShow b) (GotCompare a b)
   ExampleR i k ->
     fetchJson ("/api/runs/" <> msShow i <> "/ex/" <> ms (encodeSegment k)) (GotExample i k)
+  CalibrationR ->
+    fetchJson "/api/calibration" GotCalibration
