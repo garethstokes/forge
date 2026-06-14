@@ -26,10 +26,14 @@ adapter, (b) a config-driven custom grader prompt so we can use HealthBench's ex
 template (true reproduction, not a directional comparison), (c) a run script, (d) a
 reconciliation writeup.
 
-## Data: the consensus subset
+## Data: the grader meta-eval dataset
 
-Source (verbatim from `openai/simple-evals/healthbench_eval.py`):
-`https://openaipublic.blob.core.windows.net/simple-evals/healthbench/consensus_2025-05-09-20-00-46.jsonl`
+Source = `INPUT_PATH` in `openai/simple-evals/healthbench_meta_eval.py`:
+`https://openaipublic.blob.core.windows.net/simple-evals/healthbench/2025-05-07-06-14-12_oss_meta_eval.jsonl`
+
+(NB: NOT the `consensus_*.jsonl` file — that is the main eval's *consensus subset*
+of prompts+rubrics with no physician labels. The grader meta-eval dataset with
+`binary_labels` is the `_oss_meta_eval.jsonl` above.)
 
 Each line (the meta-eval record, per `healthbench_meta_eval.py`):
 
