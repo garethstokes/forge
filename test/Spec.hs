@@ -72,6 +72,9 @@ import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..)
 import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
 import System.Directory (removeFile)
+import Crucible.Media (Media (..), imageB64, pdfB64, imageFile, pdfFile)
+import qualified Data.ByteString.Base64 as B64TEST
+import qualified Data.ByteString as BSTEST
 
 -- Sample types for codec tests
 
@@ -2093,4 +2096,25 @@ main = runChecks
     in check "memoryLift positive delta when lifted arm passes"
          (1.0, 1.0)
          (liftDelta (base, lifted))
+  , check "Media.imageB64 sets fields, no filename"
+      (Media "image/png" "QUJD" Nothing)
+      (imageB64 "image/png" "QUJD")
+  , check "Media.pdfB64 sets application/pdf, no filename"
+      (Media "application/pdf" "JVBERg==" Nothing)
+      (pdfB64 "JVBERg==")
+  , do (p, h) <- openTempFile "/tmp" "crucible-media-test.png"
+       BSTEST.hPut h (BSTEST.pack [1,2,3,4]) >> hClose h
+       m <- imageFile p
+       removeFile p
+       let okType = m.mediaType == "image/png"
+           okData = B64TEST.decode (TE.encodeUtf8 m.dataB64) == Right (BSTEST.pack [1,2,3,4])
+           okName = m.filename == Nothing
+       check "Media.imageFile infers png + round-trips bytes" True (okType && okData && okName)
+  , do (p, h) <- openTempFile "/tmp" "crucible-media-test.pdf"
+       BSTEST.hPut h (BSTEST.pack [37,80,68,70]) >> hClose h
+       m <- pdfFile p
+       removeFile p
+       let okType = m.mediaType == "application/pdf"
+           okName = maybe False (T.isSuffixOf ".pdf") m.filename
+       check "Media.pdfFile sets pdf type + filename" True (okType && okName)
   ]
