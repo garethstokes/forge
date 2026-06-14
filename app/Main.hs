@@ -58,6 +58,7 @@ import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), con
 import Crucible.Memory.Eval (memoryLift, liftDelta)
 import Crucible.Skill.Multimodal (callMedia)
 import Crucible.Media (imageB64)
+import Crucible.Eval.Latency (Timed (..), timed, withinMs)
 import Crucible.Partial (runPartialWith)
 import System.IO (hFlush, stdout)
 import Data.IORef (newIORef, modifyIORef', readIORef)
@@ -257,6 +258,11 @@ main = do
            [(1, "rude"), (5, "warm and courteous")])
         ("Thanks so much for waiting, happy to help!" :: T.Text))))
       TIO.putStrLn ("scale: " <> politeness.rationale)
+      -- Latency: time a live call and check it against a budget (live-only).
+      tcall <- runEff (Anthropic.run cfg (timed (call classify "I love this!")))
+      let Timed { latencyMs = latMs } = tcall
+      TIO.putStrLn ("latency: " <> T.pack (show latMs) <> " ms (within 5000ms: "
+                    <> T.pack (show (withinMs 5000 tcall)) <> ")")
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
