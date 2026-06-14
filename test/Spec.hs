@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Crucible.Decode (stripToJson, decodeLLM, DecodeError (..))
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
-import Effectful (Eff, runEff, runPureEff)
+import Effectful (Eff, runEff, runPureEff, liftIO)
 import qualified Data.Text.IO as TIO
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text.Encoding as TE
@@ -34,6 +34,7 @@ import Crucible.Tool (runTools)
 import Crucible.Example (demoAgent)
 import Crucible.Tool.Generic (tools)
 import Crucible.Eval (Case(..), Expectation(..), Criterion(..), criterion, penalty, Score(..), score, Result(..), Report(..), runEval, runEvalN, scoreM, scoreN, scoreWith, judge, judgeN, renderReport, groundingCheck, judgeWith, runEvalWith, lintChecklist)
+import Crucible.Eval.Latency (Timed (..), timed, timeEach, withinMs, maxLatencyMs)
 import Crucible.Eval.Lint (LintIssue (..), LintFinding (..), lintPrompt)
 import Crucible.Skill.Improve (ImproveStep (..), improveSkill)
 import Crucible.Eval.Judge (VerdictKind(..), Verdict(..), verdictCodec, AbstainPolicy(..), JudgeExample(..), JudgeOpts(..), defaultJudgeOpts, VoteOutcome(..), vote, tally, votePanel, balanceExamples, judgePrompt, ratePrompt, JudgeError(..))
@@ -2167,4 +2168,21 @@ main = runChecks
       (either (const True) (const False)
         (runPureEff (runChatScripted [Turn "x" [], Turn "y" [], Turn "z" [], Turn "w" []]
           (callMedia (withRetries 1 (skill "s" C.str C.str (const "extract"))) ("" :: Text) [imageB64 "image/png" "QUJD"]))))
+  -- Crucible.Eval.Latency: pure predicates
+  , check "withinMs: under budget passes" True  (withinMs 100 (Timed () 50))
+  , check "withinMs: over budget fails"  False (withinMs 100 (Timed () 150))
+  , check "withinMs: at budget passes"   True  (withinMs 100 (Timed () 100))
+  , check "maxLatencyMs: returns the largest" 30 (maxLatencyMs [Timed () 10, Timed () 30, Timed () 20])
+  , check "maxLatencyMs: empty is zero" 0 (maxLatencyMs ([] :: [Timed ()]))
+  , check "Timed Functor: maps value, keeps latency"
+      (Timed (2 :: Int) 42)
+      (fmap (+1) (Timed (1 :: Int) 42))
+  -- Crucible.Eval.Latency: IOE timing tests
+  , do t <- runEff (timed (pure (7 :: Int)))
+       check "timed: preserves value, latency >= 0" True (t.value == 7 && t.latencyMs >= 0)
+  , do t <- runEff (timed (liftIO (threadDelay 50000)))
+       check "timed: a 50ms delay measures >= 30ms" True (t.latencyMs >= 30)
+  , do ts <- runEff (timeEach pure [1, 2, 3 :: Int])
+       check "timeEach: times each input, values preserved" True
+         (map (.value) ts == [1, 2, 3] && all (\x -> x.latencyMs >= 0) ts)
   ]

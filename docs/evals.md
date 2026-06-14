@@ -697,6 +697,40 @@ listing their names in `judgeErrors` instead. If judge errors recur, the fix
 is usually in the rubric text (something in it is steering the judge away
 from the required JSON shape), not in the system under test.
 
+## Latency
+
+Latency is a live-only axis, separate from the content score. A scripted or
+cassette run returns near-instantly, so a wall-clock budget there means
+nothing. `Crucible.Eval.Latency` keeps timing out of the eval core and gates it
+on `IOE`, so you can only time a live call. That `IOE` constraint is the
+live-only marker.
+
+```haskell
+data Timed a = Timed { value :: a, latencyMs :: Int }
+
+timed     :: (IOE :> es) => Eff es a -> Eff es (Timed a)
+timeEach  :: (IOE :> es) => (i -> Eff es a) -> [i] -> Eff es [Timed a]
+withinMs     :: Int -> Timed a -> Bool   -- one result met its budget
+maxLatencyMs :: [Timed a] -> Int         -- the slowest of a batch
+```
+
+`timed` wraps any effectful action (a `call`, a `converse`, a `callMedia`, a
+tool-agent run) and reports its duration in milliseconds. `withinMs` and
+`maxLatencyMs` are pure, so a test asserts a budget without any further effect:
+
+```haskell
+t <- timed (call mySkill input)
+-- assert: withinMs 2000 t
+
+ts <- timeEach (call mySkill) inputs
+-- assert: maxLatencyMs ts <= 2000
+```
+
+Latency stays out of `Report`: the content score and the latency budget are
+independent, and only the latter needs a live interpreter. For per-provider
+call timing in a fallback chain, see `Crucible.LLM.CallLog`, which records a
+`durationMs` per member attempt.
+
 ## Rubric rules at a glance
 
 The whole page as a checklist. Each rule links back to the section that
