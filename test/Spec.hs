@@ -78,6 +78,7 @@ import Crucible.Skill.Multimodal (mediaMessage, callMedia)
 import qualified Data.ByteString.Base64 as B64TEST
 import qualified Data.ByteString as BSTEST
 import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), spawn, workerPrompt, runAgentsScripted, runAgents)
+import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 
 -- Sample types for codec tests
 
@@ -2225,4 +2226,35 @@ main = runChecks
   , do let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[Chat.Chat, IOE]])
        r <- runEff (runChatScripted [Turn "{\"n\": 42}" []] (runAgents 5 (spawn w 21)))
        check "runAgents (scripted Chat): worker answer decodes to typed output" (Right (42 :: Int)) r
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+        g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
+    in check "spawnGated: judge passes -> Right o"
+         (Right (6 :: Int))
+         (runPureEff (runLLMScripted ["{\"verdict\":\"pass\",\"why\":\"ok\"}"]
+            (runAgentsScripted 5 ["{\"n\": 6}"] (spawnGated g w 3))))
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+        g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
+    in check "spawnGated: reject then accept on retry"
+         (Right (7 :: Int))
+         (runPureEff (runLLMScripted ["{\"verdict\":\"fail\",\"why\":\"too small\"}", "{\"verdict\":\"pass\",\"why\":\"ok\"}"]
+            (runAgentsScripted 5 ["{\"n\": 1}", "{\"n\": 7}"] (spawnGated g w 3))))
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+        g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
+    in check "spawnGated: reject past retries -> GateRejected"
+         True
+         (case runPureEff (runLLMScripted ["{\"verdict\":\"fail\",\"why\":\"bad\"}", "{\"verdict\":\"fail\",\"why\":\"still bad\"}"]
+                 (runAgentsScripted 5 ["{\"n\": 1}", "{\"n\": 2}"] (spawnGated g w 3))) of
+            Left (GateRejected nm _) -> nm == "double"
+            _ -> False)
+  , let w = subAgent "double" C.int (C.object (C.field "n" Prelude.id C.int)) "double the input" ([] :: [Tl.Tool '[LLM]])
+        g = gate "the number is positive" (\n -> T.pack (show (n :: Int)))
+    in check "spawnGated: spawn decode failure short-circuits (no judging)"
+         True
+         (case runPureEff (runLLMScripted []
+                 (runAgentsScripted 5 ["not json"] (spawnGated g w 3))) of
+            Left (WorkerDecodeFailed nm _) -> nm == "double"
+            _ -> False)
+  , check "gate defaults: votes = 1, retries = 1"
+      (1 :: Int, 1 :: Int)
+      (let g = gate "r" (id :: Text -> Text) in (g.votes, g.retries))
   ]
