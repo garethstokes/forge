@@ -77,11 +77,13 @@ data Agents (es :: [Effect]) :: Effect where
   Spawn :: SubAgent es i o -> i -> Agents es m (Either AgentFailure o)
 type instance DispatchOf (Agents es) = Dynamic
 
-spawn :: (Agents es :> es) => SubAgent es i o -> i -> Eff es (Either AgentFailure o)
+spawn :: (Agents es :> r) => SubAgent es i o -> i -> Eff r (Either AgentFailure o)
 spawn sub i = send (Spawn sub i)
 
--- | Synchronous local interpreter with a spawn-count cap.
-runAgents :: (Chat :> es) => Int -> Eff (Agents es : es) a -> Eff es a
+-- | Synchronous local interpreter with a spawn-count cap. Needs IOE: the
+-- budget is an IORef (a row State would force the worker's [Tool es] into the
+-- State-extended row), and live spawn is IO-backed anyway.
+runAgents :: (Chat :> es, IOE :> es) => Int -> Eff (Agents es : es) a -> Eff es a
 
 -- | Model-free interpreter: each spawn pops the next canned final-answer text
 -- and decodes it through that spawn's output codec, honoring the same cap.

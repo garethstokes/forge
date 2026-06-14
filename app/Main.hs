@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -21,7 +22,7 @@ import qualified Data.Text.IO as TIO
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
 
-import Effectful (Eff, runEff, liftIO)
+import Effectful (Eff, runEff, liftIO, IOE)
 import Crucible.Tool.Generic (tools)
 
 import Crucible.LLM (Message (..), Role (..), complete)
@@ -49,7 +50,8 @@ import Crucible.Codec (str, int, object, field, refine, encodeText)
 import Crucible.Eval (Case (..), Expectation (..), Score (..), Report (..), criterion, penalty, runEval, runEvalN, renderReport, scoreM, lintChecklist, LintFinding (..), LintIssue (..))
 import Crucible.Eval.Judge (judgeOnce, votePanel)
 import Crucible.Codec.Generic (HasCodec (codec), genericCodec)
-import Crucible.Chat (runToolAgent)
+import Crucible.Chat (runToolAgent, Chat)
+import Crucible.Agents (subAgent, spawn, AgentFailure (..), runAgents, SubAgent)
 import Crucible.Usage (Usage (..), usTotalTokens, Rates (..), estimateCost)
 import qualified Crucible.Tool as Tl
 import Crucible.Emit (runEmitIO)
@@ -263,6 +265,19 @@ main = do
       let Timed { latencyMs = latMs } = tcall
       TIO.putStrLn ("latency: " <> T.pack (show latMs) <> " ms (within 5000ms: "
                     <> T.pack (show (withinMs 5000 tcall)) <> ")")
+      -- Spawn: an orchestrator spawns one worker subagent (with a tool) and
+      -- gets back a typed result over an isolated transcript.
+      let weatherWorker :: SubAgent '[Chat, IOE] T.Text T.Text
+          weatherWorker =
+            subAgent "weather-worker" str
+              (object (field "summary" Prelude.id str))
+              "Use the get_weather tool, then summarize the weather in one sentence."
+              (tools weatherBox)
+      spawnRes <- runEff (Anthropic.runChat cfg
+                    (runAgents 4 (spawn weatherWorker "Brisbane")))
+      case spawnRes of
+        Right summary -> TIO.putStrLn ("spawn: worker returned: " <> summary)
+        Left failure  -> TIO.putStrLn ("spawn: worker failed: " <> T.pack (show failure))
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
