@@ -32,11 +32,17 @@ module Crucible.Memory
   , runMemoryScripted
   , runMemoryPure
   , runMemoryFile
+  , MemoryStore (..)
+  , runMemoryWith
+  , memoryStoreFile
+  , memoryStorePure
+  , newMemoryStorePure
   , memoryItemCodec
   , memoryKindCodec
   ) where
 
 import Control.Exception (IOException, try)
+import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.List (sortOn)
 import Data.Ord (Down (..))
 import Data.Text (Text)
@@ -227,6 +233,52 @@ readLog path = do
 appendEntry :: FilePath -> MemoryEntry -> IO ()
 appendEntry path e = TIO.appendFile path (encodeText entryCodec e <> "\n")
 
+-- | A thick backend handle: one 'IO' action per 'Memory' operation. The seam
+-- that lets a backend (file, in-memory, or a future Postgres satellite) be a
+-- parameter of the interpreter rather than a fresh interpreter per backend.
+data MemoryStore = MemoryStore
+  { doRemember :: MemoryDraft -> IO MemoryId
+  , doRecall   :: Query       -> IO [MemoryItem]
+  , doForget   :: MemoryId    -> IO ()
+  }
+
+-- | Run 'Memory' against a thick handle (near-passthrough).
+runMemoryWith :: (IOE :> es) => MemoryStore -> Eff (Memory : es) a -> Eff es a
+runMemoryWith s = interpret $ \_ -> \case
+  Remember d -> liftIO (s.doRemember d)
+  Recall q   -> liftIO (s.doRecall q)
+  Forget i   -> liftIO (s.doForget i)
+
+-- | JSONL-file backend as a handle. id = createdAt = count of prior Remembered
+-- entries. Single-writer; the read-count-append in doRemember is not atomic
+-- (same caveat as the original interpreter).
+memoryStoreFile :: FilePath -> MemoryStore
+memoryStoreFile path = MemoryStore
+  { doRemember = \d -> do
+      es <- readLog path
+      let n = length [() | Remembered _ <- es]
+      appendEntry path (Remembered (itemOf d n))
+      pure (MemoryId n)
+  , doRecall = \q -> queryLive q <$> readLog path
+  , doForget = \i -> appendEntry path (Forgot i)
+  }
+
+-- | In-memory backend as a handle over an 'IORef' of the entry log. The IO
+-- analogue of 'runMemoryPure'. 'atomicModifyIORef'' makes remember/forget atomic
+-- within a single process.
+memoryStorePure :: IORef [MemoryEntry] -> MemoryStore
+memoryStorePure ref = MemoryStore
+  { doRemember = \d -> atomicModifyIORef' ref $ \es ->
+      let n = length [() | Remembered _ <- es]
+      in (es ++ [Remembered (itemOf d n)], MemoryId n)
+  , doRecall = \q -> queryLive q <$> readIORef ref
+  , doForget = \i -> atomicModifyIORef' ref (\es -> (es ++ [Forgot i], ()))
+  }
+
+-- | Allocate a fresh in-memory memory handle (its own empty 'IORef' entry log).
+newMemoryStorePure :: IO MemoryStore
+newMemoryStorePure = memoryStorePure <$> newIORef []
+
 -- | A JSONL log at the path. Remember/Forget append one line; Recall reads,
 -- folds, filters, budgets. id = count of prior Remembered entries;
 -- createdAt = the same ordinal (a uniform counter, not wall-clock).
@@ -234,11 +286,4 @@ appendEntry path e = TIO.appendFile path (encodeText entryCodec e <> "\n")
 -- read-count-append, which is not atomic, so concurrent Remember calls from
 -- separate threads or processes can assign duplicate ids or interleave lines.
 runMemoryFile :: (IOE :> es) => FilePath -> Eff (Memory : es) a -> Eff es a
-runMemoryFile path = interpret $ \_ -> \case
-  Remember d -> liftIO $ do
-    es <- readLog path
-    let n = length [() | Remembered _ <- es]
-    appendEntry path (Remembered (itemOf d n))
-    pure (MemoryId n)
-  Recall q -> liftIO (queryLive q <$> readLog path)
-  Forget i -> liftIO (appendEntry path (Forgot i))
+runMemoryFile path = runMemoryWith (memoryStoreFile path)

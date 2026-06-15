@@ -68,7 +68,7 @@ import qualified Crucible.LLM.CallLog as CallLog
 import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
 import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
-import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile)
+import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile, runMemoryWith, newMemoryStorePure, memoryStoreFile)
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
 import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)
@@ -2014,6 +2014,26 @@ main = runChecks
          ( length items
          , found "a" (BySkill "k") && found "b" (BySession "run1")
              && found "c" ByConsolidation && found "d" Curated )
+  , do store <- newMemoryStorePure
+       got <- runEff $ runMemoryWith store $ do
+                i1 <- remember (MemoryDraft Semantic "alpha fact" ["t"] Curated)
+                _  <- remember (MemoryDraft Semantic "beta fact" ["t"] Curated)
+                forget i1
+                rs <- recall (Query "" ["t"] 10)
+                pure (map ((.content) :: MemoryItem -> Text) rs)
+       check "memory: runMemoryWith pure handle remembers/forgets/recalls" ["beta fact"] got
+  , do (path, h) <- openTempFile "/tmp" "crucible-memory-parity.jsonl"
+       hClose h
+       let prog = do _  <- remember (MemoryDraft Semantic "a" ["x"] Curated)
+                     i2 <- remember (MemoryDraft Episodic "b" ["x"] Curated)
+                     _  <- remember (MemoryDraft Semantic "c" ["x"] Curated)
+                     forget i2
+                     map ((.content) :: MemoryItem -> Text) <$> recall (Query "" ["x"] 10)
+       fromFile <- runEff (runMemoryWith (memoryStoreFile path) prog)
+       removeFile path `catch` \(_ :: SomeException) -> pure ()
+       store <- newMemoryStorePure
+       fromPure <- runEff (runMemoryWith store prog)
+       check "memory: file and pure handles agree (remember/forget/recall)" fromFile fromPure
   -- crucible-cyx: memory consolidation
   , check "consolidate applyPlan: drop/supersede/merge rewrite the store, ByConsolidation"
       (["CD", "B2"], Semantic, ["t4", "t3"], ByConsolidation)

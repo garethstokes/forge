@@ -120,6 +120,17 @@ interleave lines or assign duplicate ids. For multi-writer use, a future
 interpreter backed by a database applies the same `Memory` effect without
 changing the agent code.
 
+### The backend handle
+
+Both interpreters are thin wrappers over a thick backend handle — a `MemoryStore`
+record holding one `IO` action per operation (`doRemember`/`doRecall`/`doForget`) —
+run by `runMemoryWith`. `runMemoryFile path = runMemoryWith (memoryStoreFile path)`;
+`newMemoryStorePure` gives an in-memory handle over an `IORef`. The handle is the
+seam where persistence becomes a parameter of the interpreter: a Postgres backend
+in the `crucible-manifest` workspace package supplies its own `MemoryStore` and
+plugs into the same `runMemoryWith`. The pure `runMemoryPure` is kept for property
+tests.
+
 ## Typed memory
 
 Content is stored as `Text`. To store and retrieve typed values, encode with
