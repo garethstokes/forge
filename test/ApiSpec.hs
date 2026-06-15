@@ -159,6 +159,7 @@ main = do
             , scores = []
             }
         ]
+    , totalOutputs = 1
     , calibration = []
     }
   rt "CompareRowDto" CompareRowDto
@@ -493,6 +494,32 @@ serverSpec = withEphemeralDb $ \pool -> do
       case decode (responseBody r3) :: Maybe RunDetailDto of
         Just d | [s] <- d.calibration -> s.latest.balancedF1 == 0.75
         _ -> False
+    -- Pagination: the run has 2 outputs (e1, e2). totalOutputs is the full
+    -- count regardless of limit; the page is a stable-ordered slice.
+    rPg0 <- getReq ("/acme/api/runs/" <> show runIdInt <> "?offset=0&limit=1")
+    expect "page0: total=2, one row, e1" $
+      case decode (responseBody rPg0) :: Maybe RunDetailDto of
+        Just d -> d.totalOutputs == 2 && length d.outputs == 1
+                    && (head d.outputs).exampleKey == "e1"
+        Nothing -> False
+    rPg1 <- getReq ("/acme/api/runs/" <> show runIdInt <> "?offset=1&limit=1")
+    expect "page1: total=2, one row, e2 (after e1)" $
+      case decode (responseBody rPg1) :: Maybe RunDetailDto of
+        Just d -> d.totalOutputs == 2 && length d.outputs == 1
+                    && (head d.outputs).exampleKey == "e2"
+        Nothing -> False
+    -- Default (no params): whole run, offset 0 limit 50.
+    rPgDef <- getReq ("/acme/api/runs/" <> show runIdInt)
+    expect "default page: total=2, both rows" $
+      case decode (responseBody rPgDef) :: Maybe RunDetailDto of
+        Just d -> d.totalOutputs == 2 && length d.outputs == 2
+        Nothing -> False
+    -- Garbage offset/limit clamps to defaults (no 500).
+    rPgBad <- getReq ("/acme/api/runs/" <> show runIdInt <> "?offset=-5&limit=abc")
+    expect "garbage offset/limit clamps to 0/50" $
+      case decode (responseBody rPgBad) :: Maybe RunDetailDto of
+        Just d -> d.totalOutputs == 2 && length d.outputs == 2
+        Nothing -> False
     rCal <- getReq "/acme/api/calibration"
     expect "calibration 200" (statusCode (responseStatus rCal) == 200)
     expect "calibration: one (exactness, stored) series" $

@@ -160,7 +160,10 @@ detailView m _ =
         tabs = ("Examples", "examples", active == "examples")
              : [ (ms mc.graderName, tabKey mc, active == tabKey mc) | mc <- graders ]
         content
-          | active == "examples" = outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
+          | active == "examples" =
+              div_ []
+                ( outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
+                : [ pager (_outputsOffsetM m) d.totalOutputs | d.totalOutputs > outputsPageSize ] )
           | otherwise = case [ mc | mc <- graders, tabKey mc == active ] of
               (mc : _) -> graderTabPanel d mc
               []       -> outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
@@ -201,7 +204,9 @@ outputsTable rid expandedKeys metrics outputs =
           : [ td_ [ P.class_ "score" ] [ text (meanFor g) ] | g <- gs ] ) ]
     ]
   where
-    gs = nub [ (s.graderName, s.graderVersion) | o <- outputs, s <- o.scores ]
+    -- Columns come from the run's metrics, NOT the current page's scores, so
+    -- they stay stable as the user pages through outputs.
+    gs = nub [ (m.graderName, m.graderVersion) | m <- metrics ]
     graderHeading (g, v) = ms g <> " v" <> msShow v
     meanFor (g, v) = case [ m | m <- metrics, m.graderName == g, m.graderVersion == v ] of
       (m : _) -> fmtD m.mean
@@ -218,6 +223,23 @@ outputsTable rid expandedKeys metrics outputs =
       case [ s | s <- ss, s.graderName == g, s.graderVersion == v ] of
         (s : _) -> Just s
         [] -> Nothing
+
+-- | Prev/next pager for the run-detail Examples table. @off@ is the current
+-- page offset, @total@ the full output count. Buttons disable at the ends.
+pager :: Int -> Int -> View Model Action
+pager off total =
+  div_ [ P.class_ "pager" ]
+    [ pagerBtn "\8249 Prev" (off <= 0) (SetOutputsOffset (max 0 (off - outputsPageSize)))
+    , span_ [ P.class_ "pager-label" ] [ text label ]
+    , pagerBtn "Next \8250" (off + outputsPageSize >= total) (SetOutputsOffset (off + outputsPageSize))
+    ]
+  where
+    lo = if total == 0 then 0 else off + 1
+    hi = min (off + outputsPageSize) total
+    label = "showing " <> msShow lo <> "–" <> msShow hi <> " of " <> msShow total
+    pagerBtn lbl disabled act
+      | disabled  = span_ [ P.class_ "pager-btn disabled" ] [ text lbl ]
+      | otherwise = a_   [ P.class_ "pager-btn", onClick act ] [ text lbl ]
 
 scoreCell :: Maybe ScoreDto -> View Model Action
 scoreCell Nothing = td_ [] [ text "–" ]

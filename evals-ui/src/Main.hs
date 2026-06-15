@@ -66,6 +66,7 @@ updateModel = \case
         detailL .= Loading
         expandedL .= []
         runTabL .= "examples"
+        outputsOffsetL .= 0  -- start each run at the first Examples page
       CompareR _ _ -> do
         compareL .= Loading
         expandedL .= []
@@ -81,6 +82,10 @@ updateModel = \case
     orgSlugL .= s
   SetRunTab t ->
     runTabL .= t
+  SetOutputsOffset n -> do
+    outputsOffsetL .= n
+    -- silent refetch of the current run detail at the new page offset
+    fetchRoute =<< use routeL
   ToggleCompareMenu mi ->
     compareMenuL .= mi
   ToggleExpand k ->
@@ -145,8 +150,11 @@ fetchRoute :: Route -> Effect parent props Model Action
 fetchRoute = \case
   RunsR ->
     fetchJson "/api/runs" GotRuns
-  RunR i ->
-    fetchJson ("/api/runs/" <> msShow i) (GotDetail i)
+  RunR i -> do
+    off <- use outputsOffsetL
+    fetchJson ("/api/runs/" <> msShow i
+               <> "?offset=" <> msShow off
+               <> "&limit=" <> msShow outputsPageSize) (GotDetail i)
   CompareR a b ->
     fetchJson ("/api/compare?a=" <> msShow a <> "&b=" <> msShow b) (GotCompare a b)
   ExampleR i k ->

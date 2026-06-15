@@ -65,9 +65,10 @@ data OutputRowDto = OutputRowDto
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 data RunDetailDto = RunDetailDto
-  { run         :: RunSummaryDto
-  , outputs     :: [OutputRowDto]
-  , calibration :: [CalibrationSeriesDto]
+  { run          :: RunSummaryDto
+  , outputs      :: [OutputRowDto]          -- the requested page
+  , totalOutputs :: Int                     -- full row count for the run
+  , calibration  :: [CalibrationSeriesDto]
   }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 

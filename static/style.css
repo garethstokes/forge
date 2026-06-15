@@ -331,3 +331,9 @@ td.pick input { cursor: pointer; }
 .ex-navbtn { font-size: 13px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--accent); text-decoration: none; }
 .ex-navbtn:hover { background: #f2f6ff; }
 .ex-navbtn.disabled { color: #c2c8d2; border-color: var(--line); pointer-events: none; }
+
+.pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 14px 0 4px; }
+.pager-label { font-size: 12px; color: var(--muted); }
+.pager-btn { font-size: 13px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--accent); text-decoration: none; cursor: pointer; }
+.pager-btn:hover { background: #f2f6ff; }
+.pager-btn.disabled { color: #c2c8d2; border-color: var(--line); pointer-events: none; cursor: default; }

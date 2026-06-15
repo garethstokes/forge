@@ -21,6 +21,7 @@ module Evals.Ui.Model
   , calibrationL
   , orgSlugL
   , runTabL
+  , outputsOffsetL
   , compareMenuL
   , expandedL
   , liveL
@@ -42,6 +43,7 @@ module Evals.Ui.Model
   , toggleSelect
   , toggleElem
   , msShow
+  , outputsPageSize
   ) where
 
 import qualified Data.Text as T
@@ -87,6 +89,9 @@ data Model = Model
     -- ^ org slug from the URL first path segment (e.g. "/acme")
   , _runTabM :: MisoString
     -- ^ active tab key in the run-detail view ("examples" or a grader key)
+  , _outputsOffsetM :: Int
+    -- ^ offset of the run-detail Examples page currently displayed (reset to 0
+    -- on run change; advanced by the pager)
   , _compareMenuM :: Maybe Int
     -- ^ run id whose per-row compare ⋮ menu is open, or Nothing
   , _expandedM :: [MisoString]
@@ -102,7 +107,7 @@ data Model = Model
   } deriving (Show, Eq)
 
 emptyModel :: Model
-emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked "" "examples" Nothing [] LiveReconnecting False False
+emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked "" "examples" 0 Nothing [] LiveReconnecting False False
 
 data Action
   = Startup
@@ -119,6 +124,8 @@ data Action
   -- ^ switch the active tab in the run-detail view
   | ToggleCompareMenu (Maybe Int)
   -- ^ open (Just runId) or close (Nothing) the per-row compare ⋮ menu
+  | SetOutputsOffset Int
+  -- ^ display the run-detail Examples page at this output offset (refetches)
   | SetOrgSlug MisoString
   -- ^ store the org slug read from the URL prefix
   | ToggleExpand MisoString
@@ -169,6 +176,13 @@ orgSlugL = lens _orgSlugM $ \r x -> r { _orgSlugM = x }
 
 runTabL :: Lens Model MisoString
 runTabL = lens _runTabM $ \r x -> r { _runTabM = x }
+
+outputsOffsetL :: Lens Model Int
+outputsOffsetL = lens _outputsOffsetM $ \r x -> r { _outputsOffsetM = x }
+
+-- | Run-detail Examples page size; shared by the fetch URL and the pager.
+outputsPageSize :: Int
+outputsPageSize = 50
 
 compareMenuL :: Lens Model (Maybe Int)
 compareMenuL = lens _compareMenuM $ \r x -> r { _compareMenuM = x }

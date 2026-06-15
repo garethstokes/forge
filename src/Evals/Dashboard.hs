@@ -92,7 +92,7 @@ dashboardApp pool staticDir hub req respond =
       ["api", "runs", nTxt]   ->
         case readMaybe (T.unpack nTxt) :: Maybe Int of
           Nothing -> respond (badRequest "invalid run id")
-          Just n  -> apiWith (runDetailHandler pool orgId (RunId n) respond)
+          Just n  -> apiWith (runDetailHandler pool orgId (RunId n) req respond)
       ["api", "runs", nTxt, "ex", key] ->
         case readMaybe (T.unpack nTxt) :: Maybe Int of
           Nothing -> respond (badRequest "invalid run id")
@@ -392,8 +392,12 @@ calibrationHandler pool orgId respond = do
 -- ---------------------------------------------------------------------------
 -- /api/runs/:id
 
-runDetailHandler :: Pool -> OrgId -> RunId -> (Response -> IO a) -> IO a
-runDetailHandler pool orgId rid respond = do
+runDetailHandler :: Pool -> OrgId -> RunId -> Request -> (Response -> IO a) -> IO a
+runDetailHandler pool orgId rid req respond = do
+  let parseInt t = readMaybe (T.unpack t) :: Maybe Int
+      off = max 0 (maybe 0 id (queryParam "offset" req >>= parseInt))
+      lim = clampLimit (maybe 50 id (queryParam "limit" req >>= parseInt))
+      clampLimit n = max 1 (min 200 n)
   mDto <- withSession pool $ withTenant orgId $ do
     mRun <- get @Run (Key rid)
     case mRun of
@@ -404,8 +408,11 @@ runDetailHandler pool orgId rid respond = do
         -- build OutputRowDto per output, ordering by example key
         rows <- mapM (outputRowDto rid) outputs
         let sortedRows = sortOn (\r -> r.exampleKey) rows
+            page = take lim (drop off sortedRows)
         cal <- runCalibration rid
-        pure (Just RunDetailDto { run = summary, outputs = sortedRows, calibration = cal })
+        pure (Just RunDetailDto
+          { run = summary, outputs = page
+          , totalOutputs = length sortedRows, calibration = cal })
   case mDto of
     Nothing  -> respond notFound
     Just dto -> respond (json status200 dto)
