@@ -236,12 +236,15 @@ td.pick input { cursor: pointer; }
 .example .grade { border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-bottom:8px; }
 .example .grade-head { display:flex; align-items:baseline; gap:8px; }
 .example .grade-head .gval { margin-left:auto; font-variant-numeric:tabular-nums; }
-.example .cr { display:grid; grid-template-columns:18px 1fr auto 70px; gap:9px; align-items:baseline; padding:5px 0; border-top:1px dotted var(--muted-bg); }
-.example .grade .cr:first-of-type { border-top:none; }
-.example .cr .m.ok { color:#166534; } .example .cr .m.fail { color:#991b1b; }
-.example .cr .why { display:block; color:#8b93a1; font-size:11.5px; margin-top:1px; }
-.example .cr .tag { font-size:11px; border-radius:999px; padding:0 8px; margin-left:4px; background:#e3f5f4; color:#0f6e69; white-space:nowrap; }
-.example .cr .earn { text-align:right; font-variant-numeric:tabular-nums; font-size:12px; }
+/* Criterion verdict: a wrapping pill row above the full-width prose. */
+.example .vrow { padding:7px 0; border-top:1px dotted var(--muted-bg); }
+.example .grade .vrow:first-of-type { border-top:none; padding-top:2px; }
+.example .vrow-pills { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.example .vrow-pills .m.ok { color:#166534; } .example .vrow-pills .m.fail { color:#991b1b; }
+.example .vrow-pills .tag { font-size:10px; border-radius:999px; padding:1px 8px; background:#e3f5f4; color:#0f6e69; white-space:normal; overflow-wrap:anywhere; max-width:100%; }
+.example .vrow-pills .earn { margin-left:auto; font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted); }
+.example .vrow .crit-text { margin-top:6px; }
+.example .why { color:#8b93a1; font-size:11.5px; margin-top:4px; }
 .example .muted { color:var(--muted); font-size:12px; }
 
 /* Human consensus label + judge-error blocks: reuse the .grade card so they
@@ -269,8 +272,6 @@ td.pick input { cursor: pointer; }
 .ex-cols .ex-section:first-child { margin-top:0; }
 .ex-side .ex-section:first-child { margin-top:0; }
 .ex-side .grade { padding:9px 10px; }
-.ex-side .cr { grid-template-columns:16px 1fr auto 52px; gap:6px; }
-.ex-side .cr .tag { margin-left:0; }
 
 /* ---- grader calibration ---- */
 .calib { margin-top: 1.5rem; }

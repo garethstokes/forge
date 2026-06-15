@@ -347,15 +347,18 @@ gradeBlock humanByCrit g =
       ++ [ div_ [ P.class_ "cell-error" ] [ text ("⚠ " <> ms e) ] | Just e <- [g.gradeError] ]
       ++ [ div_ [ P.class_ "muted" ] [ text (ms r) ] | Just r <- [g.rationale] ] )
   where
+    -- Stacked layout: a wrapping pill row (verdict · agreement · tags · points)
+    -- sits ABOVE the full-width criterion prose. The HealthBench category tags
+    -- are long, so a grid column for them overflows the narrow side panel.
     verdictRow c =
-      div_ [ P.class_ "cr" ]
-        [ span_ [ P.class_ (if c.met then "m ok" else "m fail") ] [ text (if c.met then "✓" else "✗") ]
-        , span_ [ P.class_ "ctxt" ]
-            ( text (ms c.criterion)
+      div_ [ P.class_ "vrow" ]
+        ( div_ [ P.class_ "vrow-pills" ]
+            ( span_ [ P.class_ (if c.met then "m ok" else "m fail") ] [ text (if c.met then "✓" else "✗") ]
             : agreeBadge c
-            ++ [ span_ [ P.class_ "why" ] [ text (ms c.explanation) ] ] )
-        , span_ [ P.class_ "crit-tags" ] [ span_ [ P.class_ "tag" ] [ text (ms t) ] | t <- c.tags ]
-        , span_ [ P.class_ "earn" ] [ text (if c.met then "+" <> fmtD c.points else "0 / " <> fmtD c.points) ] ]
+            ++ [ span_ [ P.class_ "tag" ] [ text (ms t) ] | t <- c.tags ]
+            ++ [ span_ [ P.class_ "earn" ] [ text (if c.met then "+" <> fmtD c.points else "0 / " <> fmtD c.points) ] ] )
+        : div_ [ P.class_ "crit-text" ] [ text (ms c.criterion) ]
+        : [ div_ [ P.class_ "why" ] [ text (ms c.explanation) ] | not (T.null c.explanation) ] )
     agreeBadge c = case lookup c.criterion humanByCrit of
       Nothing -> []
       Just h  -> let agrees = h == c.met
