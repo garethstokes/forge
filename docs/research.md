@@ -93,8 +93,31 @@ To flag rather than gate (always write, but record the grounding result), call
 `groundingOutcome` and then `writePage` and `appendLog` yourself; the gate is the
 strict default, and the building blocks are public.
 
+## Maintaining a store with an agent
+
+The research operations are also tools, so an agent can keep the store itself.
+
+```haskell
+researchTools        :: (Research meta :> es) => JSONCodec meta -> [Tool es]
+researchInstructions :: Text
+```
+
+`researchTools mc` returns three tools: `read_page` (a slug in, the page or null
+out), `write_page` (a full page in, the slug out), and `search_pages` (a query
+in, slugs out). Drop them into the stock agent loop, prepending the default
+instructions:
+
+```haskell
+runToolAgent (researchTools mc) (researchInstructions <> "\n\n" <> task)
+```
+
+Run that under a row with `Chat` and `Research meta`. `researchInstructions` is a
+plain-text starting point: it names the tools and a light editing discipline,
+search before writing, prefer updating an existing page, use typed links for a
+contradiction or supersession. It is policy, not types; replace it with your own
+when your discipline differs.
+
 ## Planned follow-on work
 
-This is the foundation. Exposing the operations as `Tool`s for the stock agent
-loop and lint as `Eval` cases (orphans, broken links, contradictions) are planned
-as separate work.
+Lint as `Eval` cases (orphans, broken links, contradictions) is planned as
+separate work.
