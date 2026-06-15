@@ -33,6 +33,8 @@ module Crucible.Manifest.Journal
   , listReadyExecutions
   , suspendTimer
   , fireDueTimers
+  , suspendSignal
+  , deliverSignal
   , pendingIntents
   ) where
 
@@ -123,8 +125,9 @@ data RunQueueRowT f = RunQueueRow
   , rqClaimant   :: Field f (Maybe Text)
   , rqLeaseUntil :: Field f (Maybe Text)
   , rqWaitKey    :: Field f (Maybe Text)   -- base64 cassette key of the suspended prim
-  , rqWaitKind   :: Field f (Maybe Text)   -- "timer" (this cycle)
+  , rqWaitKind   :: Field f (Maybe Text)   -- "timer" | "signal" (this cycle)
   , rqWakeAt     :: Field f (Maybe Text)   -- ISO-8601 wake time
+  , rqWaitName   :: Field f (Maybe Text)   -- signal name (for "signal" wait kind)
   } deriving Generic
 
 type RunQueueRow = RunQueueRowT Identity
@@ -162,7 +165,7 @@ createExecution pool ident = withSession pool $ withTransaction $ do
                "running"
              :: ExecutionRow)
   let eid = ex.exId
-  _ <- add (RunQueueRow eid "ready" Nothing Nothing Nothing Nothing Nothing :: RunQueueRow)
+  _ <- add (RunQueueRow eid "ready" Nothing Nothing Nothing Nothing Nothing Nothing :: RunQueueRow)
   pure eid
 
 -- | Build a durable 'JournalStore' for one execution (identified by its id).
@@ -329,6 +332,43 @@ fireDueTimers pool nowT = withSession pool $ withTransaction $ do
             "UPDATE run_queue SET rq_state='ready', rq_wait_key=NULL, rq_wait_kind=NULL, rq_wake_at=NULL WHERE rq_exec=$1"
             [ encode eid ]
     pure eid
+
+-- ---------------------------------------------------------------------------
+-- Durable signal suspend / deliver
+-- ---------------------------------------------------------------------------
+
+-- | Park an execution as waiting-on-signal: set @run_queue.rq_state = 'waiting'@,
+-- store the cassette key (base64-encoded), the wait kind 'signal', the signal
+-- name, and clear the claimant. The execution will not appear in
+-- 'listReadyExecutions' until 'deliverSignal' re-queues it.
+suspendSignal :: Pool -> Int -> CassetteKey -> Text -> IO ()
+suspendSignal pool eid (CassetteKey k) name = withSession pool $ do
+  _ <- execDb
+    "UPDATE run_queue SET rq_state='waiting', rq_wait_key=$1, rq_wait_kind='signal', rq_wait_name=$2, rq_claimant=NULL WHERE rq_exec=$3"
+    [ encode (b64 k)
+    , encode name
+    , encode eid
+    ]
+  pure ()
+
+-- | Deliver a signal to an execution waiting on the given name. If the
+-- execution is in @waiting@ state with @rq_wait_kind='signal'@ and
+-- @rq_wait_name = name@, append the payload under the stored wait key
+-- (status=result, op=signal) and set the execution back to @ready@.
+-- Returns 'True' iff delivered, 'False' if no matching waiting execution.
+deliverSignal :: Pool -> Int -> Text -> ByteString -> IO Bool
+deliverSignal pool eid name payload = withSession pool $ withTransaction $ do
+  rows <- selectWhere [#rqExec ==. eid] :: Db [RunQueueRow]
+  case [ r | r <- rows, rqState r == "waiting", rqWaitKind r == Just "signal", rqWaitName r == Just name ] of
+    (r:_) -> do
+      es <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
+      let keyB64 = maybe "" id (rqWaitKey r)
+      _ <- add (JournalEntryRow 0 eid (length es) keyB64 "signal" (b64 payload) "result" "" :: JournalEntryRow)
+      _ <- execDb
+             "UPDATE run_queue SET rq_state='ready', rq_wait_key=NULL, rq_wait_kind=NULL, rq_wait_name=NULL WHERE rq_exec=$1"
+             [ encode eid ]
+      pure True
+    [] -> pure False
 
 -- | Return keys that have an intent row but no result row for the given
 -- execution. These represent activities that started (intent recorded) but

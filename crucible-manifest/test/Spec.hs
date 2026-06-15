@@ -68,6 +68,8 @@ import Crucible.Manifest.Journal
   , listReadyExecutions
   , suspendTimer
   , fireDueTimers
+  , suspendSignal
+  , deliverSignal
   , pendingIntents
   )
 
@@ -286,6 +288,40 @@ journalSpecific =
         case lookupEntry k1 j2 of
           Nothing -> ioError (userError "expected result entry in journal after jsAppend, got Nothing")
           Just e  -> assertEq "result entry bytes" ("v" :: ByteString) (e.eResult)
+
+  , Test "journal[manifest]: suspendSignal parks execution as waiting (not ready)" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        suspendSignal pool eid (CassetteKey "sk") "go"
+        ready <- listReadyExecutions pool
+        assertEq "execution is NOT in ready list after suspendSignal" [] ready
+
+  , Test "journal[manifest]: deliverSignal wrong name returns False; correct name delivers and readies" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        suspendSignal pool eid (CassetteKey "sk") "go"
+
+        -- wrong name: should return False and leave exec waiting
+        delivered0 <- deliverSignal pool eid "nope" "x"
+        assertEq "deliverSignal wrong name returns False" False delivered0
+        ready0 <- listReadyExecutions pool
+        assertEq "exec still waiting after wrong-name deliver" [] ready0
+
+        -- correct name: should return True, exec becomes ready
+        delivered1 <- deliverSignal pool eid "go" "payload"
+        assertEq "deliverSignal correct name returns True" True delivered1
+        ready1 <- listReadyExecutions pool
+        assertEq "exec is ready again after deliverSignal" [eid] ready1
+
+        -- the journal should have an entry under CassetteKey "sk" with result="payload"
+        st <- journalStoreManifest pool eid
+        j  <- jsLoad st
+        let entry = lookupEntry (CassetteKey "sk") j
+        case entry of
+          Nothing -> ioError (userError "expected signal entry in journal after deliverSignal, got Nothing")
+          Just e  -> assertEq "signal entry result bytes" ("payload" :: ByteString) (e.eResult)
   ]
 
 -- ---------------------------------------------------------------------------
