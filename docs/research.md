@@ -117,7 +117,35 @@ search before writing, prefer updating an existing page, use typed links for a
 contradiction or supersession. It is policy, not types; replace it with your own
 when your discipline differs.
 
-## Planned follow-on work
+## Linting a store
 
-Lint as `Eval` cases (orphans, broken links, contradictions) is planned as
-separate work.
+A knowledge base decays as it grows. Lint surfaces the rot.
+
+```haskell
+data Finding = Orphan Slug | BrokenLink Slug Link | SparsePage Slug Int
+             | Contradiction Slug Slug Text | Stale Slug Text
+
+lintStructural     :: Int -> [Page meta] -> [Finding]
+lintContradictions :: (LLM :> es) => Int -> [(Page meta, Page meta)] -> Eff es [Finding]
+lintStale          :: (LLM :> es) => Int -> Text -> [Page meta] -> Eff es [Finding]
+lintWiki           :: (LLM :> es) => LintOpts meta -> [Page meta] -> Eff es [Finding]
+```
+
+The structural checks are pure and free: `orphans` (no inbound link),
+`brokenLinks` (a link whose target is absent), `sparsePages` (a body under the
+threshold). The semantic checks reuse the judge: `lintContradictions` flags pages
+that make contradictory claims (over `linkedPairs` by default, or `allPairs` for a
+full O(n^2) sweep), and `lintStale` flags pages that conflict with a current-facts
+trace you supply. `lintWiki` runs the lot under `LintOpts` (`sparseThreshold`,
+`votes`, `pairs`, `currentFacts`); `defaultLintOpts` is structural plus
+contradiction over linked pairs, with no staleness.
+
+Staleness is judged against current facts you pass in, not a page timestamp: the
+page type stays timestamp-free for a deterministic round-trip, and a timestamp,
+if you want age-based checks, belongs in your `meta`.
+
+## Putting it together
+
+The research effect, grounding-gated writes, agent tools, and lint compose: an
+agent searches and writes pages through the tools, grounded writes keep
+unsupported claims out, and lint surfaces what has decayed.
