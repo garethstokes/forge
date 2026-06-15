@@ -55,6 +55,7 @@ import Crucible.Journal
   , Entry (..)
   , CassetteKey (..)
   , Journal (..)
+  , ActivityKind (..)
   , lookupEntry
   )
 import Crucible.Manifest.Journal
@@ -67,6 +68,7 @@ import Crucible.Manifest.Journal
   , listReadyExecutions
   , suspendTimer
   , fireDueTimers
+  , pendingIntents
   )
 
 import Conformance
@@ -259,6 +261,31 @@ journalSpecific =
         st2 <- journalStoreManifest pool eid
         j2  <- jsLoad st2
         assertEq "no duplicate sleep entry after second fire" 1 (length (jEntries j2))
+
+  , Test "journal[manifest]: jsIntent appears in pendingIntents; jsAppend clears it; jsLoad excludes intents" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        store <- journalStoreManifest pool eid
+        let k1 = CassetteKey "k1"
+        -- Record intent only
+        jsIntent store k1 "op" Keyable
+        -- pendingIntents should show the intent
+        p1 <- pendingIntents pool eid
+        assertEq "pendingIntents after jsIntent" [(k1, Keyable)] p1
+        -- jsLoad must NOT include the intent row (no result yet)
+        j1 <- jsLoad store
+        assertEq "jsLoad excludes intent rows" Nothing (lookupEntry k1 j1)
+        -- Now append the result
+        jsAppend store k1 "op" "v"
+        -- pendingIntents should now be empty
+        p2 <- pendingIntents pool eid
+        assertEq "pendingIntents after jsAppend is empty" [] p2
+        -- jsLoad must now include the result
+        j2 <- jsLoad store
+        case lookupEntry k1 j2 of
+          Nothing -> ioError (userError "expected result entry in journal after jsAppend, got Nothing")
+          Just e  -> assertEq "result entry bytes" ("v" :: ByteString) (e.eResult)
   ]
 
 -- ---------------------------------------------------------------------------

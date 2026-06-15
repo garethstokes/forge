@@ -33,6 +33,7 @@ module Crucible.Manifest.Journal
   , listReadyExecutions
   , suspendTimer
   , fireDueTimers
+  , pendingIntents
   ) where
 
 import Control.Monad (forM)
@@ -66,6 +67,7 @@ import Crucible.Journal
   , Journal (..)
   , Entry (..)
   , CassetteKey (..)
+  , ActivityKind (..)
   , emptyJournal
   , insertEntry
   )
@@ -104,6 +106,8 @@ data JournalEntryRowT f = JournalEntryRow
   , jeKey    :: Field f Text    -- base64-encoded CassetteKey bytes
   , jeOp     :: Field f Text
   , jeResult :: Field f Text    -- base64-encoded result bytes
+  , jeStatus :: Field f Text    -- "result" | "intent"
+  , jeKind   :: Field f Text    -- "" | "idempotent" | "keyable" | "unkeyable"
   } deriving Generic
 
 type JournalEntryRow = JournalEntryRowT Identity
@@ -171,6 +175,19 @@ createExecution pool ident = withSession pool $ withTransaction $ do
 -- Each call runs in its own 'withSession' (autocommit). For Phase 1's
 -- single-workflow slice this is acceptable; wrap in 'withTransaction' if you
 -- need atomic append + queue-state advance in a future phase.
+-- | Text representation of an 'ActivityKind' for database storage.
+kindText :: ActivityKind -> Text
+kindText Idempotent = "idempotent"
+kindText Keyable    = "keyable"
+kindText Unkeyable  = "unkeyable"
+
+-- | Parse an 'ActivityKind' from its stored text; defaults to 'Unkeyable'
+-- for unknown values (conservative: unknown = must not assume safe retry).
+kindOf :: Text -> ActivityKind
+kindOf "idempotent" = Idempotent
+kindOf "keyable"    = Keyable
+kindOf _            = Unkeyable
+
 journalStoreManifest :: Pool -> Int -> IO JournalStore
 journalStoreManifest pool eid = pure JournalStore
   { jsLoad = withSession pool $ do
@@ -183,7 +200,10 @@ journalStoreManifest pool eid = pure JournalStore
                        (e.exAppVersion)
                        (e.exCapturedAt)
             []    -> JournalIdentity "" "" "" ""
-          sorted = sortOn (.jeSeq) es
+          -- Only rebuild the journal from result rows; intent rows are
+          -- observability metadata and must not appear in replay.
+          resultRows = filter (\r -> r.jeStatus == "result") es
+          sorted = sortOn (.jeSeq) resultRows
           -- foldl' over rows in ascending seq order; insertEntry appends each
           -- entry and assigns a fresh seq (length-based), reproducing the
           -- original 0,1,2,... seq assignment.
@@ -198,7 +218,12 @@ journalStoreManifest pool eid = pure JournalStore
 
   , jsAppend = \(CassetteKey k) op bs -> withSession pool $ do
       es <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
-      _  <- add (JournalEntryRow 0 eid (length es) (b64 k) op (b64 bs) :: JournalEntryRow)
+      _  <- add (JournalEntryRow 0 eid (length es) (b64 k) op (b64 bs) "result" "" :: JournalEntryRow)
+      pure ()
+
+  , jsIntent = \(CassetteKey k) op kind -> withSession pool $ do
+      es <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
+      _  <- add (JournalEntryRow 0 eid (length es) (b64 k) op (b64 "") "intent" (kindText kind) :: JournalEntryRow)
       pure ()
   }
 
@@ -299,8 +324,18 @@ fireDueTimers pool nowT = withSession pool $ withTransaction $ do
     let eid    = rqExec r
         keyB64 = maybe "" id (rqWaitKey r)   -- already base64 of the cassette key bytes
     es <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
-    _  <- add (JournalEntryRow 0 eid (length es) keyB64 "sleep" (b64 "") :: JournalEntryRow)
+    _  <- add (JournalEntryRow 0 eid (length es) keyB64 "sleep" (b64 "") "result" "" :: JournalEntryRow)
     _  <- execDb
             "UPDATE run_queue SET rq_state='ready', rq_wait_key=NULL, rq_wait_kind=NULL, rq_wake_at=NULL WHERE rq_exec=$1"
             [ encode eid ]
     pure eid
+
+-- | Return keys that have an intent row but no result row for the given
+-- execution. These represent activities that started (intent recorded) but
+-- whose result was never persisted — i.e. potential crash-mid-flight sites.
+pendingIntents :: Pool -> Int -> IO [(CassetteKey, ActivityKind)]
+pendingIntents pool eid = withSession pool $ do
+  rs <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
+  let resultKeys = [ r.jeKey | r <- rs, r.jeStatus == "result" ]
+  pure [ (CassetteKey (unb64 (r.jeKey)), kindOf (r.jeKind))
+       | r <- rs, r.jeStatus == "intent", r.jeKey `notElem` resultKeys ]
