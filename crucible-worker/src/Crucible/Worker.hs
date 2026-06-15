@@ -55,6 +55,13 @@ import Crucible.Manifest.Journal
 -- Workflow effect stack including 'Workflow', 'Error' 'JournalError', and
 -- 'Error' 'Suspended', so programs can call 'now', 'durableSleep', 'recordTo',
 -- 'replayFrom', etc.
+--
+-- REPLAY-SAFETY: any domain activity that can execute *before* a suspend point
+-- (a 'durableSleep'/'awaitSignal'/'executeChild') MUST be wrapped in 'replayFrom'
+-- so that on resume it is served from the journal instead of re-run. Bare
+-- 'recordTo' is unconditionally live (it always runs its action and appends), so
+-- it is replay-safe ONLY for steps strictly after the last suspend. ('now'/'newId'
+-- are journaled by the interpreter and are always replay-safe.)
 data WorkflowDef i o = WorkflowDef
   { wdType    :: Text
   , wdProgram :: i -> Journal -> JournalStore -> Eff '[Workflow, Error JournalError, Error Suspended, IOE] o

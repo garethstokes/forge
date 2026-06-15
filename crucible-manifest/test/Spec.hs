@@ -54,6 +54,7 @@ import Crucible.Journal
   , JournalIdentity (..)
   , Entry (..)
   , CassetteKey (..)
+  , Journal (..)
   , lookupEntry
   )
 import Crucible.Manifest.Journal
@@ -251,6 +252,13 @@ journalSpecific =
         case entry of
           Nothing -> ioError (userError "expected sleep entry in journal after fireDueTimers, got Nothing")
           Just _  -> pure ()
+
+        -- re-entrancy: a second fire does not double-fire (the exec is now 'ready', not 'waiting')
+        fired2 <- fireDueTimers pool "2026-06-15T01:00:00Z"
+        assertEq "fireDueTimers is idempotent (second fire returns [])" [] fired2
+        st2 <- journalStoreManifest pool eid
+        j2  <- jsLoad st2
+        assertEq "no duplicate sleep entry after second fire" 1 (length (jEntries j2))
   ]
 
 -- ---------------------------------------------------------------------------
