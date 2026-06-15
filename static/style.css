@@ -244,6 +244,14 @@ td.pick input { cursor: pointer; }
 .example .cr .earn { text-align:right; font-variant-numeric:tabular-nums; font-size:12px; }
 .example .muted { color:var(--muted); font-size:12px; }
 
+/* Human consensus label + judge-error blocks: reuse the .grade card so they
+   share padding with model grades; criterion text keeps its line breaks. */
+.example .label .m.ok { color:#166534; } .example .label .m.fail { color:#991b1b; }
+.example .judge-err .m.warn { color:#9a6700; }
+.example .grade-head .src { margin-left:auto; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.example .crit-text { white-space:pre-wrap; font-size:12px; line-height:1.5; color:#3a4254; margin-top:7px; }
+.example .crit-text.muted { color:var(--muted); }
+
 /* outputs-table example-key links: clean, underline on hover only */
 .outputs td.key a { color: var(--accent); text-decoration: none; }
 .outputs td.key a:hover { text-decoration: underline; }

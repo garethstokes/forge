@@ -349,24 +349,29 @@ gradeBlock g =
         , span_ [ P.class_ "crit-tags" ] [ span_ [ P.class_ "tag" ] [ text (ms t) ] | t <- c.tags ]
         , span_ [ P.class_ "earn" ] [ text (if c.met then "+" <> fmtD c.points else "0 / " <> fmtD c.points) ] ]
 
--- | A human consensus label: gold verdict chip + criterion, tagged so it reads
--- as ground truth rather than a model grade. Shown under "Grades" on the
--- example page (the only per-example signal a calibration run carries).
+-- | A human consensus label: a verdict-chip header tagged "human consensus"
+-- (so it reads as ground truth, not a model grade) over the criterion text.
+-- Same card/padding as 'gradeBlock'; the criterion is pre-wrapped so its
+-- rubric bullets keep their line breaks.
 labelBlock :: CriterionLabelDto -> View Model Action
 labelBlock l =
-  div_ [ P.class_ "cr" ]
-    [ span_ [ P.class_ (if l.human then "m ok" else "m fail") ] [ text (if l.human then "✓" else "✗") ]
-    , span_ [ P.class_ "ctxt" ]
-        [ text (ms l.criterion)
-        , span_ [ P.class_ "why" ]
-            [ text ("human consensus" <> maybe "" (\s -> " · " <> ms s) l.source) ] ] ]
+  div_ [ P.class_ "grade label" ]
+    [ div_ [ P.class_ "grade-head" ]
+        ( span_ [ P.class_ (if l.human then "m ok" else "m fail") ] [ text (if l.human then "✓" else "✗") ]
+        : strong_ [] [ text "human consensus" ]
+        : [ span_ [ P.class_ "src" ] [ text (ms s) ] | Just s <- [l.source] ] )
+    , div_ [ P.class_ "crit-text" ] [ text (ms l.criterion) ] ]
 
--- | A judge that errored on this example during meta-eval.
+-- | A judge that errored on this example during meta-eval. Same card as a
+-- grade so it lines up with the blocks above it.
 judgeErrorBlock :: JudgeErrorDto -> View Model Action
 judgeErrorBlock j =
-  div_ [ P.class_ "cell-error" ]
-    [ text ("\9888 " <> ms j.graderName <> " v" <> msShow j.graderVersion <> " couldn't judge")
-    , div_ [ P.class_ "muted" ] [ text (ms j.criterion) ] ]
+  div_ [ P.class_ "grade judge-err" ]
+    [ div_ [ P.class_ "grade-head" ]
+        [ span_ [ P.class_ "m warn" ] [ text "\9888" ]
+        , strong_ [] [ text (ms j.graderName <> " v" <> msShow j.graderVersion) ]
+        , span_ [ P.class_ "src" ] [ text "couldn't judge" ] ]
+    , div_ [ P.class_ "crit-text muted" ] [ text (ms j.criterion) ] ]
 
 -- Compare -----------------------------------------------------------------------
 
