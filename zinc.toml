@@ -57,6 +57,7 @@ depends = [
   "filepath",
   "postgresql-libpq",
   "manifest",
+  "manifest-core",
   "autodocodec",
   "aeson",
 ]
