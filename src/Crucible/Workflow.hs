@@ -33,23 +33,26 @@ module Crucible.Workflow
   , now
   , newId
   , durableSleep
+  , awaitSignal
     -- * Interpreter
   , WorkflowEnv (..)
   , WaitSpec (..)
   , Suspended (..)
   , runWorkflow
+  , realWorkflowEnv
     -- * Combinator
   , retryN
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
-import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
+import Data.IORef (IORef, newIORef, readIORef, modifyIORef', atomicModifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time
   ( UTCTime
+  , getCurrentTime
   , addUTCTime
   , parseTimeM
   , formatTime
@@ -79,6 +82,7 @@ data Workflow :: Effect where
   Now          :: Workflow m Text
   NewId        :: Workflow m Text
   DurableSleep :: Int -> Workflow m ()
+  AwaitSignal  :: Text -> Workflow m ByteString
 
 type instance DispatchOf Workflow = Dynamic
 
@@ -95,14 +99,20 @@ newId = send NewId
 durableSleep :: (Workflow :> es) => Int -> Eff es ()
 durableSleep = send . DurableSleep
 
+-- | Await an external signal by name.  Suspends on first encounter; returns
+-- the delivered payload (raw 'ByteString') on replay after the signal is
+-- delivered.
+awaitSignal :: (Workflow :> es) => Text -> Eff es ByteString
+awaitSignal = send . AwaitSignal
+
 -- ---------------------------------------------------------------------------
 -- Supporting types
 
--- | What an execution is waiting on (Phase 2a: timer only).
--- Carries both the cassette key (so the timer driver can append under it)
--- and the wake-at timestamp.
+-- | What an execution is waiting on.
+-- Carries the cassette key and the wait-specific payload.
 data WaitSpec
-  = WaitTimer CassetteKey Text   -- ^ call-index key, wake-at ISO-8601
+  = WaitTimer  CassetteKey Text   -- ^ call-index key, wake-at ISO-8601
+  | WaitSignal CassetteKey Text   -- ^ call-index key, signal name
   deriving (Eq, Show)
 
 -- | Thrown (via 'Error') when a workflow hits a 'DurableSleep' with no
@@ -148,6 +158,12 @@ runWorkflow env store j0 act = do
           t  <- liftIO (weNow env)
           let wa = addSeconds secs t
           throwError (Suspended (WaitTimer k wa))
+    AwaitSignal name -> do
+      k    <- nextKey "signal"
+      live <- liftIO (readIORef liveRef)
+      case lookupEntry k live of
+        Just e  -> pure (eResult e)   -- delivered payload (raw ByteString)
+        Nothing -> throwError (Suspended (WaitSignal k name))
     ) act
   where
     -- Increment the call index and return the key for this op call.
@@ -187,6 +203,31 @@ addSeconds secs t =
       in T.pack (formatTime defaultTimeLocale fmt ut')
   where
     fmt = "%Y-%m-%dT%H:%M:%SZ"
+
+-- ---------------------------------------------------------------------------
+-- realWorkflowEnv
+
+-- | A production 'WorkflowEnv' backed by real IO.
+--
+-- 'weNow'   — 'getCurrentTime' formatted as @%Y-%m-%dT%H:%M:%SZ@ (the same
+--             format 'addSeconds' parses, so durable-sleep wake-at arithmetic
+--             round-trips correctly).
+-- 'weNewId' — a unique id: timestamp with picosecond precision plus an
+--             atomically-incremented counter, ensuring uniqueness even within
+--             the same picosecond.
+realWorkflowEnv :: IO WorkflowEnv
+realWorkflowEnv = do
+  ctr <- newIORef (0 :: Int)
+  pure WorkflowEnv
+    { weNow   = fmt <$> getCurrentTime
+    , weNewId = do
+        n <- atomicModifyIORef' ctr (\x -> (x + 1, x))
+        t <- getCurrentTime
+        pure (fmtId t <> "-" <> T.pack (show n))
+    }
+  where
+    fmt   = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
+    fmtId = T.pack . formatTime defaultTimeLocale "%Y%m%d%H%M%S%q"
 
 -- ---------------------------------------------------------------------------
 -- retryN

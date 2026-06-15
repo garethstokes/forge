@@ -2974,4 +2974,34 @@ main = runChecks
        check "pending intents: after jsAppend, pending is empty"
          ([] :: [(CassetteKey, ActivityKind)])
          p2
+
+  -- AwaitSignal tests
+
+  , do -- awaitSignal: empty journal -> Suspended (WaitSignal)
+       let ident0   = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+       st  <- J.newInMemoryJournalStore (J.emptyJournal ident0)
+       j   <- J.jsLoad st
+       res <- runEff
+                (EE.runErrorNoCallStack @Suspended
+                  (EE.runErrorNoCallStack @J.JournalError
+                    (W.runWorkflow fixedEnv st j (W.awaitSignal "go"))))
+       check "workflow: awaitSignal miss -> Suspended (WaitSignal)"
+         (Left (Suspended (WaitSignal (J.mkKey "signal" ["0"]) "go")) :: Either Suspended (Either J.JournalError BSTEST.ByteString))
+         res
+
+  , do -- awaitSignal: entry seeded -> returns payload
+       let ident0     = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv   = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+           signalKey  = J.mkKey "signal" ["0"]
+           seededJ    = J.insertEntry signalKey (BC.pack "payload") (J.emptyJournal ident0)
+       st  <- J.newInMemoryJournalStore seededJ
+       j   <- J.jsLoad st
+       res <- runEff
+                (EE.runErrorNoCallStack @Suspended
+                  (EE.runErrorNoCallStack @J.JournalError
+                    (W.runWorkflow fixedEnv st j (W.awaitSignal "go"))))
+       check "workflow: awaitSignal hit -> returns seeded payload"
+         (Right (Right (BC.pack "payload")) :: Either Suspended (Either J.JournalError BSTEST.ByteString))
+         res
   ]
