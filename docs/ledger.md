@@ -55,5 +55,23 @@ across processes, so true concurrent claim needs a real backend. That is an
 interpreter concern; a backend-specific interpreter (for example one backed by
 an issue tracker) belongs in an application, not in the library.
 
+### The backend handle
+
+`runLedgerFile` is a thin wrapper over a *thick backend handle* — a `LedgerStore`
+record holding one `IO` action per operation
+(`doRecord`/`doClaim`/`doComplete`/`doListReady`) — run by `runLedgerWith`:
+
+```haskell
+runLedgerWith   :: (IOE :> es) => LedgerStore -> Eff (Ledger : es) a -> Eff es a
+ledgerStoreFile :: FilePath -> LedgerStore        -- the JSONL backend
+newLedgerStorePure :: IO LedgerStore              -- in-memory over an IORef event log
+```
+
+`runLedgerFile path = runLedgerWith (ledgerStoreFile path)`. The handle is the
+seam where persistence becomes a *parameter* of the interpreter: a real backend
+(say Postgres in a satellite package) supplies its own `LedgerStore` — whose
+`doClaim` can be a genuine atomic compare-and-set — and plugs into the same
+`runLedgerWith`. The pure `runLedgerState` is kept for tests.
+
 The ledger is independent of subagents: any caller can record and claim work,
 not just a `spawn` orchestrator.

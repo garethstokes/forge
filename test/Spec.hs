@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Crucible.Decode (stripToJson, decodeLLM, DecodeError (..))
 import Crucible.Decision (Decision(..), decisionCodec, Step(..), reduce)
-import Effectful (Eff, IOE, runEff, runPureEff, liftIO)
+import Effectful (Eff, IOE, runEff, runPureEff, liftIO, (:>))
 import qualified Data.Text.IO as TIO
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text.Encoding as TE
@@ -81,8 +81,8 @@ import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), Agents, spaw
 import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
-import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
-import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec, pageCodec, slugCodec)
+import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, runLedgerWith, newLedgerStorePure, ledgerStoreFile, workItemCodec)
+import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), Research, readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, runResearchWith, researchStoreState, linkCodec, pageCodec, slugCodec)
 import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))
 import Crucible.Research.Lint (Finding (..), orphans, brokenLinks, sparsePages, lintStructural, linkedPairs, allPairs, lintContradictions, lintStale, LintOpts (..), defaultLintOpts, lintWiki)
@@ -2352,6 +2352,26 @@ main = runChecks
        removeFile path
        check "ledger file: a claim is visible in a later session" (True, ([] :: [WorkId]))
          (ok, map ((.wid) :: WorkItem -> WorkId) ready)
+  , do store <- newLedgerStorePure
+       got <- runEff $ runLedgerWith store $ do
+                w  <- Ledger.record "task-1"
+                c1 <- Ledger.claim w "alice"
+                c2 <- Ledger.claim w "bob"   -- already claimed -> False
+                rs <- Ledger.listReady
+                pure (c1, c2, length rs)
+       check "ledger: runLedgerWith pure handle records/claims (CAS) and lists" (True, False, 0 :: Int) got
+  , do (path2, h2) <- openTempFile "/tmp" "crucible-ledger-parity.jsonl"
+       hClose h2
+       let prog = do w  <- Ledger.record "A"
+                     _  <- Ledger.claim w "w1"
+                     w2 <- Ledger.record "B"
+                     rs <- Ledger.listReady
+                     pure (map ((.wid) :: WorkItem -> WorkId) rs, w, w2)
+       fromFile <- runEff (runLedgerWith (ledgerStoreFile path2) prog)
+       removeFile path2 `catch` \(_ :: SomeException) -> pure ()
+       store2 <- newLedgerStorePure
+       fromPure <- runEff (runLedgerWith store2 prog)
+       check "ledger: file and pure handles agree (record/claim/listReady)" fromFile fromPure
   , do ref <- newIORef (Nothing :: Maybe (Either AgentFailure Text))
        let child :: SubAgent '[Chat.Chat, IOE] Text Text
            child = subAgent "child" C.str C.str "child instruction" []
@@ -2465,6 +2485,35 @@ main = runChecks
        removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
        check "research dir: a path-unsafe slug is refused (no escape, reads Nothing)"
          (Nothing :: Maybe (Page Text), False) (got, escaped)
+  , do pagesRef <- newIORef ([] :: [Page ()])
+       logRef   <- newIORef ([] :: [Text])
+       got <- runEff $ runResearchWith (researchStoreState pagesRef logRef) $ do
+                writePage (Page (Slug "a") "A" [] "body-a" ())
+                mp <- readPage (Slug "a")
+                ix <- index @()
+                pure (fmap ((.body) :: Page () -> Text) mp, ix)
+       check "research: runResearchWith state round-trips write/read/index" (Just "body-a", [Slug "a"]) got
+  , do pagesRef <- newIORef ([] :: [Page ()])
+       logRef   <- newIORef ([] :: [Text])
+       got <- runEff $ runResearchWith (researchStoreState pagesRef logRef) $ do
+                writePage (Page (Slug "a") "Alpha note" [] "mentions Haskell" ())
+                writePage (Page (Slug "b") "Beta" [] "nothing here" ())
+                search @() "haskell"
+       check "research: runResearchWith state search greps body" [Slug "a"] got
+  , do let dir = "/tmp/crucible-research-parity"
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       let prog :: (Research Text :> es) => Eff es ([Slug], [Slug])
+           prog = do writePage (Page (Slug "a") "Apple" [] "red fruit" ("" :: Text))
+                     writePage (Page (Slug "b") "Boat" [] "floats" ("" :: Text))
+                     i <- index @Text
+                     h <- search @Text "fruit"
+                     pure (i, h)
+       fromDir <- runEff (runResearchDir C.str dir prog)
+       removeDirectoryRecursive dir `catch` \(_ :: SomeException) -> pure ()
+       pagesRef <- newIORef ([] :: [Page Text])
+       logRef   <- newIORef ([] :: [Text])
+       fromState <- runEff (runResearchWith (researchStoreState pagesRef logRef) prog)
+       check "research: dir and state handles agree (index/search)" fromDir fromState
   , let page = Page (Slug "p") "P" [] "the temperature is 26C. the city is Brisbane." ()
         (res, pages, _) = runPureEff (runLLMScripted
           [ "[\"the temperature is 26C\",\"the city is Brisbane\"]"

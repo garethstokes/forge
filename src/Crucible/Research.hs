@@ -28,11 +28,16 @@ module Crucible.Research
   , Research (..)
   , readPage, writePage, index, search, appendLog
   , runResearchState
+  , ResearchStore (..)
+  , runResearchWith
+  , researchStoreDir
+  , researchStoreState
   , runResearchDir
   , slugCodec, linkTypeCodec, linkCodec, pageCodec
   ) where
 
 import Control.Exception (IOException, try)
+import Data.IORef (IORef, readIORef, modifyIORef')
 import Data.List (find, sort, sortOn)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -216,6 +221,49 @@ searchDir mc dir q = do
   matched <- mapM (\s -> maybe False (matchesQuery q) <$> readPageFile mc dir s) slugs
   pure [ s | (s, True) <- zip slugs matched ]
 
+-- | A thick backend handle: one 'IO' action per 'Research' operation. The seam
+-- that lets a backend (directory, in-memory, or a future Postgres satellite) be
+-- a parameter of the interpreter rather than a fresh interpreter per backend.
+data ResearchStore meta = ResearchStore
+  { doRead   :: Slug -> IO (Maybe (Page meta))
+  , doWrite  :: Page meta -> IO ()
+  , doIndex  :: IO [Slug]
+  , doSearch :: Text -> IO [Slug]
+  , doLog    :: Text -> IO ()
+  }
+
+-- | Run 'Research' against a thick handle (near-passthrough).
+runResearchWith :: (IOE :> es) => ResearchStore meta -> Eff (Research meta : es) a -> Eff es a
+runResearchWith s = interpret $ \_ -> \case
+  ReadPage sl  -> liftIO (s.doRead sl)
+  WritePage p  -> liftIO (s.doWrite p)
+  Index        -> liftIO s.doIndex
+  Search q     -> liftIO (s.doSearch q)
+  AppendLog ln -> liftIO (s.doLog ln)
+
+-- | Directory backend as a handle: one @\<slug\>.md@ per page, AppendLog to
+-- @activity.log@. Path-unsafe slugs are refused (read 'Nothing', write no-op).
+researchStoreDir :: JSONCodec meta -> FilePath -> ResearchStore meta
+researchStoreDir mc dir = ResearchStore
+  { doRead   = readPageFile mc dir
+  , doWrite  = writePageFile mc dir
+  , doIndex  = indexDir dir
+  , doSearch = searchDir mc dir
+  , doLog    = \ln -> createDirectoryIfMissing True dir >> TIO.appendFile (logFile dir) (ln <> "\n")
+  }
+
+-- | In-memory backend as a handle, over two 'IORef's (pages; log lines newest
+-- first). The IO analogue of 'runResearchState'; use when a program needs the
+-- 'Research' effect in 'IO' without touching disk.
+researchStoreState :: forall meta. IORef [Page meta] -> IORef [Text] -> ResearchStore meta
+researchStoreState pagesRef logRef = ResearchStore
+  { doRead   = \s -> find (\p -> p.slug == s) <$> readIORef pagesRef
+  , doWrite  = \p -> modifyIORef' pagesRef (\ps -> p : filter (\q -> q.slug /= p.slug) ps)
+  , doIndex  = sort . map ((.slug) :: Page meta -> Slug) <$> readIORef pagesRef
+  , doSearch = \q -> sort . map ((.slug) :: Page meta -> Slug) . filter (matchesQuery q) <$> readIORef pagesRef
+  , doLog    = \ln -> modifyIORef' logRef (ln :)
+  }
+
 -- | Directory interpreter: one @\<slug\>.md@ per page (--- JSON head --- +
 -- body), AppendLog appends to @activity.log@. Outlives sessions; git-diffable.
 -- Tolerant: a page file whose head does not decode reads as absent. Path-unsafe
@@ -223,9 +271,4 @@ searchDir mc dir q = do
 -- a model-chosen slug cannot escape the directory. 'index' lists the @.md@ files
 -- on disk, which may include a file whose head no longer decodes.
 runResearchDir :: (IOE :> es) => JSONCodec meta -> FilePath -> Eff (Research meta : es) a -> Eff es a
-runResearchDir mc dir = interpret $ \_ -> \case
-  ReadPage s   -> liftIO (readPageFile mc dir s)
-  WritePage p  -> liftIO (writePageFile mc dir p)
-  Index        -> liftIO (indexDir dir)
-  Search q     -> liftIO (searchDir mc dir q)
-  AppendLog ln -> liftIO (createDirectoryIfMissing True dir >> TIO.appendFile (logFile dir) (ln <> "\n"))
+runResearchDir mc dir = runResearchWith (researchStoreDir mc dir)

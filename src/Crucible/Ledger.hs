@@ -25,11 +25,17 @@ module Crucible.Ledger
   , record, claim, complete, listReady
   , runLedgerState
   , runLedgerFile
+  , LedgerStore (..)
+  , runLedgerWith
+  , ledgerStoreFile
+  , ledgerStorePure
+  , newLedgerStorePure
   , workStateCodec
   , workItemCodec
   ) where
 
 import Control.Exception (IOException, try)
+import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -169,22 +175,68 @@ readLog path = do
 appendEvent :: FilePath -> LedgerEvent -> IO ()
 appendEvent path e = TIO.appendFile path (encodeText eventCodec e <> "\n")
 
+-- | A thick backend handle: one 'IO' action per 'Ledger' operation. The seam
+-- that lets a backend be a parameter of the interpreter rather than a fresh
+-- interpreter per backend.
+data LedgerStore = LedgerStore
+  { doRecord    :: Text -> IO WorkId
+  , doClaim     :: WorkId -> Text -> IO Bool
+  , doComplete  :: WorkId -> IO ()
+  , doListReady :: IO [WorkItem]
+  }
+
+-- | Run 'Ledger' against a thick handle (near-passthrough).
+runLedgerWith :: (IOE :> es) => LedgerStore -> Eff (Ledger : es) a -> Eff es a
+runLedgerWith s = interpret $ \_ -> \case
+  Record p    -> liftIO (s.doRecord p)
+  Claim w who -> liftIO (s.doClaim w who)
+  Complete w  -> liftIO (s.doComplete w)
+  ListReady   -> liftIO s.doListReady
+
+-- | JSONL-file backend as a handle. Single-writer; the read-then-append in
+-- doRecord/doClaim is not atomic (concurrent writers can collide), same caveat
+-- as the original interpreter.
+ledgerStoreFile :: FilePath -> LedgerStore
+ledgerStoreFile path = LedgerStore
+  { doRecord = \p -> do
+      evs <- readLog path
+      let n = length [() | EvRecorded _ _ <- evs]
+      appendEvent path (EvRecorded (WorkId n) p)
+      pure (WorkId n)
+  , doClaim = \w who -> do
+      evs <- readLog path
+      case stateOf w evs of
+        Just Ready -> appendEvent path (EvClaimed w who) >> pure True
+        _          -> pure False
+  , doComplete  = \w -> appendEvent path (EvCompleted w)
+  , doListReady = readyOf <$> readLog path
+  }
+
+-- | In-memory backend as a handle over an 'IORef' of the event log. The IO
+-- analogue of 'runLedgerState'. 'atomicModifyIORef'' makes record/claim atomic
+-- within a single process.
+ledgerStorePure :: IORef [LedgerEvent] -> LedgerStore
+ledgerStorePure ref = LedgerStore
+  { doRecord = \p -> atomicModifyIORef' ref $ \evs ->
+      let n = length [() | EvRecorded _ _ <- evs]
+      in (evs ++ [EvRecorded (WorkId n) p], WorkId n)
+  , doClaim = \w who -> atomicModifyIORef' ref $ \evs ->
+      case stateOf w evs of
+        Just Ready -> (evs ++ [EvClaimed w who], True)
+        _          -> (evs, False)
+  , doComplete  = \w -> atomicModifyIORef' ref (\evs -> (evs ++ [EvCompleted w], ()))
+  , doListReady = readyOf <$> readIORef ref
+  }
+
+-- | Allocate a fresh in-memory ledger handle (its own empty 'IORef' event log).
+-- Convenience so callers/tests need no access to the internal 'LedgerEvent'.
+newLedgerStorePure :: IO LedgerStore
+newLedgerStorePure = ledgerStorePure <$> newIORef []
+
 -- | A JSONL log at the path: Record/Claim/Complete append one line; ListReady
 -- reads and folds. id = count of prior Recorded events. git-diffable, outlives
 -- sessions. Single-writer: each Record/Claim does a read-then-append, which is
 -- not atomic, so concurrent calls from separate threads or processes can assign
 -- duplicate ids or let two claims of one item both observe Ready.
 runLedgerFile :: (IOE :> es) => FilePath -> Eff (Ledger : es) a -> Eff es a
-runLedgerFile path = interpret $ \_ -> \case
-  Record p -> liftIO $ do
-    evs <- readLog path
-    let n = length [() | EvRecorded _ _ <- evs]
-    appendEvent path (EvRecorded (WorkId n) p)
-    pure (WorkId n)
-  Claim w who -> liftIO $ do
-    evs <- readLog path
-    case stateOf w evs of
-      Just Ready -> appendEvent path (EvClaimed w who) >> pure True
-      _          -> pure False
-  Complete w -> liftIO (appendEvent path (EvCompleted w))
-  ListReady  -> liftIO (readyOf <$> readLog path)
+runLedgerFile path = runLedgerWith (ledgerStoreFile path)
