@@ -1,0 +1,20 @@
+[package]
+name = "crucible-worker"
+version = "0.1.0"
+
+[build.lib]
+source-dirs = ["src"]
+ghc-options = ["-Wall", "-lpq"]
+depends = ["base", "text", "bytestring", "crucible", "crucible-manifest", "manifest", "manifest-core", "effectful", "effectful-core"]
+
+[build.test.spec]
+source-dirs = ["test"]
+main = "Spec.hs"
+ghc-options = ["-lpq", "-threaded"]
+depends = ["base", "text", "bytestring", "crucible", "crucible-manifest", "crucible-worker", "manifest", "manifest-core", "effectful", "effectful-core"]
+
+[dependencies.crucible]
+path = ".."
+
+[dependencies.crucible-manifest]
+path = "../crucible-manifest"

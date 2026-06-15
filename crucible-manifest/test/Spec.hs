@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 import Control.Exception (SomeException, bracket, catch)
+import Data.ByteString (ByteString)
 import Data.IORef (newIORef)
 import System.Directory
   ( createDirectoryIfMissing
@@ -47,6 +48,22 @@ import Crucible.Research
   , researchStoreState
   )
 import Crucible.Manifest.Research (researchStoreManifest, migrateResearch)
+
+import Crucible.Journal
+  ( JournalStore (..)
+  , JournalIdentity (..)
+  , Entry (..)
+  , CassetteKey (..)
+  , lookupEntry
+  )
+import Crucible.Manifest.Journal
+  ( migrateJournal
+  , createExecution
+  , journalStoreManifest
+  , claimExecution
+  , completeExecution
+  , listReadyExecutions
+  )
 
 import Conformance
   ( Test (..)
@@ -130,6 +147,71 @@ ledgerSpecific =
   ]
 
 -- ---------------------------------------------------------------------------
+-- Journal-specific tests
+-- ---------------------------------------------------------------------------
+
+ident0 :: JournalIdentity
+ident0 = JournalIdentity "test-workflow" "input-bytes" "v1" "2026-06-15T00:00:00Z"
+
+journalSpecific :: [Test]
+journalSpecific =
+  [ Test "journal[manifest]: append+load round-trips two entries in seq order" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        st  <- journalStoreManifest pool eid
+        let k1 = CassetteKey "key-one"
+            k2 = CassetteKey "key-two"
+        jsAppend st k1 "op1" "result-one"
+        jsAppend st k2 "op2" "result-two"
+        j <- jsLoad st
+        let e1 = lookupEntry k1 j
+            e2 = lookupEntry k2 j
+        case (e1, e2) of
+          (Just r1, Just r2) -> do
+            assertEq "entry 1 result bytes" ("result-one" :: ByteString) (r1.eResult)
+            assertEq "entry 2 result bytes" ("result-two" :: ByteString) (r2.eResult)
+            assertEq "entry 1 seq" 0 r1.eSeq
+            assertEq "entry 2 seq" 1 r2.eSeq
+          _ -> ioError (userError ("expected 2 entries, got: " <> show (e1, e2)))
+
+  , Test "journal[manifest]: claim CAS second claim returns Nothing" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        let lease1 = "2099-01-01T00:00:00Z"
+        mc1 <- claimExecution pool "worker-1" lease1
+        assertEq "first claim returns the exec id" (Just eid) mc1
+        mc2 <- claimExecution pool "worker-2" lease1
+        assertEq "second claim returns Nothing (lease not expired)" Nothing mc2
+
+  , Test "journal[manifest]: expired lease is reclaimable" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        -- claim with a lease already in the past
+        let pastLease = "2000-01-01T00:00:00Z"
+            nowLease  = "2099-01-01T00:00:00Z"
+        mc1 <- claimExecution pool "worker-1" pastLease
+        assertEq "initial claim succeeds" (Just eid) mc1
+        -- reclaim: pastLease < nowLease, so the expired-lease branch fires
+        mc2 <- claimExecution pool "worker-2" nowLease
+        assertEq "reclaim of expired lease returns the exec id" (Just eid) mc2
+
+  , Test "journal[manifest]: completeExecution removes from ready list" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid1 <- createExecution pool ident0
+        eid2 <- createExecution pool ident0
+        readyBefore <- listReadyExecutions pool
+        assertEq "both executions are ready" 2 (length readyBefore)
+        completeExecution pool eid1
+        readyAfter <- listReadyExecutions pool
+        assertEq "only one execution remains ready" 1 (length readyAfter)
+        assertEq "remaining is eid2" [eid2] readyAfter
+  ]
+
+-- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
 
@@ -146,4 +228,5 @@ main = runTests $ concat
   , researchConformance "manifest" (\k -> withEphemeralDb (\p -> migrateResearch p >> k (researchStoreManifest C.str p)))
   , memorySpecific
   , ledgerSpecific
+  , journalSpecific
   ]

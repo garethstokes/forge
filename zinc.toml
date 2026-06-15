@@ -3,7 +3,7 @@
 # coexist here (member ".") — a flat single-package layout: src/, app/, test/.
 
 [workspace]
-members = [".", "crucible-manifest"]
+members = [".", "crucible-manifest", "crucible-worker"]
 ghc = "9.12.2"
 
 [package]

@@ -2682,19 +2682,19 @@ main = runChecks
          res
   , check "journal: empty journal has no entries"
       (0 :: Int)
-      (length (J.jEntries (J.emptyJournal (J.JournalIdentity "wf" "" "v1"))))
+      (length (J.jEntries (J.emptyJournal (J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"))))
   , check "journal: insert then lookup returns the bytes with seq 0"
       (Just (0 :: Int, "6"))
       (let k = J.mkKey "double" ["3"]
-           j = J.insertEntry k (encInt 6) (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+           j = J.insertEntry k (encInt 6) (J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z"))
        in (\e -> (J.eSeq e, BC.unpack (J.eResult e))) <$> J.lookupEntry k j)
   , check "journal: lookup of an absent key is Nothing"
       (Nothing :: Maybe Int)
-      (let j = J.emptyJournal (J.JournalIdentity "double" "" "v1")
+      (let j = J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z")
        in J.eSeq <$> J.lookupEntry (J.mkKey "double" ["3"]) j)
   , check "journal: two inserts get sequential seqs"
       [0 :: Int, 1]
-      (let j0 = J.emptyJournal (J.JournalIdentity "double" "" "v1")
+      (let j0 = J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z")
            j1 = J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) j0
            j2 = J.insertEntry (J.mkKey "double" ["4"]) (encInt 8) j1
        in map (J.eSeq . snd) (J.jEntries j2))
@@ -2706,19 +2706,19 @@ main = runChecks
       (J.mkKey "double" ["3"] == J.mkKey "double" ["3"])
   , check "journal: record returns the live value and appends one entry"
       (6 :: Int, 1 :: Int)
-      (let ident = J.JournalIdentity "double" "" "v1"
+      (let ident = J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z"
            (a, j) = runPureEff (ES.runState (J.emptyJournal ident)
                       (J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))))
        in (a, length (J.jEntries j)))
   , check "journal: recorded bytes are recoverable by key"
       (Just "6")
-      (let ident = J.JournalIdentity "double" "" "v1"
+      (let ident = J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z"
            (_, j) = runPureEff (ES.runState (J.emptyJournal ident)
                       (J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))))
        in BC.unpack . J.eResult <$> J.lookupEntry (J.mkKey "double" ["3"]) j)
   , check "journal: two records append in order with sequential seqs"
       [0 :: Int, 1]
-      (let ident = J.JournalIdentity "calc" "" "v1"
+      (let ident = J.JournalIdentity "calc" "" "v1" "2026-06-15T00:00:00Z"
            (_, j) = runPureEff (ES.runState (J.emptyJournal ident) (do
                       _ <- J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))
                       J.record (J.mkKey "triple" ["3"]) encInt (pure (9 :: Int))))
@@ -2727,56 +2727,56 @@ main = runChecks
       (Right (J.Replayed (6 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int))
       (fmap fst (runPureEff (EE.runErrorNoCallStack
         (ES.runState
-          (J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) (J.emptyJournal (J.JournalIdentity "double" "" "v1")))
+          (J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) (J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z")))
           (J.replay J.Signal (J.mkKey "double" ["3"]) decInt (pure 0))))))
   , check "journal: replay miss under Signal flags divergence and runs live"
       (Right (J.Diverged (J.Divergence (J.mkKey "double" ["99"])) (198 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int))
       (fmap fst (runPureEff (EE.runErrorNoCallStack
-        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z"))
           (J.replay J.Signal (J.mkKey "double" ["99"]) decInt (pure 198))))))
   , check "journal: replay miss under Fallthrough runs live silently (no divergence)"
       (Right (J.Replayed (198 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int))
       (fmap fst (runPureEff (EE.runErrorNoCallStack
-        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z"))
           (J.replay J.Fallthrough (J.mkKey "double" ["99"]) decInt (pure 198))))))
   , check "journal: replay miss under Fail aborts with MissError"
       (Left (J.MissError (J.mkKey "double" ["99"])) :: Either J.JournalError (J.ReplayOutcome Int))
       (fmap fst (runPureEff (EE.runErrorNoCallStack
-        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z"))
           (J.replay J.Fail (J.mkKey "double" ["99"]) decInt (pure 0))))))
   , check "journal: replay hit with undecodable bytes is a DecodeError"
       (Left (J.DecodeError (J.mkKey "double" ["3"]) "bad int") :: Either J.JournalError (J.ReplayOutcome Int))
       (fmap fst (runPureEff (EE.runErrorNoCallStack
         (ES.runState
-          (J.insertEntry (J.mkKey "double" ["3"]) (BC.pack "not-a-number") (J.emptyJournal (J.JournalIdentity "double" "" "v1")))
+          (J.insertEntry (J.mkKey "double" ["3"]) (BC.pack "not-a-number") (J.emptyJournal (J.JournalIdentity "double" "" "v1" "2026-06-15T00:00:00Z")))
           (J.replay J.Signal (J.mkKey "double" ["3"]) decInt (pure 0))))))
   , check "journal: codec round-trips a journal with identity + entries"
       (Right True)
-      (let j0 = J.emptyJournal (J.JournalIdentity "calc" "the-input" "sha-abc")
+      (let j0 = J.emptyJournal (J.JournalIdentity "calc" "the-input" "sha-abc" "2026-06-15T00:00:00Z")
            j  = J.insertEntry (J.mkKey "triple" ["3"]) (encInt 9)
                   (J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) j0)
            v  = toJSONVia J.journalCodec j
        in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
   , check "journal: codec round-trips an empty journal"
       (Right True)
-      (let j = J.emptyJournal (J.JournalIdentity "wf" "" "v1")
+      (let j = J.emptyJournal (J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z")
            v = toJSONVia J.journalCodec j
        in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
   , check "journal: codec round-trips non-UTF8 binary result + input bytes"
       (Right True)
       (let j = J.insertEntry (J.mkKey "blob" [BSTEST.pack [0,255,0x1f]]) (BSTEST.pack [0,255,31,128,7])
-                 (J.emptyJournal (J.JournalIdentity "wf" (BSTEST.pack [200,0,255]) "v1"))
+                 (J.emptyJournal (J.JournalIdentity "wf" (BSTEST.pack [200,0,255]) "v1" "2026-06-15T00:00:00Z"))
            v = toJSONVia J.journalCodec j
        in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
   , check "journal: duplicate key is last-write-wins on lookup (history retained)"
       (Just "v2", 2 :: Int)
       (let k = J.mkKey "op" ["a"]
            j = J.insertEntry k (BC.pack "v2") (J.insertEntry k (BC.pack "v1")
-                 (J.emptyJournal (J.JournalIdentity "wf" "" "v1")))
+                 (J.emptyJournal (J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z")))
        in (BC.unpack . J.eResult <$> J.lookupEntry k j, length (J.jEntries j)))
   , check "journal: record-then-replay-changed surfaces exactly the new op as Diverged"
       (Right [J.Replayed (6 :: Int), J.Diverged (J.Divergence (J.mkKey "triple" ["3"])) 9] :: Either J.JournalError [J.ReplayOutcome Int])
-      (let ident = J.JournalIdentity "calc" "" "v1"
+      (let ident = J.JournalIdentity "calc" "" "v1" "2026-06-15T00:00:00Z"
            -- original code recorded only `double 3`
            (_, j) = runPureEff (ES.runState (J.emptyJournal ident)
                       (J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))))
@@ -2785,4 +2785,25 @@ main = runChecks
             a <- J.replay J.Signal (J.mkKey "double" ["3"]) decInt (pure 6)
             b <- J.replay J.Signal (J.mkKey "triple" ["3"]) decInt (pure 9)
             pure [a, b])))))
+  , do let ident0 = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+       st <- J.newInMemoryJournalStore (J.emptyJournal ident0)
+       v  <- runEff (J.recordTo st (J.mkKey "double" ["3"]) "double" encInt (pure (6 :: Int)))
+       j  <- J.jsLoad st
+       check "journal store: recordTo persists and returns the value"
+         (6 :: Int, Just "6") (v, BC.unpack . J.eResult <$> J.lookupEntry (J.mkKey "double" ["3"]) j)
+  , do let ident0 = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+       st <- J.newInMemoryJournalStore
+          (J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) (J.emptyJournal ident0))
+       j   <- J.jsLoad st
+       out <- runEff (EE.runErrorNoCallStack
+                (J.replayFrom j J.Fallthrough (J.mkKey "double" ["3"]) decInt (pure (0 :: Int))))
+       check "journal store: replayFrom hit returns Replayed"
+         (Right (J.Replayed (6 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int)) out
+  , do let ident0 = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+       st <- J.newInMemoryJournalStore (J.emptyJournal ident0)
+       j   <- J.jsLoad st
+       out <- runEff (EE.runErrorNoCallStack
+                (J.replayFrom j J.Signal (J.mkKey "new" ["x"]) decInt (pure (99 :: Int))))
+       check "journal store: replayFrom miss under Signal is Diverged + live"
+         (Right (J.Diverged (J.Divergence (J.mkKey "new" ["x"])) (99 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int)) out
   ]

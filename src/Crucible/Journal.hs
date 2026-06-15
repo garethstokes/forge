@@ -35,6 +35,11 @@ module Crucible.Journal
     -- * Primitives
   , record
   , replay
+    -- * IO journal store (thick handle)
+  , JournalStore (..)
+  , recordTo
+  , replayFrom
+  , newInMemoryJournalStore
     -- * Wire codec
   , journalCodec
   ) where
@@ -45,6 +50,8 @@ import qualified Data.ByteString.Base64 as B64
 import qualified Data.List as L
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
+
+import Data.IORef (newIORef, readIORef, modifyIORef')
 
 import Effectful
 import Effectful.State.Static.Local (State, get, modify)
@@ -77,11 +84,12 @@ data Entry = Entry
 -- | Identity that makes a journal portable: enough to re-run the workflow from
 -- scratch in a different process / at a later time / against changed code.
 -- 'jiInput' is the raw workflow input; 'jiAppVersion' is the app's git sha at
--- capture. (A captured-at timestamp is added in Phase 1, where a clock exists.)
+-- capture; 'jiCapturedAt' is the ISO-8601 wall-clock time of capture.
 data JournalIdentity = JournalIdentity
   { jiWorkflowType :: Text
   , jiInput        :: ByteString
   , jiAppVersion   :: Text
+  , jiCapturedAt   :: Text
   } deriving (Eq, Show)
 
 -- | A keyed recording. Entries are a plain association list in append order
@@ -165,6 +173,56 @@ replay pol k dec live = do
       Signal      -> Diverged (Divergence k) <$> live
       Fallthrough -> Replayed <$> live
 
+-- IO journal store ----------------------------------------------------------
+
+-- | A thick handle: one IO action per journal op (the durable seam, à la
+-- 'MemoryStore'). 'jsAppend' persists one recorded result. The in-memory store
+-- ignores op; the Postgres store in crucible-manifest stores it in a column.
+data JournalStore = JournalStore
+  { jsLoad   :: IO Journal
+  , jsAppend :: CassetteKey -> Text -> ByteString -> IO ()   -- ^ key, op, encoded result
+  }
+
+-- | Run a live action and durably append its encoded result. The store-backed
+-- record path.
+recordTo :: (IOE :> es)
+         => JournalStore -> CassetteKey -> Text -> (a -> ByteString) -> Eff es a -> Eff es a
+recordTo s k op enc act = do
+  a <- act
+  liftIO (jsAppend s k op (enc a))
+  pure a
+
+-- | Serve an op from a pre-loaded 'Journal' (a worker loads once per claim).
+-- On a miss, apply the 'MissPolicy': 'Fail' → 'throwError' 'MissError';
+-- 'Signal' → run live + 'Diverged'; 'Fallthrough' → run live as a plain
+-- 'Replayed'. Decode failure on a hit is handled like a miss per policy.
+replayFrom :: (IOE :> es, Error JournalError :> es)
+           => Journal -> MissPolicy -> CassetteKey
+           -> (ByteString -> Either Text a)
+           -> Eff es a
+           -> Eff es (ReplayOutcome a)
+replayFrom j pol k dec live = case lookupEntry k j of
+  Just e  -> case dec (eResult e) of
+               Right a -> pure (Replayed a)
+               Left _  -> onMiss
+  Nothing -> onMiss
+  where
+    onMiss = case pol of
+      Fail        -> throwError (MissError k)
+      Signal      -> Diverged (Divergence k) <$> live
+      Fallthrough -> Replayed <$> live
+
+-- | In-memory store over an 'IORef' 'Journal' (testable; the Phase-3 eval
+-- consumer uses it). Ignores op (the 'Entry' type has no op field — that is
+-- tracked by the Postgres store's column).
+newInMemoryJournalStore :: Journal -> IO JournalStore
+newInMemoryJournalStore j0 = do
+  ref <- newIORef j0
+  pure JournalStore
+    { jsLoad   = readIORef ref
+    , jsAppend = \k _op bs -> modifyIORef' ref (insertEntry k bs)
+    }
+
 -- Wire codec ----------------------------------------------------------------
 
 -- | A 'ByteString' as base64 text in JSON.
@@ -178,7 +236,8 @@ identityCodec :: JSONCodec JournalIdentity
 identityCodec = object (JournalIdentity
   <$> field "workflowType" jiWorkflowType str
   <*> field "input"        jiInput        b64Codec
-  <*> field "appVersion"   jiAppVersion   str)
+  <*> field "appVersion"   jiAppVersion   str
+  <*> field "capturedAt"   jiCapturedAt   str)
 
 -- A flat wire shape for one keyed entry.
 data WireEntry = WireEntry CassetteKey Int ByteString
