@@ -2511,15 +2511,15 @@ main = runChecks
                          , "links" .= ([] :: [Value]), "body" .= String "the body", "meta" .= String "" ]
         expected = Page (Slug "p") "P" [] "the body" ("" :: Text)
         (res, pages, _) = runPureEff (runResearchState []
-          (Tl.invoke (researchTools C.str !! 1) pageVal))
+          (Tl.invoke (head [t | t <- researchTools C.str, t.name == "write_page"]) pageVal))
     in check "researchTools: write_page lands the page"
          (True, [expected])
          (either (const False) (const True) res, pages)
   , let known = Page (Slug "p") "P" [] "b" ("" :: Text)
         (r1, _, _) = runPureEff (runResearchState [known]
-          (Tl.invoke (researchTools C.str !! 0) (object ["slug" .= String "p"])))
+          (Tl.invoke (head [t | t <- researchTools C.str, t.name == "read_page"]) (object ["slug" .= String "p"])))
         (r2, _, _) = runPureEff (runResearchState [known]
-          (Tl.invoke (researchTools C.str !! 0) (object ["slug" .= String "absent"])))
+          (Tl.invoke (head [t | t <- researchTools C.str, t.name == "read_page"]) (object ["slug" .= String "absent"])))
         decodeRP v = case decodeLLM (C.nullable' (pageCodec C.str)) (C.encodeText C.anyValue v) of
                        Right x -> Right x
                        Left  _ -> Left ("decode error" :: Text)
@@ -2530,7 +2530,7 @@ main = runChecks
   , let p1 = Page (Slug "a") "Apple" [] "red fruit" ("" :: Text)
         p2 = Page (Slug "b") "Boat" [] "floats" ("" :: Text)
         (r, _, _) = runPureEff (runResearchState [p1, p2]
-          (Tl.invoke (researchTools C.str !! 2) (object ["query" .= String "fruit"])))
+          (Tl.invoke (head [t | t <- researchTools C.str, t.name == "search_pages"]) (object ["query" .= String "fruit"])))
         decodeSL v = case decodeLLM (C.list' slugCodec) (C.encodeText C.anyValue v) of
                        Right x -> Right x
                        Left  _ -> Left ("decode error" :: Text)

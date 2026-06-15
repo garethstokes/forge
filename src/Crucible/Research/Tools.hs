@@ -40,8 +40,9 @@ You maintain a research knowledge base with these tools:
 - read_page: read one page by its slug.
 - write_page: create or update a page (slug, title, body, and typed links).
 
-Before writing, search for an existing page and prefer updating it over creating
-a near-duplicate. When a new finding conflicts with a page, add a link of type
-contradicts or supersedes rather than overwriting silently. Keep each page
-focused on one topic.
+write_page replaces the whole page, so to update one, read_page first and write
+the full page back with your change. Before writing, search for an existing page
+and prefer updating it over creating a near-duplicate. When a new finding
+conflicts with a page, add a link of type contradicts or supersedes rather than
+overwriting silently. Keep each page focused on one topic.
 |]
