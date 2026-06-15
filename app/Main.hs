@@ -61,6 +61,7 @@ import Crucible.Emit (runEmitIO)
 import qualified Crucible.Ledger as Ledger
 import qualified Crucible.Research as Research
 import Crucible.Research.Grounded (writeGrounded, defaultGroundGate, GroundingOutcome (..))
+import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
 import Crucible.Memory.Eval (memoryLift, liftDelta)
@@ -377,6 +378,14 @@ main = do
           onDisk m = maybe "absent" (const "present") (m :: Maybe (Research.Page T.Text))
       TIO.putStrLn ("grounded write (supported): " <> render okRes <> "; on disk: " <> onDisk okOnDisk)
       TIO.putStrLn ("grounded write (unsupported): " <> render badRes <> "; on disk: " <> onDisk badOnDisk)
+      -- Research as tools: an agent records a fact into the store, then we read it back.
+      let toolsDir = "/tmp/crucible-research-tools-demo"
+          task = researchInstructions <> "\n\nRecord that Brisbane is the capital of Queensland. Use slug \"brisbane\"."
+      _ <- runEff (Anthropic.runChat cfg (Research.runResearchDir str toolsDir
+             (runToolAgent (researchTools str) task)))
+      brisbane <- runEff (Research.runResearchDir str toolsDir (Research.readPage (Research.Slug "brisbane")))
+      TIO.putStrLn ("research tools: brisbane page is "
+                    <> maybe "absent" (\pg -> "present: " <> (pg :: Research.Page T.Text).title) brisbane)
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
