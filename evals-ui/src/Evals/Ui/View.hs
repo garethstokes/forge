@@ -181,9 +181,9 @@ detailTabBar tabs = div_ [ P.class_ "tabbar" ] (map one tabs)
 graderTabPanel :: RunDetailDto -> MetricDto -> View Model Action
 graderTabPanel d mc =
   div_ [ P.class_ "grader-tab" ]
-    ( graderDetailSection mc
-    : map calibCard (mergeSeries
-        [ s | s <- d.calibration, s.graderName == mc.graderName, s.graderVersion == mc.graderVersion ]) )
+    ( map calibCard (mergeSeries
+        [ s | s <- d.calibration, s.graderName == mc.graderName, s.graderVersion == mc.graderVersion ])
+    ++ [ graderDetailSection mc ] )
 
 runHeader :: RunSummaryDto -> View Model Action
 runHeader r =
@@ -556,9 +556,14 @@ criteriaBlock cs =
         [ span_ [ P.class_ (if c.points < 0 then "pts neg" else "pts pos") ]
             [ text ((if c.points < 0 then "" else "+") <> fmtD c.points) ]
         , div_ [ P.class_ "crit-main" ]
-            ( div_ [ P.class_ "crit-txt" ] [ text (ms c.criterion) ]
+            ( div_ [ P.class_ "crit-txt" ] [ text (formatCriterion c.criterion) ]
             : [ div_ [ P.class_ "crit-tags" ] (map tagChip c.tags) | not (null c.tags) ] ) ]
     tagChip t = span_ [ P.class_ ("tag " <> ms (namespace t)), P.title_ (ms t) ] [ text (prettyTag t) ]
+
+-- | Break a rubric criterion's inline "- " sub-points onto their own lines
+-- (rendered with white-space:pre-wrap) so the wall of text reads as a list.
+formatCriterion :: Text -> MisoString
+formatCriterion = ms . T.replace " - " "\n• "
 
 methodLine :: Text -> MisoString
 methodLine k = case k of
