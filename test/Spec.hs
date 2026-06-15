@@ -2704,4 +2704,23 @@ main = runChecks
   , check "journal: same op+args produce equal keys"
       True
       (J.mkKey "double" ["3"] == J.mkKey "double" ["3"])
+  , check "journal: record returns the live value and appends one entry"
+      (6 :: Int, 1 :: Int)
+      (let ident = J.JournalIdentity "double" "" "v1"
+           (a, j) = runPureEff (ES.runState (J.emptyJournal ident)
+                      (J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))))
+       in (a, length (J.jEntries j)))
+  , check "journal: recorded bytes are recoverable by key"
+      (Just "6")
+      (let ident = J.JournalIdentity "double" "" "v1"
+           (_, j) = runPureEff (ES.runState (J.emptyJournal ident)
+                      (J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))))
+       in BC.unpack . J.eResult <$> J.lookupEntry (J.mkKey "double" ["3"]) j)
+  , check "journal: two records append in order with sequential seqs"
+      [0 :: Int, 1]
+      (let ident = J.JournalIdentity "calc" "" "v1"
+           (_, j) = runPureEff (ES.runState (J.emptyJournal ident) (do
+                      _ <- J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))
+                      J.record (J.mkKey "triple" ["3"]) encInt (pure (9 :: Int))))
+       in map (J.eSeq . snd) (J.jEntries j))
   ]
