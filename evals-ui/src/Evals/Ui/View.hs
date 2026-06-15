@@ -310,10 +310,11 @@ exampleView m _ _ =
                       _       -> div_ [ P.class_ "ex-section" ] (promptBody d.prompt)
                   , exSection "Response" [ responseBlock d.responseText d.responseError ] ]
               , div_ [ P.class_ "ex-side" ]
-                  [ exSection "Grades"
-                      (  map labelBlock d.labels
-                      ++ map (graderGroup m humanByCrit) (groupByGrader d.grades)
-                      ++ map judgeErrorBlock d.judgeErrors ) ] ] ] ]
+                  (  [ exSection "Expected rubric" (map rubricRow d.rubric) | not (null d.rubric) ]
+                  ++ [ exSection "Grades"
+                         (  map labelBlock d.labels
+                         ++ map (graderGroup m humanByCrit) (groupByGrader d.grades)
+                         ++ map judgeErrorBlock d.judgeErrors ) ] ) ] ] ]
   where
     exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
     navBtn label Nothing     = span_ [ P.class_ "ex-navbtn disabled" ] [ text label ]
@@ -423,10 +424,22 @@ gradeBody humanByCrit g =
                  in [ span_ [ P.class_ ("agree " <> if agrees then "ok" else "fail") ]
                         [ text (if agrees then "agrees" else "disagrees") ] ]
 
--- | A human consensus label: the gold human verdict on a rubric criterion.
--- Leads with an explicit MET / NOT MET verdict (the human's actual answer),
--- then shows the criterion it answers, clearly labelled and de-emphasised so
--- it doesn't read as unanswered instructions.
+-- | One rubric criterion from the example's expected: points, the criterion
+-- text (verbatim, source newlines preserved), and its humanized tags. Shown in
+-- the "Expected rubric" section above the verdicts.
+rubricRow :: RubricCriterionDto -> View Model Action
+rubricRow c =
+  div_ [ P.class_ "crit" ]
+    [ span_ [ P.class_ (if c.points < 0 then "pts neg" else "pts pos") ]
+        [ text ((if c.points < 0 then "" else "+") <> fmtD c.points) ]
+    , div_ [ P.class_ "crit-main" ]
+        ( div_ [ P.class_ "crit-txt" ] [ text (ms c.criterion) ]
+        : [ div_ [ P.class_ "crit-tags" ]
+              [ span_ [ P.class_ ("tag " <> ms (namespace t)), P.title_ (ms t) ] [ text (prettyTag t) ] | t <- c.tags ]
+          | not (null c.tags) ] ) ]
+
+-- | The human gold verdict on a criterion — compact (the criterion itself is
+-- shown once in the Expected rubric section above), just the MET / NOT MET call.
 labelBlock :: CriterionLabelDto -> View Model Action
 labelBlock l =
   div_ [ P.class_ "grade label" ]
@@ -434,9 +447,7 @@ labelBlock l =
         ( strong_ [] [ text "human consensus" ]
         : span_ [ P.class_ ("verdict " <> if l.human then "ok" else "fail") ]
             [ text (if l.human then "✓ met" else "✗ not met") ]
-        : [ span_ [ P.class_ "src" ] [ text (ms s) ] | Just s <- [l.source] ] )
-    , div_ [ P.class_ "crit-label" ] [ text "rubric criterion" ]
-    , div_ [ P.class_ "crit-text muted" ] [ text (ms l.criterion) ] ]
+        : [ span_ [ P.class_ "src" ] [ text (ms s) ] | Just s <- [l.source] ] ) ]
 
 -- | A judge that errored on this example during meta-eval. Same card as a
 -- grade so it lines up with the blocks above it.

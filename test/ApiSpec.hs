@@ -274,6 +274,7 @@ main = do
     , prompt = [ PromptMsgDto { role = "system", content = "Answer." } ]
     , responseText = Just "Paris.", responseError = Nothing
     , grades = []
+    , rubric = [ RubricCriterionDto { criterion = "names the capital", points = 5, tags = ["axis:accuracy"] } ]
     , labels = [ CriterionLabelDto { criterion = "names the capital", human = True, source = Just "consensus" } ]
     , judgeErrors = [ JudgeErrorDto { graderName = "rubric", graderVersion = 1, criterion = "names the capital" } ]
     , prevKey = Nothing, nextKey = Just "capital-uk" }
@@ -369,7 +370,12 @@ serverSpec = withEphemeralDb $ \pool -> do
     v  <- add (DatasetVersion { id = DatasetVersionId 0, org = OrgId 1, dataset = d.id, version = 1, note = Nothing, finalizedAt = Just now, createdAt = now } :: DatasetVersion)
     -- Insert e2 first so DB heap order is e2, e1 — the handler must sort by key.
     e2 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e2", input = Aeson (object ["q" .= ("2" :: Text)]), expected = Nothing, meta = Nothing } :: Example)
-    e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e1", input = Aeson e1Input, expected = Nothing, meta = Nothing } :: Example)
+    e1 <- add (Example { id = ExampleId 0, org = OrgId 1, datasetVersion = v.id, key = "e1", input = Aeson e1Input
+                       , expected = Just (Aeson (toJSON
+                           [ object [ "criterion" .= ("names the capital" :: Text)
+                                    , "points" .= (5 :: Double)
+                                    , "tags" .= (["axis:accuracy"] :: [Text]) ] ]))
+                       , meta = Nothing } :: Example)
     t  <- add (Target { id = TargetId 0, org = OrgId 1, name = "tgt", createdAt = now } :: Target)
     tv <- add (TargetVersion { id = TargetVersionId 0, org = OrgId 1, target = t.id, version = 1, model = "claude-x", prompt = "SYS", params = Aeson (object []), createdAt = now } :: TargetVersion)
     r  <- add (Run { id = RunId 0, org = OrgId 1, datasetVersion = v.id, targetVersion = tv.id, status = "succeeded", startedAt = Just now, finishedAt = Just now, meta = Nothing, createdAt = now } :: Run)
@@ -577,6 +583,11 @@ serverSpec = withEphemeralDb $ \pool -> do
         Just d  -> d.prevKey == Nothing && d.nextKey == Just "e2"
         Nothing -> False
     -- e1 carries a human consensus label and a flagged judge error.
+    expect "example e1 expected rubric" $
+      case decode (responseBody rEx) :: Maybe ExampleDetailDto of
+        Just d | [r] <- d.rubric ->
+             r.criterion == "names the capital" && r.points == 5.0 && r.tags == ["axis:accuracy"]
+        _ -> False
     expect "example e1 consensus label" $
       case decode (responseBody rEx) :: Maybe ExampleDetailDto of
         Just d | [l] <- d.labels ->

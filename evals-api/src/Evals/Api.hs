@@ -117,6 +117,7 @@ data ExampleDetailDto = ExampleDetailDto
   , input :: Value, prompt :: [PromptMsgDto]
   , responseText :: Maybe Text, responseError :: Maybe Text
   , grades :: [GradeDto]
+  , rubric :: [RubricCriterionDto]
   , labels :: [CriterionLabelDto]
   , judgeErrors :: [JudgeErrorDto]
   , prevKey :: Maybe Text, nextKey :: Maybe Text }

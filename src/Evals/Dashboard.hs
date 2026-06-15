@@ -302,6 +302,16 @@ rubricCriteriaFromDetail (Just (Aeson v)) = maybe [] id (AT.parseMaybe p v)
 dedupCriteria :: [RubricCriterionDto] -> [RubricCriterionDto]
 dedupCriteria = Map.elems . Map.fromListWith (\_new old -> old) . map (\c -> (c.criterion, c))
 
+-- | The example's @expected@ rubric: a top-level array of {criterion, points,
+-- tags}. (Distinct from a score detail's nested "criteria" array.)
+rubricFromExpected :: Maybe (Aeson Value) -> [RubricCriterionDto]
+rubricFromExpected Nothing = []
+rubricFromExpected (Just (Aeson v)) = maybe [] id (AT.parseMaybe p v)
+  where p = AT.withArray "expected" $ \arr ->
+              mapM (AT.withObject "criterion" $ \c ->
+                      RubricCriterionDto <$> c AT..: "criterion" <*> c AT..: "points" <*> c AT..: "tags")
+                   (toList arr)
+
 -- ---------------------------------------------------------------------------
 -- Calibration (meta-eval) surfacing
 
@@ -498,6 +508,7 @@ exampleDetailHandler pool orgId rid key respond = do
               { runId = rn, exampleKey = key, input = inputV, prompt = prompt
               , responseText = o.text, responseError = o.error
               , grades = sortOn (\g -> g.graderName) grades
+              , rubric = rubricFromExpected e.expected
               , labels = labelDtos, judgeErrors = jerrs
               , prevKey = prevK, nextKey = nextK })
   case mDto of
