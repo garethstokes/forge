@@ -3004,4 +3004,34 @@ main = runChecks
        check "workflow: awaitSignal hit -> returns seeded payload"
          (Right (Right (BC.pack "payload")) :: Either Suspended (Either J.JournalError BSTEST.ByteString))
          res
+
+  -- ExecuteChild tests
+
+  , do -- executeChild: empty journal -> Suspended (WaitChild)
+       let ident0   = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+       st  <- J.newInMemoryJournalStore (J.emptyJournal ident0)
+       j   <- J.jsLoad st
+       res <- runEff
+                (EE.runErrorNoCallStack @Suspended
+                  (EE.runErrorNoCallStack @J.JournalError
+                    (W.runWorkflow fixedEnv st j (W.executeChild "calc" ("child" :: BSTEST.ByteString)))))
+       check "workflow: executeChild miss -> Suspended (WaitChild)"
+         (Left (Suspended (WaitChild (J.mkKey "child" ["0"]) "calc" "child")) :: Either Suspended (Either J.JournalError BSTEST.ByteString))
+         res
+
+  , do -- executeChild: entry seeded -> returns child result
+       let ident0    = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv  = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+           childKey  = J.mkKey "child" ["0"]
+           seededJ   = J.insertEntry childKey (BC.pack "child-result") (J.emptyJournal ident0)
+       st  <- J.newInMemoryJournalStore seededJ
+       j   <- J.jsLoad st
+       res <- runEff
+                (EE.runErrorNoCallStack @Suspended
+                  (EE.runErrorNoCallStack @J.JournalError
+                    (W.runWorkflow fixedEnv st j (W.executeChild "calc" ("child" :: BSTEST.ByteString)))))
+       check "workflow: executeChild hit -> returns child result"
+         (Right (Right (BC.pack "child-result")) :: Either Suspended (Either J.JournalError BSTEST.ByteString))
+         res
   ]

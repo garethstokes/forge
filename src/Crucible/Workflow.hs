@@ -34,6 +34,7 @@ module Crucible.Workflow
   , newId
   , durableSleep
   , awaitSignal
+  , executeChild
     -- * Interpreter
   , WorkflowEnv (..)
   , WaitSpec (..)
@@ -83,6 +84,7 @@ data Workflow :: Effect where
   NewId        :: Workflow m Text
   DurableSleep :: Int -> Workflow m ()
   AwaitSignal  :: Text -> Workflow m ByteString
+  ExecuteChild :: Text -> ByteString -> Workflow m ByteString
 
 type instance DispatchOf Workflow = Dynamic
 
@@ -105,14 +107,21 @@ durableSleep = send . DurableSleep
 awaitSignal :: (Workflow :> es) => Text -> Eff es ByteString
 awaitSignal = send . AwaitSignal
 
+-- | Spawn a child workflow by type and input.  Suspends on first encounter;
+-- returns the child's raw output 'ByteString' on replay after the child
+-- completes.
+executeChild :: (Workflow :> es) => Text -> ByteString -> Eff es ByteString
+executeChild t i = send (ExecuteChild t i)
+
 -- ---------------------------------------------------------------------------
 -- Supporting types
 
 -- | What an execution is waiting on.
 -- Carries the cassette key and the wait-specific payload.
 data WaitSpec
-  = WaitTimer  CassetteKey Text   -- ^ call-index key, wake-at ISO-8601
-  | WaitSignal CassetteKey Text   -- ^ call-index key, signal name
+  = WaitTimer  CassetteKey Text             -- ^ call-index key, wake-at ISO-8601
+  | WaitSignal CassetteKey Text             -- ^ call-index key, signal name
+  | WaitChild  CassetteKey Text ByteString  -- ^ call-index key, child workflow type, child input
   deriving (Eq, Show)
 
 -- | Thrown (via 'Error') when a workflow hits a 'DurableSleep' with no
@@ -164,6 +173,12 @@ runWorkflow env store j0 act = do
       case lookupEntry k live of
         Just e  -> pure (eResult e)   -- delivered payload (raw ByteString)
         Nothing -> throwError (Suspended (WaitSignal k name))
+    ExecuteChild ctype cinput -> do
+      k    <- nextKey "child"
+      live <- liftIO (readIORef liveRef)
+      case lookupEntry k live of
+        Just e  -> pure (eResult e)                        -- child result (raw bytes, no decode)
+        Nothing -> throwError (Suspended (WaitChild k ctype cinput))
     ) act
   where
     -- Increment the call index and return the key for this op call.
