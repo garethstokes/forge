@@ -2750,4 +2750,16 @@ main = runChecks
         (ES.runState
           (J.insertEntry (J.mkKey "double" ["3"]) (BC.pack "not-a-number") (J.emptyJournal (J.JournalIdentity "double" "" "v1")))
           (J.replay J.Signal (J.mkKey "double" ["3"]) decInt (pure 0))))))
+  , check "journal: codec round-trips a journal with identity + entries"
+      (Right True)
+      (let j0 = J.emptyJournal (J.JournalIdentity "calc" "the-input" "sha-abc")
+           j  = J.insertEntry (J.mkKey "triple" ["3"]) (encInt 9)
+                  (J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) j0)
+           v  = toJSONVia J.journalCodec j
+       in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
+  , check "journal: codec round-trips an empty journal"
+      (Right True)
+      (let j = J.emptyJournal (J.JournalIdentity "wf" "" "v1")
+           v = toJSONVia J.journalCodec j
+       in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
   ]
