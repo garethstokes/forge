@@ -272,7 +272,7 @@ main = do
     { runId = 1, exampleKey = "capital-fr", input = object ["q" .= ("?" :: Text)]
     , prompt = [ PromptMsgDto { role = "system", content = "Answer." } ]
     , responseText = Just "Paris.", responseError = Nothing
-    , grades = [] }
+    , grades = [], prevKey = Nothing, nextKey = Just "capital-uk" }
   rt "CalibrationSeriesDto" CalibrationSeriesDto
     { graderName = "rubric", graderVersion = 1, graderKind = "pointed"
     , mode = "stored"
@@ -536,6 +536,10 @@ serverSpec = withEphemeralDb $ \pool -> do
               [g] -> null g.criteria
               _   -> False)
       _ -> False)
+    expect "example e1 prev/next" $
+      case decode (responseBody rEx) :: Maybe ExampleDetailDto of
+        Just d  -> d.prevKey == Nothing && d.nextKey == Just "e2"
+        Nothing -> False
     -- unknown example key -> 404
     rExMiss <- getReq ("/acme/api/runs/" <> show runIdInt <> "/ex/no-such-key")
     expect "example detail unknown key 404" (statusCode (responseStatus rExMiss) == 404)

@@ -16,7 +16,7 @@ import Data.Aeson (Value)
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
-import Data.List (maximumBy, minimumBy, nub, sortBy, sortOn)
+import Data.List (maximumBy, minimumBy, nub, sort, sortBy, sortOn)
 import Data.Maybe (catMaybes, isNothing)
 import Data.Ord (comparing)
 import qualified Data.Text as T
@@ -48,16 +48,23 @@ htmlEscape = T.concatMap $ \c -> case c of
   '&' -> "&amp;"; '<' -> "&lt;"; '>' -> "&gt;"; '"' -> "&quot;"; '\'' -> "&#39;"
   _   -> T.singleton c
 
--- | Root page: a minimal standalone HTML list of orgs (links to /<slug>/).
+-- | Root page: a minimal standalone HTML table of orgs (links to /<slug>/).
 -- Unscoped — the registry has no RLS policy.
 orgPickerHandler :: Pool -> (Response -> IO a) -> IO a
 orgPickerHandler pool respond = do
   orgs <- withSession pool (selectWhere ([] :: [Cond Org]))
-  let row o = "<li><a href=\"/" <> htmlEscape o.slug <> "/\">" <> htmlEscape o.name <> "</a></li>"
+  let row o = "<tr onclick=\"location='/" <> htmlEscape o.slug <> "/'\">"
+           <> "<td class=\"k\">" <> htmlEscape o.slug <> "</td><td>" <> htmlEscape o.name <> "</td></tr>"
       body  = "<!doctype html><meta charset=utf-8><title>evals — orgs</title>"
-           <> "<style>body{font:15px system-ui;margin:40px;max-width:540px}"
-           <> "h1{font-size:18px}a{color:#2456c8;text-decoration:none}a:hover{text-decoration:underline}</style>"
-           <> "<h1>Organisations</h1><ul>" <> T.concat (map row orgs) <> "</ul>"
+           <> "<style>body{font:14px system-ui;margin:0;background:#f7f8fa;color:#1c2330}"
+           <> ".wrap{max-width:1200px;margin:0 auto;padding:16px 24px 48px}h1{font-size:16px}"
+           <> "table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e7ee;font-size:14px}"
+           <> "th,td{border:1px solid #e3e7ee;padding:6px 10px;text-align:left}"
+           <> "th{background:#eef0f4;color:#6b7280;text-transform:uppercase;font-size:12px;letter-spacing:.03em}"
+           <> "tr{cursor:pointer}tbody tr:hover{background:#f2f6ff}td.k{font-family:ui-monospace,Menlo,monospace;color:#2456c8}</style>"
+           <> "<div class=\"wrap\"><h1>manifest evals — organisations</h1>"
+           <> "<table><thead><tr><th>org</th><th>name</th></tr></thead><tbody>"
+           <> T.concat (map row orgs) <> "</tbody></table></div>"
   respond (responseLBS status200 [("Content-Type", "text/html; charset=utf-8")]
              (LBS.fromStrict (TE.encodeUtf8 body)))
 
@@ -457,14 +464,24 @@ exampleDetailHandler pool orgId rid key respond = do
                   Just tv -> either (const []) (map msgDto) (assembleMessages tv e)
                   Nothing -> []
                 RunId rn = rid
+                keys = sort (nub [ ek.key | (_, Just ek) <- paired ])
+                (prevK, nextK) = case break (== key) keys of
+                                   (before, _ : after) -> (lastMay before, headMay after)
+                                   _                    -> (Nothing, Nothing)
             pure (Just ExampleDetailDto
               { runId = rn, exampleKey = key, input = inputV, prompt = prompt
               , responseText = o.text, responseError = o.error
-              , grades = sortOn (\g -> g.graderName) grades })
+              , grades = sortOn (\g -> g.graderName) grades
+              , prevKey = prevK, nextKey = nextK })
   case mDto of
     Nothing  -> respond notFound
     Just dto -> respond (json status200 dto)
-  where outIdInt (OutputId n) = n
+  where
+    outIdInt (OutputId n) = n
+    headMay (x:_) = Just x
+    headMay []    = Nothing
+    lastMay []    = Nothing
+    lastMay xs    = Just (last xs)
 
 msgDto :: Message -> PromptMsgDto
 msgDto (Message r c) = PromptMsgDto { role = renderRole r, content = c }

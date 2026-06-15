@@ -103,7 +103,8 @@ data ExampleDetailDto = ExampleDetailDto
   { runId :: Int, exampleKey :: Text
   , input :: Value, prompt :: [PromptMsgDto]
   , responseText :: Maybe Text, responseError :: Maybe Text
-  , grades :: [GradeDto] }
+  , grades :: [GradeDto]
+  , prevKey :: Maybe Text, nextKey :: Maybe Text }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
 -- | One persisted calibration report, denormalised with grader identity and
