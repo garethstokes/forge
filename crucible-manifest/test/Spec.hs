@@ -54,6 +54,7 @@ import Crucible.Journal
   , JournalIdentity (..)
   , Entry (..)
   , CassetteKey (..)
+  , Journal (..)
   , lookupEntry
   )
 import Crucible.Manifest.Journal
@@ -62,7 +63,10 @@ import Crucible.Manifest.Journal
   , journalStoreManifest
   , claimExecution
   , completeExecution
+  , executionStatus
   , listReadyExecutions
+  , suspendTimer
+  , fireDueTimers
   )
 
 import Conformance
@@ -209,6 +213,52 @@ journalSpecific =
         readyAfter <- listReadyExecutions pool
         assertEq "only one execution remains ready" 1 (length readyAfter)
         assertEq "remaining is eid2" [eid2] readyAfter
+
+  , Test "journal[manifest]: suspendTimer parks execution as waiting (not ready)" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        suspendTimer pool eid (CassetteKey "sleepkey") "2026-06-15T00:00:10Z"
+        st <- executionStatus pool eid
+        -- executionStatus reads workflow_execution.ex_status which is still 'running'
+        -- The run_queue state is 'waiting'; check via listReadyExecutions
+        assertEq "executionStatus is still running" (Just "running") st
+        ready <- listReadyExecutions pool
+        assertEq "execution is NOT in ready list after suspend" [] ready
+
+  , Test "journal[manifest]: fireDueTimers before wake returns empty, after wake fires" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        let sleepKey = CassetteKey "sleepkey"
+        suspendTimer pool eid sleepKey "2026-06-15T00:00:10Z"
+
+        -- fire before wake-at: should return []
+        fired0 <- fireDueTimers pool "2026-06-15T00:00:05Z"
+        assertEq "fireDueTimers before wake returns []" [] fired0
+        ready0 <- listReadyExecutions pool
+        assertEq "exec still waiting after early fire" [] ready0
+
+        -- fire after wake-at: should return [eid]
+        fired1 <- fireDueTimers pool "2026-06-15T01:00:00Z"
+        assertEq "fireDueTimers after wake returns [eid]" [eid] fired1
+        ready1 <- listReadyExecutions pool
+        assertEq "exec is ready again after firing" [eid] ready1
+
+        -- the journal should now have a sleep entry under the sleep key
+        st <- journalStoreManifest pool eid
+        j  <- jsLoad st
+        let entry = lookupEntry sleepKey j
+        case entry of
+          Nothing -> ioError (userError "expected sleep entry in journal after fireDueTimers, got Nothing")
+          Just _  -> pure ()
+
+        -- re-entrancy: a second fire does not double-fire (the exec is now 'ready', not 'waiting')
+        fired2 <- fireDueTimers pool "2026-06-15T01:00:00Z"
+        assertEq "fireDueTimers is idempotent (second fire returns [])" [] fired2
+        st2 <- journalStoreManifest pool eid
+        j2  <- jsLoad st2
+        assertEq "no duplicate sleep entry after second fire" 1 (length (jEntries j2))
   ]
 
 -- ---------------------------------------------------------------------------
