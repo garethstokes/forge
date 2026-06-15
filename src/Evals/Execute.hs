@@ -30,6 +30,7 @@ import Control.Exception (SomeException, bracket_, try)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Types as AT
 import Data.IORef (atomicModifyIORef', newIORef)
+import Data.Char (isAlphaNum)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (diffUTCTime, getCurrentTime)
@@ -48,8 +49,24 @@ data ExecError = LlmError Text | InputDecodeError Text
   deriving (Eq, Show)
 
 renderExecError :: ExecError -> Text
-renderExecError (LlmError t)         = "llm: " <> t
-renderExecError (InputDecodeError t) = "input: " <> t
+renderExecError (LlmError t)         = "llm: " <> redactSecrets t
+renderExecError (InputDecodeError t) = "input: " <> redactSecrets t
+
+-- | Scrub API keys from error text before it is persisted or shown. HTTP
+-- client exceptions embed the full request, including the @x-api-key@ /
+-- @authorization@ header, so a raw @show@ of a provider error would otherwise
+-- write the live key into the @scores@/@outputs@ error column (and the
+-- dashboard renders it). Replace every @sk-…@ token with a marker.
+redactSecrets :: Text -> Text
+redactSecrets = go
+  where
+    go t = case T.breakOn "sk-" t of
+      (before, rest)
+        | T.null rest -> before
+        | otherwise   ->
+            let after = T.drop 3 rest
+            in before <> "sk-REDACTED" <> go (T.dropWhile isKeyChar after)
+    isKeyChar c = isAlphaNum c || c == '-' || c == '_'
 
 -- | The injected model backend: a target version + assembled messages in, a
 -- reply (with token usage) or an error out. Live = crucible's Anthropic

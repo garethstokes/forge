@@ -36,6 +36,7 @@ main :: IO ()
 main = do
   assemblySpec
   cfgFromSpec
+  redactSpec
   withEphemeralDb $ \pool -> do
     _ <- withSession pool migrateAll
     now <- getCurrentTime
@@ -44,6 +45,19 @@ main = do
     resumeSpec pool now
     recordingSpec pool now
   putStrLn "manifest-evals ExecuteSpec: assembly + execute + resume + recording OK"
+
+-- | renderExecError must scrub API keys: an HTTP exception embeds the
+-- x-api-key header, which would otherwise be persisted + shown.
+redactSpec :: IO ()
+redactSpec = do
+  let anthKey = "sk-ant-api03-_RpSdqUJmHNvEyuFa0SI5i-vaL85jDhgrsyDcoy" :: T.Text
+      openKey = "sk-proj-abc123DEF456" :: T.Text
+      rendered = renderExecError (LlmError ("boom x-api-key=" <> anthKey <> " and " <> openKey <> " end"))
+  expect "redacts anthropic key" (not (anthKey `T.isInfixOf` rendered))
+  expect "redacts openai key" (not (openKey `T.isInfixOf` rendered))
+  expect "keeps surrounding text" ("boom" `T.isInfixOf` rendered && "end" `T.isInfixOf` rendered)
+  expect "leaves non-secret text untouched"
+    (renderExecError (LlmError "plain message") == "llm: plain message")
 
 -- decodeInput / assembleMessages are pure; no DB, no network.
 assemblySpec :: IO ()
