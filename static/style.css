@@ -235,6 +235,8 @@ td.pick input { cursor: pointer; }
 .example .msg .content { margin:0; padding:9px 12px; white-space:pre-wrap; font:12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .example .grade { border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-bottom:8px; }
 .example .grade-head { display:flex; align-items:baseline; gap:8px; }
+.example .ver-select { font-size:12px; color:var(--accent); border:1px solid var(--line); border-radius:6px; padding:1px 4px; background:#fff; cursor:pointer; }
+.example .ver-static { color:var(--muted); font-size:13px; }
 .example .grade-head .gval { margin-left:auto; font-variant-numeric:tabular-nums; }
 /* Criterion verdict: a wrapping pill row above the full-width prose. */
 .example .vrow { padding:7px 0; border-top:1px dotted var(--muted-bg); }

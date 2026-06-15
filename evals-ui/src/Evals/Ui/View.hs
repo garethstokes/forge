@@ -10,7 +10,7 @@ import qualified Data.Aeson.Key as AK
 import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Text (encodeToLazyText)
 import Data.Foldable (toList)
-import Data.List (intersperse, nub)
+import Data.List (intersperse, nub, sort)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -293,8 +293,8 @@ exampleView m _ _ =
                   , exSection "Response" [ responseBlock d.responseText d.responseError ] ]
               , div_ [ P.class_ "ex-side" ]
                   [ exSection "Grades"
-                      (  map (gradeBlock humanByCrit) d.grades
-                      ++ map labelBlock d.labels
+                      (  map labelBlock d.labels
+                      ++ map (graderGroup m humanByCrit) (groupByGrader d.grades)
                       ++ map judgeErrorBlock d.judgeErrors ) ] ] ] ]
   where
     exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
@@ -332,20 +332,50 @@ responseBlock _ (Just e)       = div_ [ P.class_ "cell-error" ] [ text (ms e) ]
 responseBlock (Just t) Nothing = pre_ [ P.class_ "io" ] [ text (ms t) ]
 responseBlock Nothing Nothing  = div_ [ P.class_ "muted" ] [ text "–" ]
 
--- | A model grade. @humanByCrit@ maps a criterion to its human gold verdict
--- (from this example's consensus labels); when a criterion is labelled, the
--- judge's verdict gets an "agrees / disagrees" badge — the per-example
--- calibration signal.
-gradeBlock :: [(Text, Bool)] -> GradeDto -> View Model Action
-gradeBlock humanByCrit g =
-  div_ [ P.class_ "grade" ]
-    ( div_ [ P.class_ "grade-head" ]
-        [ strong_ [] [ text (ms g.graderName) ], text (" v" <> msShow g.graderVersion)
-        , span_ [ P.class_ "kind" ] [ text (ms g.graderKind) ]
-        , span_ [ P.class_ "gval" ] [ text (maybe "–" fmtD g.value), passMark g.passed ] ]
-      : [ verdictRow c | c <- g.criteria ]
-      ++ [ div_ [ P.class_ "cell-error" ] [ text ("⚠ " <> ms e) ] | Just e <- [g.gradeError] ]
-      ++ [ div_ [ P.class_ "muted" ] [ text (ms r) ] | Just r <- [g.rationale] ] )
+-- | Group an example's grades by grader name, preserving first-seen order.
+groupByGrader :: [GradeDto] -> [[GradeDto]]
+groupByGrader gs = [ [ g | g <- gs, g.graderName == n ] | n <- nub (map (.graderName) gs) ]
+
+-- | One grader's card: a header (name · version selector · kind · value) over
+-- the selected version's verdicts. With more than one version, the version is
+-- a dropdown defaulting to the latest; the rest of the card reflects the choice.
+graderGroup :: Model -> [(Text, Bool)] -> [GradeDto] -> View Model Action
+graderGroup m humanByCrit grades =
+  div_ [ P.class_ "grade" ] (header : gradeBody humanByCrit sel)
+  where
+    gName    = case grades of (g : _) -> g.graderName; [] -> ""
+    gNameMs  = ms gName
+    versions = reverse (nub (sort [ g.graderVersion | g <- grades ]))  -- newest first
+    latest   = maximum (0 : [ g.graderVersion | g <- grades ])
+    selStr   = maybe (msShow latest) id (lookup gNameMs (_gradeVerM m))
+    sel      = case [ g | g <- grades, msShow g.graderVersion == selStr ] of
+                 (g : _) -> g
+                 []      -> head grades  -- groups from groupByGrader are non-empty
+    header =
+      div_ [ P.class_ "grade-head" ]
+        [ strong_ [] [ text gNameMs ]
+        , versionSelector gNameMs versions selStr
+        , span_ [ P.class_ "kind" ] [ text (ms sel.graderKind) ]
+        , span_ [ P.class_ "gval" ] [ text (maybe "–" fmtD sel.value), passMark sel.passed ] ]
+
+-- | Version control in a grader header: a dropdown when there is more than one
+-- version, otherwise a static @vN@ label.
+versionSelector :: MisoString -> [Int] -> MisoString -> View Model Action
+versionSelector gNameMs versions selStr =
+  case versions of
+    [v] -> span_ [ P.class_ "ver-static" ] [ text ("v" <> msShow v) ]
+    _   -> select_ [ P.class_ "ver-select", onChange (SetGradeVersion gNameMs) ]
+             [ option_ ([ P.value_ (msShow v) ] ++ [ P.selected_ True | msShow v == selStr ])
+                 [ text ("v" <> msShow v) ]
+             | v <- versions ]
+
+-- | The body of a grade card: one stacked verdict per criterion, plus any
+-- grade error and rationale. @humanByCrit@ supplies the agreement badge.
+gradeBody :: [(Text, Bool)] -> GradeDto -> [View Model Action]
+gradeBody humanByCrit g =
+  [ verdictRow c | c <- g.criteria ]
+  ++ [ div_ [ P.class_ "cell-error" ] [ text ("⚠ " <> ms e) ] | Just e <- [g.gradeError] ]
+  ++ [ div_ [ P.class_ "muted" ] [ text (ms r) ] | Just r <- [g.rationale] ]
   where
     -- Stacked layout: a wrapping pill row (verdict · agreement · tags · points)
     -- sits ABOVE the full-width criterion prose. The HealthBench category tags

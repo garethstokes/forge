@@ -86,6 +86,8 @@ updateModel = \case
     outputsOffsetL .= n
     -- silent refetch of the current run detail at the new page offset
     fetchRoute =<< use routeL
+  SetGradeVersion name ver ->
+    gradeVerL %= \xs -> (name, ver) : filter ((/= name) . fst) xs
   ToggleCompareMenu mi ->
     compareMenuL .= mi
   ToggleExpand k ->
