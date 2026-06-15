@@ -300,3 +300,34 @@ td.pick input { cursor: pointer; }
 .nav-link { color: var(--accent); text-decoration: none; font-size: .9rem; }
 .nav-link:hover { text-decoration: underline; }
 .calib-page .empty { color: var(--muted); padding: .5rem 0; font-size: .9rem; }
+
+/* ---- UX pass: breadcrumbs, tabs, row-menu compare, example prev/next ---- */
+.breadcrumb { font-size: 13px; color: var(--muted); margin: 4px 0 14px; }
+.breadcrumb a { color: var(--accent); text-decoration: none; }
+.breadcrumb a:hover { text-decoration: underline; }
+.breadcrumb .sep { margin: 0 7px; color: #c2c8d2; }
+.breadcrumb .here { color: var(--fg); }
+
+.tabbar { display: flex; align-items: center; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.tab { padding: 8px 16px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.tab:hover { color: var(--fg); }
+.tab.active { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+
+.row-menu { width: 28px; text-align: center; position: relative; }
+.kebab { color: var(--muted); font-weight: 700; cursor: pointer; text-decoration: none; }
+.kebab:hover { color: var(--accent); }
+.menu-wrap { position: relative; }
+.menu { position: absolute; right: 0; top: 100%; z-index: 10; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(20,30,50,.12); min-width: 180px; font-size: 13px; overflow: hidden; }
+.menu-head { padding: 7px 12px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.menu-item { display: block; padding: 8px 12px; color: var(--fg); text-decoration: none; }
+.menu-item:hover { background: #f2f6ff; }
+.menu-item .muted { color: var(--muted); }
+.menu-empty { padding: 8px 12px; color: var(--muted); }
+
+.grader-tab { margin-top: 2px; }
+
+.ex-head { display: flex; align-items: center; gap: 12px; }
+.ex-nav { margin-left: auto; display: flex; gap: 6px; }
+.ex-navbtn { font-size: 13px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--accent); text-decoration: none; }
+.ex-navbtn:hover { background: #f2f6ff; }
+.ex-navbtn.disabled { color: #c2c8d2; border-color: var(--line); pointer-events: none; }
