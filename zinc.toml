@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "manifest-core"]
 ghc = "9.10.1"
 
 [package]
@@ -30,6 +30,7 @@ depends = [
   "profunctors",
   "autodocodec",
   "aeson",
+  "manifest-core",
 ]
 
 [build.test.spec]
