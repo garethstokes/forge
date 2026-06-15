@@ -553,7 +553,7 @@ ciStyle lo hi =
 calibrationView :: Model -> View Model Action
 calibrationView m =
   remoteView (_calibrationM m) $ \ss ->
-    div_ [ P.class_ "calib calib-page" ]
+    div_ [ P.class_ "calib-page" ]
       ( breadcrumb [ orgCrumb m, ("runs", Just runsHash) ]
       : runsTabBar CalibrationR
       : div_ [ P.class_ "calib-legend" ] [ text "\954 measures judge\8211human agreement beyond chance; the 0.6 tick is the trust threshold." ]
