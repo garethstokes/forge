@@ -37,12 +37,15 @@ import Crucible.Manifest.Journal
   , listReadyExecutions
   , executionStatus
   , fireDueTimers
+  , deliverSignal
   , pendingIntents
   )
 import Crucible.Worker
   ( WorkflowDef (..)
   , RunResult (..)
   , runOnce
+  , drainOnce
+  , pollRounds
   , unkeyablePending
   )
 import Crucible.Workflow
@@ -52,6 +55,7 @@ import Crucible.Workflow
   , Suspended (..)
   , now
   , durableSleep
+  , awaitSignal
   )
 
 import Effectful (Eff, IOE, runEff, liftIO, (:>))
@@ -131,6 +135,12 @@ identSleep = JournalIdentity "test-durable-sleep" "" "v1" "2026-06-15T00:00:00Z"
 
 identExactlyOnce :: JournalIdentity
 identExactlyOnce = JournalIdentity "test-exactly-once" "" "v1" "2026-06-15T00:00:00Z"
+
+identSignal :: JournalIdentity
+identSignal = JournalIdentity "test-await-signal" "" "v1" "2026-06-15T00:00:00Z"
+
+identPollLoop :: JournalIdentity
+identPollLoop = JournalIdentity "test-poll-loop" "" "v1" "2026-06-15T00:00:00Z"
 
 -- ---------------------------------------------------------------------------
 -- Fixed WorkflowEnv for tests
@@ -366,6 +376,113 @@ workerTests =
         -- The completed "charge" key must NOT appear in pendingIntents.
         assertEq "pendingIntents does not include completed charge" True
           (all ((/= mkKey "charge" []) . fst) pend)
+
+  , Test "worker: AwaitSignal suspend/resume — payload flows through, activity runs once" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool identSignal
+
+        ran <- newIORef False
+
+        -- The workflow: await signal "go", record the payload as an activity output.
+        let signalDef = WorkflowDef
+              { wdType    = "test-await-signal"
+              , wdProgram = \() j store -> do
+                  p <- awaitSignal "go"
+                  _ <- recordTo store (mkKey "act" []) "act" id
+                         (liftIO (writeIORef ran True) >> pure p)
+                  pure p
+              }
+        let lease = "2099-01-01T00:00:00Z"
+
+        -- ----------------------------------------------------------------
+        -- First runOnce: hits awaitSignal (no entry) → suspends.
+        -- ----------------------------------------------------------------
+        res1 <- runOnce pool "worker-signal" lease fixedEnv signalDef (const (pure ()))
+
+        -- Assert: suspended waiting for signal "go"
+        case res1 of
+          Just (SuspendedRun (WaitSignal _ name)) ->
+            assertEq "signal name is 'go'" "go" name
+          other ->
+            ioError (userError ("expected SuspendedRun (WaitSignal _ \"go\") but got: " <> show other))
+
+        -- Execution status is still 'running'
+        st1 <- executionStatus pool eid
+        assertEq "execution stays 'running' while waiting for signal" (Just ("running" :: Text)) st1
+
+        -- Execution is NOT in the ready list
+        ready1 <- listReadyExecutions pool
+        assertEq "execution not ready while waiting for signal" [] ready1
+
+        -- The activity did NOT run
+        r1 <- readIORef ran
+        assertEq "ran is False before signal delivered" False r1
+
+        -- ----------------------------------------------------------------
+        -- Deliver the signal.
+        -- ----------------------------------------------------------------
+        delivered <- deliverSignal pool eid "go" (BC.pack "payload")
+        assertEq "deliverSignal returned True" True delivered
+
+        -- ----------------------------------------------------------------
+        -- Second runOnce: replays awaitSignal (entry present → returns
+        -- payload), runs activity live, completes.
+        -- ----------------------------------------------------------------
+        res2 <- runOnce pool "worker-signal" lease fixedEnv signalDef (const (pure ()))
+
+        -- Assert: completed with the delivered payload
+        case res2 of
+          Just (Completed result) ->
+            assertEq "workflow output is the delivered payload" (BC.pack "payload") result
+          other ->
+            ioError (userError ("expected Completed \"payload\" but got: " <> show other))
+
+        -- Activity ran exactly once
+        r2 <- readIORef ran
+        assertEq "ran is True after resume" True r2
+
+        -- Execution is completed
+        st2 <- executionStatus pool eid
+        assertEq "execution completed after signal resume" (Just ("completed" :: Text)) st2
+
+  , Test "worker: pollRounds auto-fires timer and drains to completion" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool identPollLoop
+
+        counter <- newIORef (0 :: Int)
+
+        -- Workflow: durable-sleep (0s so wakeAt == weNow) then a counted activity.
+        -- Using durableSleep 0 means wakeAt = weNow + 0 = weNow, so
+        -- fireDueTimers pool weNow will satisfy (wakeAt <= weNow) and fire it.
+        let pollDef = WorkflowDef
+              { wdType    = "test-poll-loop"
+              , wdProgram = \() j store -> do
+                  t <- now
+                  durableSleep 0
+                  _ <- recordTo store (mkKey "act" []) "act" encInt
+                         (liftIO (modifyIORef' counter (+1)) >> pure (1 :: Int))
+                  pure t
+              }
+
+        -- A fixed env: weNow = some future time. wakeAt = weNow + 0s = weNow,
+        -- so fireDueTimers pool weNow fires it (wakeAt <= weNow).
+        let pollEnv = WorkflowEnv
+              { weNow   = pure "2099-01-01T00:00:00Z"
+              , weNewId = pure "id-poll"
+              }
+
+        -- Create the execution and call pollRounds (3 rounds is plenty).
+        pollRounds pool "worker-poll" pollEnv 3 pollDef (const (pure ()))
+
+        -- Activity ran exactly once
+        c <- readIORef counter
+        assertEq "activity ran exactly once via pollRounds" 1 c
+
+        -- Execution is completed
+        st <- executionStatus pool eid
+        assertEq "execution completed after pollRounds" (Just ("completed" :: Text)) st
   ]
 
 -- ---------------------------------------------------------------------------
