@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15
 **Status:** Draft design — pending review
-**Tracker:** _(epic to be filed — see "Phasing")_
+**Tracker:** `crucible-w0k` (epic). Phases: `crucible-9t3` (0), `crucible-03x` (1), `crucible-7mt` (2), `crucible-ymd` (3).
 **Goal:** A durable execution substrate on crucible. A *workflow* is a
 deterministic `Eff` program whose effectful operations are journaled; one
 journal abstraction serves three execution modes — **live/record**,
