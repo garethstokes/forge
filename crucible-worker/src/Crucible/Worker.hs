@@ -56,7 +56,6 @@ import Crucible.Workflow
 import Crucible.Manifest.Journal
   ( claimExecution
   , journalStoreManifest
-  , completeExecution
   , completeExecutionWith
   , createChildExecution
   , suspendChild
