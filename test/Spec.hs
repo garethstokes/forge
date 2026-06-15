@@ -85,6 +85,7 @@ import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), 
 import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec, pageCodec, slugCodec)
 import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))
+import Crucible.Research.Lint (Finding (..), orphans, brokenLinks, sparsePages, lintStructural, linkedPairs, allPairs, lintContradictions, lintStale, LintOpts (..), defaultLintOpts, lintWiki)
 
 -- Sample types for codec tests
 
@@ -2547,4 +2548,54 @@ main = runChecks
   , check "researchInstructions: names the three tools"
       True
       (all (`T.isInfixOf` researchInstructions) ["read_page", "write_page", "search_pages"])
+  , let pA = Page (Slug "a") "A" [Link (Slug "b") Relates] "body of a" ()
+        pB = Page (Slug "b") "B" [] "body of b" ()
+    in check "lint: orphan is a page with no inbound link" [Orphan (Slug "a")] (orphans [pA, pB])
+  , let pC = Page (Slug "c") "C" [Link (Slug "ghost") Relates] "body of c" ()
+    in check "lint: broken link to an absent target"
+         [BrokenLink (Slug "c") (Link (Slug "ghost") Relates)] (brokenLinks [pC])
+  , let pS = Page (Slug "s") "S" [] "hi" ()
+        pL = Page (Slug "l") "L" [] "a sufficiently long body" ()
+    in check "lint: sparse page under the threshold" [SparsePage (Slug "s") 2] (sparsePages 5 [pS, pL])
+  , let pA = Page (Slug "a") "A" [Link (Slug "b") Relates] "aaaaa" ()
+        pB = Page (Slug "b") "B" [] "bbbbb" ()
+        pC = Page (Slug "c") "C" [] "ccccc" ()
+    in check "lint: linkedPairs is only the joined pair; allPairs is all three"
+         ([(pA, pB)], [(pA, pB), (pA, pC), (pB, pC)])
+         (linkedPairs [pA, pB, pC], allPairs [pA, pB, pC])
+  , let pA = Page (Slug "a") "A" [Link (Slug "b") Relates] "aaaaa" ()
+        pB = Page (Slug "b") "B" [Link (Slug "a") Relates] "bbbbb" ()
+    in check "lint: no orphans and no broken links when every page is linked and resolvable"
+         (([] :: [Finding]), ([] :: [Finding]))
+         (orphans [pA, pB], brokenLinks [pA, pB])
+  , let pA = Page (Slug "a") "A" [] "x" ()
+        pB = Page (Slug "b") "B" [] "y" ()
+    in check "lint: contradiction on a passing vote"
+         [Contradiction (Slug "a") (Slug "b") "they disagree"]
+         (runPureEff (runLLMScripted ["{\"why\":\"they disagree\",\"pass\":true}"]
+            (lintContradictions 1 [(pA, pB)])))
+  , let pA = Page (Slug "a") "A" [] "x" ()
+        pB = Page (Slug "b") "B" [] "y" ()
+    in check "lint: no contradiction on a failing vote"
+         ([] :: [Finding])
+         (runPureEff (runLLMScripted ["{\"why\":\"unrelated\",\"pass\":false}"]
+            (lintContradictions 1 [(pA, pB)])))
+  , let pA = Page (Slug "a") "A" [] "x" ()
+        pB = Page (Slug "b") "B" [] "y" ()
+    in check "lint: a judge failure invents no finding (empty script -> AllErrored)"
+         ([] :: [Finding])
+         (runPureEff (runLLMScripted []
+            (lintContradictions 1 [(pA, pB)])))
+  , let p = Page (Slug "a") "A" [] "the moon is made of cheese" ()
+    in check "lint: stale on a passing vote against current facts"
+         [Stale (Slug "a") "contradicts the facts"]
+         (runPureEff (runLLMScripted ["{\"why\":\"contradicts the facts\",\"pass\":true}"]
+            (lintStale 1 "the moon is made of rock" [p])))
+  , let pA = Page (Slug "a") "A" [Link (Slug "b") Relates] "aaaaa" ()
+        pB = Page (Slug "b") "B" [] "bbbbb" ()
+        res = runPureEff (runLLMScripted ["{\"why\":\"clash\",\"pass\":true}"]
+                (lintWiki defaultLintOpts { sparseThreshold = 1 } [pA, pB]))
+    in check "lint: lintWiki combines structural and contradiction"
+         [Orphan (Slug "a"), Contradiction (Slug "a") (Slug "b") "clash"]
+         res
   ]
