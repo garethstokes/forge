@@ -25,15 +25,19 @@
 module Crucible.Manifest.Journal
   ( migrateJournal
   , createExecution
+  , createChildExecution
   , journalStoreManifest
   , claimExecution
   , heartbeat
   , completeExecution
+  , completeExecutionWith
   , executionStatus
+  , executionInput
   , listReadyExecutions
   , suspendTimer
   , fireDueTimers
   , suspendSignal
+  , suspendChild
   , deliverSignal
   , pendingIntents
   ) where
@@ -95,6 +99,8 @@ data ExecutionRowT f = ExecutionRow
   , exAppVersion  :: Field f Text
   , exCapturedAt  :: Field f Text
   , exStatus      :: Field f Text
+  , exParentExec  :: Field f (Maybe Int)   -- parent execution id (for child executions)
+  , exParentKey   :: Field f (Maybe Text)  -- base64-encoded parent cassette key
   } deriving Generic
 
 type ExecutionRow = ExecutionRowT Identity
@@ -163,6 +169,8 @@ createExecution pool ident = withSession pool $ withTransaction $ do
                (jiAppVersion ident)
                (jiCapturedAt ident)
                "running"
+               Nothing
+               Nothing
              :: ExecutionRow)
   let eid = ex.exId
   _ <- add (RunQueueRow eid "ready" Nothing Nothing Nothing Nothing Nothing Nothing :: RunQueueRow)
@@ -282,6 +290,66 @@ completeExecution pool eid = withSession pool $ withTransaction $ do
     "UPDATE run_queue SET rq_state = 'done' WHERE rq_exec = $1"
     [ encode eid ]
   pure ()
+
+-- | Create a child execution linked to a parent, with a run_queue row in
+-- 'ready' state. Returns the assigned serial child execution id.
+createChildExecution :: Pool -> JournalIdentity -> Int -> CassetteKey -> IO Int
+createChildExecution pool ident parentEid (CassetteKey pkey) = withSession pool $ withTransaction $ do
+  ex <- add (ExecutionRow
+               0
+               (jiWorkflowType ident)
+               (b64 (jiInput ident))
+               (jiAppVersion ident)
+               (jiCapturedAt ident)
+               "running"
+               (Just parentEid)
+               (Just (b64 pkey))
+             :: ExecutionRow)
+  let eid = ex.exId
+  _ <- add (RunQueueRow eid "ready" Nothing Nothing Nothing Nothing Nothing Nothing :: RunQueueRow)
+  pure eid
+
+-- | Park an execution as waiting-on-child: set @run_queue.rq_state = 'waiting'@,
+-- store the cassette key (base64-encoded) with kind 'child', and clear the claimant.
+-- The execution will not appear in 'listReadyExecutions' until 'completeExecutionWith'
+-- re-queues it upon child completion.
+suspendChild :: Pool -> Int -> CassetteKey -> IO ()
+suspendChild pool eid (CassetteKey k) = withSession pool $ do
+  _ <- execDb
+    "UPDATE run_queue SET rq_state='waiting', rq_wait_key=$1, rq_wait_kind='child', rq_claimant=NULL WHERE rq_exec=$2"
+    [ encode (b64 k)
+    , encode eid
+    ]
+  pure ()
+
+-- | Read the stored input bytes for an execution.
+executionInput :: Pool -> Int -> IO ByteString
+executionInput pool eid = withSession pool $ do
+  exs <- selectWhere [#exId ==. eid] :: Db [ExecutionRow]
+  pure (case exs of (e:_) -> unb64 (exInput e); [] -> "")
+
+-- | Complete an execution with its output bytes. If the execution is a child
+-- (has a parent link), atomically appends the output into the parent's journal
+-- under the stored parent key (op "child", status "result") and readies the parent.
+-- If no parent, just marks the execution completed. Runs in a single transaction.
+completeExecutionWith :: Pool -> Int -> ByteString -> IO ()
+completeExecutionWith pool eid out = withSession pool $ withTransaction $ do
+  exs <- selectWhere [#exId ==. eid] :: Db [ExecutionRow]
+  _ <- execDb
+    "UPDATE workflow_execution SET ex_status='completed' WHERE ex_id=$1"
+    [ encode eid ]
+  _ <- execDb
+    "UPDATE run_queue SET rq_state='done' WHERE rq_exec=$1"
+    [ encode eid ]
+  case exs of
+    (e:_) | Just pexec <- exParentExec e, Just pkeyB64 <- exParentKey e -> do
+      pes <- selectWhere [#jeExec ==. pexec] :: Db [JournalEntryRow]
+      _   <- add (JournalEntryRow 0 pexec (length pes) pkeyB64 "child" (b64 out) "result" "" :: JournalEntryRow)
+      _   <- execDb
+               "UPDATE run_queue SET rq_state='ready', rq_wait_key=NULL, rq_wait_kind=NULL WHERE rq_exec=$1"
+               [ encode pexec ]
+      pure ()
+    _ -> pure ()
 
 -- | The status of an execution ('running'/'completed'/'failed'), or Nothing if absent.
 executionStatus :: Pool -> Int -> IO (Maybe Text)

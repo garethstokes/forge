@@ -61,14 +61,18 @@ import Crucible.Journal
 import Crucible.Manifest.Journal
   ( migrateJournal
   , createExecution
+  , createChildExecution
   , journalStoreManifest
   , claimExecution
   , completeExecution
+  , completeExecutionWith
   , executionStatus
+  , executionInput
   , listReadyExecutions
   , suspendTimer
   , fireDueTimers
   , suspendSignal
+  , suspendChild
   , deliverSignal
   , pendingIntents
   )
@@ -322,6 +326,64 @@ journalSpecific =
         case entry of
           Nothing -> ioError (userError "expected signal entry in journal after deliverSignal, got Nothing")
           Just e  -> assertEq "signal entry result bytes" ("payload" :: ByteString) (e.eResult)
+
+  , Test "journal[manifest]: executionInput round-trips stored input bytes" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        let identHello = JournalIdentity "test-workflow" "hello" "v1" "2026-06-15T00:00:00Z"
+        eid <- createExecution pool identHello
+        inp <- executionInput pool eid
+        assertEq "executionInput returns stored input" ("hello" :: ByteString) inp
+
+  , Test "journal[manifest]: createChildExecution + completeExecutionWith propagates child result to parent" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        let t0 = "2026-06-15T00:00:00Z"
+            parentIdent = JournalIdentity "calc" "parent" "v1" t0
+            childIdent  = JournalIdentity "calc" "childin" "v1" t0
+            ck = CassetteKey "ck"
+        parent <- createExecution pool parentIdent
+        child  <- createChildExecution pool childIdent parent ck
+
+        -- child should appear in ready list
+        readyAfterCreate <- listReadyExecutions pool
+        assertEq "child is in ready list" True (child `elem` readyAfterCreate)
+
+        -- suspend parent waiting on child
+        suspendChild pool parent ck
+        readyAfterSuspend <- listReadyExecutions pool
+        assertEq "parent is NOT in ready list after suspendChild" True (parent `notElem` readyAfterSuspend)
+        assertEq "child is still in ready list" True (child `elem` readyAfterSuspend)
+
+        -- complete child with output
+        completeExecutionWith pool child "child-out"
+
+        -- child should be completed
+        childSt <- executionStatus pool child
+        assertEq "child status is completed" (Just "completed") childSt
+
+        -- parent should be back in ready list
+        readyAfterChildComplete <- listReadyExecutions pool
+        assertEq "parent is ready again after child completes" True (parent `elem` readyAfterChildComplete)
+
+        -- parent's journal should have an entry under CassetteKey "ck" with result="child-out"
+        pst <- journalStoreManifest pool parent
+        pj  <- jsLoad pst
+        let entry = lookupEntry ck pj
+        case entry of
+          Nothing -> ioError (userError "expected child entry in parent journal, got Nothing")
+          Just e  -> assertEq "parent journal child entry result" ("child-out" :: ByteString) (e.eResult)
+
+  , Test "journal[manifest]: completeExecutionWith on unlinked exec just completes (no crash)" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+        -- complete with no parent link — should not crash and should just complete
+        completeExecutionWith pool eid "x"
+        st <- executionStatus pool eid
+        assertEq "unlinked exec is completed" (Just "completed") st
+        ready <- listReadyExecutions pool
+        assertEq "unlinked exec is not in ready list" [] ready
   ]
 
 -- ---------------------------------------------------------------------------
