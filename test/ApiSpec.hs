@@ -273,7 +273,10 @@ main = do
     { runId = 1, exampleKey = "capital-fr", input = object ["q" .= ("?" :: Text)]
     , prompt = [ PromptMsgDto { role = "system", content = "Answer." } ]
     , responseText = Just "Paris.", responseError = Nothing
-    , grades = [], prevKey = Nothing, nextKey = Just "capital-uk" }
+    , grades = []
+    , labels = [ CriterionLabelDto { criterion = "names the capital", human = True, source = Just "consensus" } ]
+    , judgeErrors = [ JudgeErrorDto { graderName = "rubric", graderVersion = 1, criterion = "names the capital" } ]
+    , prevKey = Nothing, nextKey = Just "capital-uk" }
   rt "CalibrationSeriesDto" CalibrationSeriesDto
     { graderName = "rubric", graderVersion = 1, graderKind = "pointed"
     , mode = "stored"
@@ -392,17 +395,23 @@ serverSpec = withEphemeralDb $ \pool -> do
                           , "criteria" .= [ object ["criterion" .= ("names the capital"::Text), "points" .= (5::Double), "tags" .= (["axis:accuracy"]::[Text]), "met" .= True, "explanation" .= (""::Text)] ] ]))
                       , error = Nothing, createdAt = now } :: Score)
     _   <- add (RunMetric { id = RunMetricId 0, org = OrgId 1, run = r.id, graderVersion = pgv.id, mean = 0.5, passRate = Nothing, count = 1, computedAt = now, tag = Nothing, stderr = Just 0.0 } :: RunMetric)
+    -- A human consensus label on o1 (example e1): surfaced on the example page.
+    _   <- add (CriterionLabel { id = CriterionLabelId 0, org = OrgId 1, output = o1.id
+                               , criterion = "names the capital", human = True
+                               , source = Just "consensus", createdAt = now } :: CriterionLabel)
     _ <- add (MetaEval { id = MetaEvalId 0, org = OrgId 1, run = r.id, graderVersion = gv.id
                        , mode = "stored", seed = 1, agreement = 0.8, kappa = 0.6
                        , kappaLow = 0.5, kappaHigh = 0.7, failPrecision = 0.7, failRecall = 0.6
                        , passF1 = 0.65, failF1 = 0.55, balancedF1 = 0.6
                        , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
                        , computedAt = addUTCTime (-3600) now } :: MetaEval)
+    -- Latest meta-eval for the exactness grader: the judge errored on e1's
+    -- criterion (caseKey "e1:names the capital") — flagged on the example page.
     _ <- add (MetaEval { id = MetaEvalId 0, org = OrgId 1, run = r.id, graderVersion = gv.id
                        , mode = "stored", seed = 1, agreement = 0.9, kappa = 0.78
                        , kappaLow = 0.66, kappaHigh = 0.9, failPrecision = 0.8, failRecall = 0.75
                        , passF1 = 0.77, failF1 = 0.73, balancedF1 = 0.75
-                       , measured = 4, judgeErrors = Aeson (toJSON ([] :: [Text]))
+                       , measured = 4, judgeErrors = Aeson (toJSON (["e1:names the capital"] :: [Text]))
                        , computedAt = now } :: MetaEval)
     -- Globex org (OrgId 2) — a second tenant's graph for isolation tests.
     dB  <- add (Dataset { id = DatasetId 0, org = OrgId 2, name = "b", slug = "b", createdAt = now } :: Dataset)
@@ -566,6 +575,25 @@ serverSpec = withEphemeralDb $ \pool -> do
     expect "example e1 prev/next" $
       case decode (responseBody rEx) :: Maybe ExampleDetailDto of
         Just d  -> d.prevKey == Nothing && d.nextKey == Just "e2"
+        Nothing -> False
+    -- e1 carries a human consensus label and a flagged judge error.
+    expect "example e1 consensus label" $
+      case decode (responseBody rEx) :: Maybe ExampleDetailDto of
+        Just d | [l] <- d.labels ->
+             l.criterion == "names the capital" && l.human == True
+          && l.source == Just "consensus"
+        _ -> False
+    expect "example e1 judge error" $
+      case decode (responseBody rEx) :: Maybe ExampleDetailDto of
+        Just d | [j] <- d.judgeErrors ->
+             j.graderName == "exactness" && j.graderVersion == 1
+          && j.criterion == "names the capital"
+        _ -> False
+    -- e2 (the errored output) has neither a label nor a judge-error flag.
+    rEx2 <- getReq ("/acme/api/runs/" <> show runIdInt <> "/ex/e2")
+    expect "example e2 has no labels/judge-errors" $
+      case decode (responseBody rEx2) :: Maybe ExampleDetailDto of
+        Just d  -> null d.labels && null d.judgeErrors
         Nothing -> False
     -- unknown example key -> 404
     rExMiss <- getReq ("/acme/api/runs/" <> show runIdInt <> "/ex/no-such-key")

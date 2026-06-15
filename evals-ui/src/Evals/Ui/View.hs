@@ -290,7 +290,11 @@ exampleView m _ _ =
                   [ exSection "Input" [ pre_ [ P.class_ "io" ] [ text (renderJson d.input) ] ]
                   , exSection "Generated prompt" (map promptMsg d.prompt)
                   , exSection "Response" [ responseBlock d.responseText d.responseError ] ]
-              , div_ [ P.class_ "ex-side" ] [ exSection "Grades" (map gradeBlock d.grades) ] ] ] ]
+              , div_ [ P.class_ "ex-side" ]
+                  [ exSection "Grades"
+                      (  map gradeBlock d.grades
+                      ++ map labelBlock d.labels
+                      ++ map judgeErrorBlock d.judgeErrors ) ] ] ] ]
   where
     exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
     navBtn label Nothing     = span_ [ P.class_ "ex-navbtn disabled" ] [ text label ]
@@ -344,6 +348,25 @@ gradeBlock g =
         , span_ [ P.class_ "ctxt" ] [ text (ms c.criterion), span_ [ P.class_ "why" ] [ text (ms c.explanation) ] ]
         , span_ [ P.class_ "crit-tags" ] [ span_ [ P.class_ "tag" ] [ text (ms t) ] | t <- c.tags ]
         , span_ [ P.class_ "earn" ] [ text (if c.met then "+" <> fmtD c.points else "0 / " <> fmtD c.points) ] ]
+
+-- | A human consensus label: gold verdict chip + criterion, tagged so it reads
+-- as ground truth rather than a model grade. Shown under "Grades" on the
+-- example page (the only per-example signal a calibration run carries).
+labelBlock :: CriterionLabelDto -> View Model Action
+labelBlock l =
+  div_ [ P.class_ "cr" ]
+    [ span_ [ P.class_ (if l.human then "m ok" else "m fail") ] [ text (if l.human then "✓" else "✗") ]
+    , span_ [ P.class_ "ctxt" ]
+        [ text (ms l.criterion)
+        , span_ [ P.class_ "why" ]
+            [ text ("human consensus" <> maybe "" (\s -> " · " <> ms s) l.source) ] ] ]
+
+-- | A judge that errored on this example during meta-eval.
+judgeErrorBlock :: JudgeErrorDto -> View Model Action
+judgeErrorBlock j =
+  div_ [ P.class_ "cell-error" ]
+    [ text ("\9888 " <> ms j.graderName <> " v" <> msShow j.graderVersion <> " couldn't judge")
+    , div_ [ P.class_ "muted" ] [ text (ms j.criterion) ] ]
 
 -- Compare -----------------------------------------------------------------------
 

@@ -13,6 +13,7 @@ module Evals.Api
   , RunDetailDto (..), OutputRowDto (..), ScoreDto (..)
   , CompareDto (..), CompareRowDto (..)
   , PromptMsgDto (..), CriterionVerdictDto (..), GradeDto (..), ExampleDetailDto (..)
+  , CriterionLabelDto (..), JudgeErrorDto (..)
   , MetaEvalDto (..), CalibrationSeriesDto (..), TrendPointDto (..)
   , ApiError (..)
   , ChangeDto (..)
@@ -100,11 +101,24 @@ data GradeDto = GradeDto
   , gradeError :: Maybe Text, criteria :: [CriterionVerdictDto] }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
+-- | A human gold label for one criterion on an output: the verdict the grader
+-- is calibrated against (HealthBench consensus).
+data CriterionLabelDto = CriterionLabelDto
+  { criterion :: Text, human :: Bool, source :: Maybe Text }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+-- | A judge (grader version) that errored on this example during a meta-eval.
+data JudgeErrorDto = JudgeErrorDto
+  { graderName :: Text, graderVersion :: Int, criterion :: Text }
+  deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
 data ExampleDetailDto = ExampleDetailDto
   { runId :: Int, exampleKey :: Text
   , input :: Value, prompt :: [PromptMsgDto]
   , responseText :: Maybe Text, responseError :: Maybe Text
   , grades :: [GradeDto]
+  , labels :: [CriterionLabelDto]
+  , judgeErrors :: [JudgeErrorDto]
   , prevKey :: Maybe Text, nextKey :: Maybe Text }
   deriving (Eq, Show, Generic, ToJSON, FromJSON)
 

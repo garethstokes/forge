@@ -16,6 +16,7 @@ import Data.Aeson (Value)
 import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
+import Data.Foldable (toList)
 import Data.List (maximumBy, minimumBy, nub, sort, sortBy, sortOn)
 import Data.Maybe (catMaybes, isNothing)
 import Data.Ord (comparing)
@@ -340,9 +341,13 @@ trendPoint mrid me =
        }
 
 judgeErrorCount :: Aeson Value -> Int
-judgeErrorCount (Aeson v) = case v of
-  Aeson.Array a -> length a
-  _             -> 0
+judgeErrorCount = length . judgeErrorList
+
+-- | The judge-error caseKeys stored on a MetaEval row (each "exampleKey:criterion").
+judgeErrorList :: Aeson Value -> [T.Text]
+judgeErrorList (Aeson v) = case v of
+  Aeson.Array a -> [ t | Aeson.String t <- toList a ]
+  _             -> []
 
 isoTime :: UTCTime -> T.Text
 isoTime = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
@@ -469,7 +474,12 @@ exampleDetailHandler pool orgId rid key respond = do
           ((o, e) : _) -> do
             scores <- selectWhere [ #output ==. o.id ] :: Db [Score]
             grades <- mapM gradeDto scores
-            let Aeson inputV = e.input
+            lbls   <- selectWhere [ #output ==. o.id ] :: Db [CriterionLabel]
+            jerrs  <- judgeErrorsFor rid e.key
+            let labelDtos = sortOn (.criterion)
+                  [ CriterionLabelDto { criterion = l.criterion, human = l.human, source = l.source }
+                  | l <- lbls ]
+                Aeson inputV = e.input
                 prompt = case mtv of
                   Just tv -> either (const []) (map msgDto) (assembleMessages tv e)
                   Nothing -> []
@@ -482,6 +492,7 @@ exampleDetailHandler pool orgId rid key respond = do
               { runId = rn, exampleKey = key, input = inputV, prompt = prompt
               , responseText = o.text, responseError = o.error
               , grades = sortOn (\g -> g.graderName) grades
+              , labels = labelDtos, judgeErrors = jerrs
               , prevKey = prevK, nextKey = nextK })
   case mDto of
     Nothing  -> respond notFound
@@ -492,6 +503,27 @@ exampleDetailHandler pool orgId rid key respond = do
     headMay []    = Nothing
     lastMay []    = Nothing
     lastMay xs    = Just (last xs)
+
+-- | Judges (grader versions) that errored on this example, from the run's
+-- meta-evals (latest per grader version). A judge_errors caseKey is
+-- "exampleKey:criterion"; we match this example's by the "exampleKey:" prefix
+-- and report the grader identity + the criterion it failed to judge.
+judgeErrorsFor :: RunId -> T.Text -> Db [JudgeErrorDto]
+judgeErrorsFor rid exKey = do
+  metas <- selectWhere [ #run ==. rid ] :: Db [MetaEval]
+  let byGv     = Map.fromListWith (++) [ (me.graderVersion, [me]) | me <- metas ]
+      latest   = [ maximumBy (comparing (.computedAt)) rows | rows <- Map.elems byGv ]
+      prefix   = exKey <> ":"
+  fmap (sortOn (\j -> (j.graderName, j.graderVersion)) . concat) $
+    mapM (\me -> do
+      mgv <- get @GraderVersion (Key me.graderVersion)
+      mg  <- maybe (pure Nothing) (\gv -> get @Grader (Key gv.grader)) mgv
+      let gName = maybe "?" (.name) mg
+          gVersion = maybe 0 (.version) mgv
+      pure [ JudgeErrorDto { graderName = gName, graderVersion = gVersion
+                           , criterion = T.drop (T.length prefix) ck }
+           | ck <- judgeErrorList me.judgeErrors, prefix `T.isPrefixOf` ck ])
+      latest
 
 msgDto :: Message -> PromptMsgDto
 msgDto (Message r c) = PromptMsgDto { role = renderRole r, content = c }
