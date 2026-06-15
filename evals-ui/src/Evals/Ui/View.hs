@@ -288,8 +288,11 @@ exampleView m _ _ =
                   , navBtn "next \8594" (fmap (exampleHash d.runId) d.nextKey) ] ]
           , div_ [ P.class_ "ex-cols" ]
               [ div_ [ P.class_ "ex-main" ]
-                  [ exSection "Input" [ pre_ [ P.class_ "io" ] [ text (renderJson d.input) ] ]
-                  , exSection "Generated prompt" (map promptMsg d.prompt)
+                  [ exTabBar (_exTabM m)
+                  , case _exTabM m of
+                      "input" -> div_ [ P.class_ "ex-section" ]
+                                   [ pre_ [ P.class_ "io" ] [ text (renderJson d.input) ] ]
+                      _       -> div_ [ P.class_ "ex-section" ] (promptBody d.prompt)
                   , exSection "Response" [ responseBlock d.responseText d.responseError ] ]
               , div_ [ P.class_ "ex-side" ]
                   [ exSection "Grades"
@@ -300,6 +303,16 @@ exampleView m _ _ =
     exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
     navBtn label Nothing     = span_ [ P.class_ "ex-navbtn disabled" ] [ text label ]
     navBtn label (Just href) = a_ [ P.class_ "ex-navbtn", P.href_ href ] [ text label ]
+    -- Input / Generated prompt as tabs (defaults to the generated prompt).
+    exTabBar active = div_ [ P.class_ "tabbar" ]
+      [ a_ [ P.class_ ("tab" <> if active /= "input" then " active" else ""), onClick (SetExTab "prompt") ]
+          [ text "Generated prompt" ]
+      , a_ [ P.class_ ("tab" <> if active == "input" then " active" else ""), onClick (SetExTab "input") ]
+          [ text "Input" ] ]
+    -- Skip prompt turns with empty content (e.g. an unset system prompt).
+    promptBody msgs = case [ p | p <- msgs, not (T.null (T.strip p.content)) ] of
+      []   -> [ div_ [ P.class_ "muted" ] [ text "no generated prompt" ] ]
+      kept -> map promptMsg kept
 
 -- | Pretty-print a JSON value with 2-space indentation. Scalars are encoded
 -- via aeson (correct escaping); objects/arrays are hand-indented.

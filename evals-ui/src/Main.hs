@@ -88,6 +88,8 @@ updateModel = \case
     fetchRoute =<< use routeL
   SetGradeVersion name ver ->
     gradeVerL %= \xs -> (name, ver) : filter ((/= name) . fst) xs
+  SetExTab t ->
+    exTabL .= t
   ToggleCompareMenu mi ->
     compareMenuL .= mi
   ToggleExpand k ->

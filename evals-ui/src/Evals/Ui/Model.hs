@@ -23,6 +23,7 @@ module Evals.Ui.Model
   , runTabL
   , outputsOffsetL
   , gradeVerL
+  , exTabL
   , compareMenuL
   , expandedL
   , liveL
@@ -96,6 +97,8 @@ data Model = Model
   , _gradeVerM :: [(MisoString, MisoString)]
     -- ^ on the example page, the grader-version a grader's card is switched to
     -- (graderName -> version string); absent -> show the latest
+  , _exTabM :: MisoString
+    -- ^ active tab in the example view's main column ("prompt" | "input")
   , _compareMenuM :: Maybe Int
     -- ^ run id whose per-row compare ⋮ menu is open, or Nothing
   , _expandedM :: [MisoString]
@@ -111,7 +114,7 @@ data Model = Model
   } deriving (Show, Eq)
 
 emptyModel :: Model
-emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked "" "examples" 0 [] Nothing [] LiveReconnecting False False
+emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked "" "examples" 0 [] "prompt" Nothing [] LiveReconnecting False False
 
 data Action
   = Startup
@@ -132,6 +135,8 @@ data Action
   -- ^ display the run-detail Examples page at this output offset (refetches)
   | SetGradeVersion MisoString MisoString
   -- ^ switch a grader's card to a version (graderName, version string)
+  | SetExTab MisoString
+  -- ^ switch the example view's main-column tab ("prompt" | "input")
   | SetOrgSlug MisoString
   -- ^ store the org slug read from the URL prefix
   | ToggleExpand MisoString
@@ -188,6 +193,9 @@ outputsOffsetL = lens _outputsOffsetM $ \r x -> r { _outputsOffsetM = x }
 
 gradeVerL :: Lens Model [(MisoString, MisoString)]
 gradeVerL = lens _gradeVerM $ \r x -> r { _gradeVerM = x }
+
+exTabL :: Lens Model MisoString
+exTabL = lens _exTabM $ \r x -> r { _exTabM = x }
 
 -- | Run-detail Examples page size; shared by the fetch URL and the pager.
 outputsPageSize :: Int
