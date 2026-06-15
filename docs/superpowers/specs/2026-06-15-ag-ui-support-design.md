@@ -49,11 +49,14 @@ inbound decode.
 Frontend (CopilotKit HttpAgent)
    │  HTTP POST RunAgentInput
    ▼
-crucible-ag-ui  (satellite: warp/servant)
+HOST server handler  (the app's own warp / servant / wai / snap route — NOT ours)
+   │  hands us the request body + a chunk sink, plugs our streaming body into its response
+   ▼
+crucible-ag-ui  (satellite: a library, no server)
    ├─ decode RunAgentInput → AgentState (transcript) + tool set + seed coState
    ├─ run the crucible loop  (Events + Chat + Tools interpreters)
    │      └─ loop emits RunEvent at lifecycle / text / tool / state / reasoning seams
-   └─ Events interpreter: RunEvent → AG-UI JSON (BaseEvent) → SSE frame → chunked response
+   └─ Events interpreter: RunEvent → AG-UI JSON (BaseEvent) → SSE frame → host chunk sink
         ▲
 crucible-core
    ├─ Crucible.RunEvent : the Events effect + RunEvent type + pure interpreters
@@ -61,8 +64,10 @@ crucible-core
    └─ Crucible.JsonPatch : pure RFC 6902 differ (diff / applyPatch)
 ```
 
-Dependency direction matches `crucible-manifest`: core stays dependency-light;
-warp/servant and the protocol live in the opt-in satellite.
+**crucible-ag-ui ships no HTTP server.** It provides a framework-agnostic
+streaming-body adapter that the host plugs into its own handler. Dependency
+direction matches `crucible-manifest`: core stays dependency-light; the protocol
+and the adapter live in the opt-in satellite — with **no warp/servant dependency**.
 
 ---
 
@@ -146,20 +151,45 @@ the protocol layer.
 
 ---
 
-## 5. `crucible-ag-ui` satellite — wire, transport, server
+## 5. `crucible-ag-ui` satellite — wire, encode, handler adapter (no server)
 
+The satellite is a **library**, not a server. The host app owns the route, the
+HTTP method, auth, and the response object; crucible-ag-ui supplies the four
+pieces it plugs in:
+
+- **`RunAgentInput` decode** — `decodeRunInput :: ByteString -> Either Text
+  RunAgentInput` (messages, tools, state, threadId, runId, context). The host reads
+  its own request body and hands us the bytes.
 - **Codec** `agUiEventJson :: RunEvent -> Value` (via `Crucible.Codec`) — produces
   the `BaseEvent` envelope (`type`, `timestamp`, `rawEvent`) plus per-event fields,
   mapping neutral constructors to wire names (`TextDelta` →
   `{"type":"TEXT_MESSAGE_CONTENT","messageId":…,"delta":…}`).
-- **SSE encoder** — each event → `data: <json>\n\n`. The inverse of
+- **SSE encoder** — each event → a `data: <json>\n\n` `Builder`. The inverse of
   `Anthropic.Stream.splitFrames`; trivial.
-- **Server** (warp/servant) — `POST /agent`: read body → decode `RunAgentInput` →
-  map AG-UI messages to crucible `Message`s, AG-UI tool defs to crucible `Tool`
-  specs, seed `coState` → run the loop with `runEventsIO sseSink` streaming into the
-  chunked HTTP response. `Content-Type: text/event-stream`.
-- **`RunAgentInput` decode** — messages, tools, state, threadId, runId, context.
-- Deps (warp/servant/wai) live **only** here.
+- **Streaming-body adapter** — the seam that runs inside the host's handler:
+
+  ```haskell
+  -- Structurally identical to WAI's StreamingBody = (Builder -> IO ()) -> IO () -> IO (),
+  -- but defined here so the satellite needs NO wai/warp/servant dependency.
+  type SseBody = (Builder -> IO ())   -- write a chunk
+              -> IO ()                -- flush
+              -> IO ()
+
+  -- Decode → run the loop → encode each emitted RunEvent to an SSE frame and write it.
+  -- The host builds the run from the input (which tools, which LLM interpreter, state seed).
+  agUiSseBody :: RunAgentInput
+              -> (RunAgentInput -> Eff '[Events, IOE] ())  -- the host-provided run
+              -> SseBody
+  ```
+
+  The host wires it in with one line, e.g. WAI:
+  `responseStream status200 sseHeaders (agUiSseBody input run)` — or the equivalent
+  in servant (`StreamGet`/`SourceIO`), snap, yesod, or a raw socket. Because
+  `SseBody` is structurally WAI's `StreamingBody`, the WAI case needs no shim while
+  the satellite still has no wai dependency.
+
+- Only dep beyond core: `bytestring` (`Builder`), already used by core. **No
+  warp/servant/wai.**
 
 ---
 
@@ -226,10 +256,12 @@ the same current value.
 - **`JsonPatch`:** property `applyPatch (diff a b) a == Right b` over arbitrary JSON;
   golden diffs for representative cases.
 - **Codec:** golden `RunEvent → AG-UI JSON` against fixtures captured from the spec.
-- **Satellite integration:** warp on an ephemeral port, `POST` a `RunAgentInput`,
-  parse the SSE response back with `splitFrames`, assert the event sequence;
-  optionally validate event JSON against AG-UI's published schema or drive it with a
-  CopilotKit `HttpAgent`.
+- **Satellite integration (no server needed):** drive `agUiSseBody` directly with a
+  decoded `RunAgentInput` and an in-memory chunk sink (a `Builder` collector), then
+  parse the captured SSE back with `splitFrames` and assert the event sequence.
+  Optionally validate event JSON against AG-UI's published schema, or run an
+  end-to-end check by mounting `agUiSseBody` in a throwaway WAI app and driving it
+  with a CopilotKit `HttpAgent`.
 
 ---
 
@@ -241,7 +273,7 @@ the same current value.
 | 2 | `Crucible.JsonPatch` (diff / applyPatch) | core | none |
 | 3 | AG-UI JSON codec (`agUiEventJson`) | crucible-ag-ui | none beyond codec |
 | 4 | SSE encoder | crucible-ag-ui | none |
-| 5 | warp server + `RunAgentInput` decode | crucible-ag-ui | warp/servant/wai |
+| 5 | `RunAgentInput` decode + streaming-body adapter (`agUiSseBody`) | crucible-ag-ui | none (bytestring `Builder`; structurally WAI-compatible) |
 | 6 | shared state (`patchState`, `set_state` tool, snapshot/delta) | core + satellite | none |
 | 7 | reasoning events + `Partial`/generative-UI | core + satellite | none |
 
@@ -253,10 +285,15 @@ lands at 6–7.
 
 ## 10. Open questions
 
-- **Multiple concurrent runs / threads:** the first server is single-run-per-POST;
-  if `threadId` continuity across runs (resumable threads) is needed, the satellite
-  needs a thread store. Out of scope for v1; flagged.
+- **Thread continuity (resumed threads):** AG-UI's default is **client-carries-
+  state** — the frontend replays `messages` + `state` in every `RunAgentInput`, so a
+  same-`threadId` follow-up POST reconstructs the `AgentState` purely from decode,
+  with no server-side store. v1 relies on this; nothing to build. *If* a future use
+  case needs server-authoritative history (client not trusted to carry state), that
+  is a crucible store keyed by `threadId` (Memory / `crucible-manifest`), composing
+  with the persistence work — not a new subsystem.
 - **Binary transport:** SSE only for v1; the `RunEvent → Value` seam keeps a binary
   encoder as a later drop-in.
-- **Auth:** the satellite server is unauthenticated in v1; the app or a proxy owns
-  auth (consistent with AG-UI's optional Secure Proxy).
+- **Auth / routing / method:** owned entirely by the host handler — the satellite
+  ships no server, so there is nothing to authenticate here (consistent with AG-UI's
+  optional Secure Proxy).
