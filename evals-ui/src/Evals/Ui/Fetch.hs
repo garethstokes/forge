@@ -10,6 +10,7 @@
 -- with the server, so we fetch text and decode with aeson instead.
 module Evals.Ui.Fetch
   ( getHash
+  , getOrgPrefix
   , setHash
   , setTimeout
   , fetchJson
@@ -17,15 +18,28 @@ module Evals.Ui.Fetch
 
 import Data.Aeson (FromJSON, eitherDecodeStrictText)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Miso.DSL (Function (..), JSVal, asyncCallback, freeFunction, fromJSValUnchecked, jsg, setField, (!), (#))
-import Miso.Effect (Effect)
-import Miso.Fetch (Response (..), getText)
+import Miso.Effect (Effect, withSink)
+import Miso.Fetch (Response (..), accept, textPlain)
+import Miso.FFI.Internal (fetch, CONTENT_TYPE (..))
 import Miso.String (MisoString, fromMisoString, ms)
 
 -- | Current @window.location.hash@ (leading @#@ included, empty when unset).
 getHash :: IO MisoString
 getHash = fromJSValUnchecked =<< jsg "window" ! "location" ! "hash"
+
+-- | The org path prefix from @window.location.pathname@'s first segment:
+-- @"\/acme\/..."@ -> @"\/acme"@; @"\/"@ or @""@ -> @""@. The dashboard is served
+-- under @\/<orgSlug>\/@, so all API calls are made relative to that prefix.
+getOrgPrefix :: IO MisoString
+getOrgPrefix = do
+  p <- fromJSValUnchecked =<< jsg "window" ! "location" ! "pathname"
+  let segs = filter (not . T.null) (T.splitOn "/" (fromMisoString (p :: MisoString)))
+  pure $ case segs of
+    (s : _) -> ms ("/" <> s)
+    []      -> ""
 
 -- | Assign @window.location.hash@; the browser then raises @hashchange@,
 -- which our subscription turns into 'Evals.Ui.Model.HashChanged'.
@@ -59,7 +73,9 @@ fetchJson
   => MisoString
   -> (Either MisoString a -> action)
   -> Effect parent props model action
-fetchJson url k = getText url [] ok err
+fetchJson url k = withSink $ \sink -> do
+  prefix <- getOrgPrefix
+  fetch (prefix <> url) "GET" Nothing [(accept, textPlain)] (sink . ok) (sink . err) TEXT
   where
     ok :: Response MisoString -> action
     ok resp =

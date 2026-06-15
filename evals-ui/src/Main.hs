@@ -20,7 +20,7 @@ import qualified Miso.EventSource as SSE
 import Miso.String (fromMisoString, ms)
 
 import Evals.Api (ChangeDto (..))
-import Evals.Ui.Fetch (fetchJson, getHash, setHash, setTimeout)
+import Evals.Ui.Fetch (fetchJson, getHash, getOrgPrefix, setHash, setTimeout)
 import Evals.Ui.Model
 import Evals.Ui.View (viewModel)
 
@@ -44,10 +44,15 @@ app =
 updateModel :: Action -> Effect parent props Model Action
 updateModel = \case
   Startup -> do
+    -- Read the org prefix in IO, then dispatch ConnectSse to wire up the SSE
+    -- feed at the correct prefixed URL (Effect cannot sequence IO results, so
+    -- we use 'io' to lift the prefix read into an action).
+    io (ConnectSse <$> getOrgPrefix)
+    updateModel HashChanged
+  ConnectSse prefix -> do
     -- connect once; the browser EventSource auto-reconnects on failure, so
     -- SseOpen/SseError only reflect status (no reconnect logic of our own)
-    SSE.connectText "/api/events" (const SseOpen) SseMessage (const SseError)
-    updateModel HashChanged
+    SSE.connectText (prefix <> "/api/events") (const SseOpen) SseMessage (const SseError)
   HashChanged ->
     io (SetRoute . parseHash <$> getHash)
   SetRoute r -> do

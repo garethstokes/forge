@@ -101,7 +101,9 @@ emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked [] [] Live
 
 data Action
   = Startup
-  -- ^ mounted: connect the SSE change feed, then route the initial hash
+  -- ^ mounted: read the org prefix, then connect the SSE feed and route
+  | ConnectSse MisoString
+  -- ^ connect the SSE feed at the given prefixed URL (dispatched by Startup)
   | HashChanged
   -- ^ the location hash changed (popstate/hashchange or initial mount)
   | SetRoute Route
