@@ -86,6 +86,10 @@ import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..)
 import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))
 import Crucible.Research.Lint (Finding (..), orphans, brokenLinks, sparsePages, lintStructural, linkedPairs, allPairs, lintContradictions, lintStale, LintOpts (..), defaultLintOpts, lintWiki)
+import qualified Crucible.Journal as J
+import Crucible.Journal (Journal (..), JournalIdentity (..), Entry (..), CassetteKey (..), MissPolicy (Signal, Fallthrough), Divergence (..), ReplayOutcome (..), JournalError (..))
+import qualified Effectful.State.Static.Local as ES
+import qualified Effectful.Error.Static as EE
 
 -- Sample types for codec tests
 
@@ -230,6 +234,15 @@ encodeVia c = toJSONVia c
 -- | Decode a value from an aeson Value via its codec.
 decodeVia :: JSONCodec a -> Value -> Either String a
 decodeVia c v = AT.parseEither (parseJSONVia c) v
+
+-- Phase 0 journal tests: encode/decode an Int as the recorded result bytes.
+encInt :: Int -> BC.ByteString
+encInt = BC.pack . show
+
+decInt :: BC.ByteString -> Either Data.Text.Text Int
+decInt b = case reads (BC.unpack b) of
+  [(n, "")] -> Right n
+  _         -> Left "bad int"
 
 main :: IO ()
 main = runChecks
@@ -2667,4 +2680,28 @@ main = runChecks
     in check "lint: lintWiki combines structural and contradiction"
          [Orphan (Slug "a"), Contradiction (Slug "a") (Slug "b") "clash"]
          res
+  , check "journal: empty journal has no entries"
+      (0 :: Int)
+      (length (J.jEntries (J.emptyJournal (J.JournalIdentity "wf" "" "v1"))))
+  , check "journal: insert then lookup returns the bytes with seq 0"
+      (Just (0 :: Int, "6"))
+      (let k = J.mkKey "double" ["3"]
+           j = J.insertEntry k (encInt 6) (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+       in (\e -> (J.eSeq e, BC.unpack (J.eResult e))) <$> J.lookupEntry k j)
+  , check "journal: lookup of an absent key is Nothing"
+      (Nothing :: Maybe Int)
+      (let j = J.emptyJournal (J.JournalIdentity "double" "" "v1")
+       in J.eSeq <$> J.lookupEntry (J.mkKey "double" ["3"]) j)
+  , check "journal: two inserts get sequential seqs"
+      [0 :: Int, 1]
+      (let j0 = J.emptyJournal (J.JournalIdentity "double" "" "v1")
+           j1 = J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) j0
+           j2 = J.insertEntry (J.mkKey "double" ["4"]) (encInt 8) j1
+       in map (J.eSeq . snd) (J.jEntries j2))
+  , check "journal: distinct args produce distinct keys"
+      False
+      (J.mkKey "double" ["3"] == J.mkKey "double" ["4"])
+  , check "journal: same op+args produce equal keys"
+      True
+      (J.mkKey "double" ["3"] == J.mkKey "double" ["3"])
   ]
