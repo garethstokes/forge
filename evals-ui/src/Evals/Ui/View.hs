@@ -155,18 +155,18 @@ detailView :: Model -> Int -> View Model Action
 detailView m _ =
   remoteView (_detailM m) $ \d ->
     let graders = d.run.metrics
-        tabKey mc = ms mc.graderName <> "v" <> msShow mc.graderVersion
+        graderNames = nub (map (.graderName) graders)  -- one tab per grader
         active = _runTabM m
         tabs = ("Examples", "examples", active == "examples")
-             : [ (ms mc.graderName <> " v" <> msShow mc.graderVersion, tabKey mc, active == tabKey mc) | mc <- graders ]
+             : [ (ms name, ms name, active == ms name) | name <- graderNames ]
         content
           | active == "examples" =
               div_ []
                 ( outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
                 : [ pager (_outputsOffsetM m) d.totalOutputs | d.totalOutputs > outputsPageSize ] )
-          | otherwise = case [ mc | mc <- graders, tabKey mc == active ] of
-              (mc : _) -> graderTabPanel d mc
-              []       -> outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
+          | otherwise = case [ name | name <- graderNames, ms name == active ] of
+              (name : _) -> graderVersionPanel m d name
+              []         -> outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
     in div_ [ P.class_ "detail" ]
          [ breadcrumb [ orgCrumb m, ("runs", Just runsHash), ("run #" <> msShow d.run.runId, Nothing) ]
          , runHeader d.run
@@ -178,12 +178,26 @@ detailTabBar tabs = div_ [ P.class_ "tabbar" ] (map one tabs)
   where one (label, key, active) =
           a_ [ P.class_ ("tab" <> if active then " active" else ""), onClick (SetRunTab key) ] [ text label ]
 
-graderTabPanel :: RunDetailDto -> MetricDto -> View Model Action
-graderTabPanel d mc =
+-- | One grader's tab: a version dropdown (defaulting to the latest) over its
+-- calibration card and what-it-checks detail. Switching the version updates
+-- both. Selection is held per grader name in the model (shared with the
+-- example page).
+graderVersionPanel :: Model -> RunDetailDto -> Text -> View Model Action
+graderVersionPanel m d name =
   div_ [ P.class_ "grader-tab" ]
-    ( map calibCard (mergeSeries
-        [ s | s <- d.calibration, s.graderName == mc.graderName, s.graderVersion == mc.graderVersion ])
-    ++ [ graderDetailSection mc ] )
+    ( div_ [ P.class_ "gver-bar" ]
+        [ strong_ [] [ text (ms name) ], versionSelector (ms name) versions selStr ]
+    : map calibCard (mergeSeries
+        [ s | s <- d.calibration, s.graderName == name, msShow s.graderVersion == selStr ])
+    ++ [ graderDetailSection sel ] )
+  where
+    metrics  = [ mc | mc <- d.run.metrics, mc.graderName == name ]
+    versions = reverse (nub (sort [ mc.graderVersion | mc <- metrics ]))  -- newest first
+    latest   = maximum (0 : map (.graderVersion) metrics)
+    selStr   = fromMaybe (msShow latest) (lookup (ms name) (_gradeVerM m))
+    sel      = case [ mc | mc <- metrics, msShow mc.graderVersion == selStr ] of
+                 (mc : _) -> mc
+                 []       -> head metrics  -- metrics non-empty: name came from them
 
 runHeader :: RunSummaryDto -> View Model Action
 runHeader r =
@@ -533,7 +547,7 @@ graderDetailSection :: MetricDto -> View Model Action
 graderDetailSection mc =
   div_ [ P.class_ "gdetail" ]
     ( div_ [ P.class_ "gdetail-head" ]
-        [ strong_ [] [ text (ms mc.graderName) ], text (" v" <> msShow mc.graderVersion)
+        [ strong_ [] [ text ("v" <> msShow mc.graderVersion) ]
         , span_ [ P.class_ "kind big" ] [ text (ms mc.graderKind) ]
         , span_ [ P.class_ "gvals" ] [ text (valsLine mc) ]
         , span_ [ P.class_ "gdesc" ] [ text (methodLine mc.graderKind) ] ]

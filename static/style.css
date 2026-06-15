@@ -354,6 +354,9 @@ td.pick input { cursor: pointer; }
 .menu-empty { padding: 8px 12px; color: var(--muted); }
 
 .grader-tab { margin-top: 2px; }
+.gver-bar { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; }
+.gver-bar strong { font-size: 15px; }
+.gver-bar .ver-select { font-size: 13px; color: var(--accent); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; background: #fff; cursor: pointer; }
 
 .ex-head { display: flex; align-items: center; gap: 12px; }
 .ex-nav { margin-left: auto; display: flex; gap: 6px; }
