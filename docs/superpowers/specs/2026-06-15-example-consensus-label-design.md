@@ -122,3 +122,26 @@ Then on `/acme/api/runs/<id>/ex/e1`:
 - On `e2` (no label, no matching error): both lists empty.
 
 Update the `ExampleDetailDto` round-trip literal to include the two new fields.
+
+## Addendum — persisted judge verdicts + agreement badge (shipped)
+
+Follow-on from the same conversation:
+
+- **Persisted verdicts.** Rather than add a new persistence path, the existing
+  `score` command was used to run each judge as a grader over the run's outputs,
+  writing a `Score` row per (output, grader version). The example page's existing
+  `grades` path renders them. Operational sequence (live, needs API keys):
+  `manifest-evals score <run> <gv…> --org <slug>`, then
+  `manifest-evals metaeval report <run> <gv> --org <slug> --mode stored` per
+  grader version to refresh κ from the stored verdicts. For the HealthBench run,
+  stored κ matched live (v1 identical at 0.531; v2 0.437 over 200 vs live 0.398
+  over 199).
+- **Agreement badge.** `gradeBlock` takes the example's `[(criterion, human)]`
+  map and badges each judge's criterion verdict "agrees / disagrees" by matching
+  its `met` against the human gold verdict — pure UI over the existing DTO.
+- **Security fix (incidental).** A burst of judge calls hit DNS failures; the
+  provider HTTP exception embeds the request's `x-api-key` header, and a raw
+  `show` wrote the live key into the `scores.error` column — which the dashboard
+  renders. `renderExecError` now scrubs every `sk-…` token before the text is
+  persisted or shown; the leaked rows were deleted. Regression test in
+  `ExecuteSpec`.
