@@ -44,6 +44,7 @@ module Crucible.Memory
   , newMemoryStorePure
   , memoryItemCodec
   , memoryKindCodec
+  , provenanceCodec
   ) where
 
 import Control.Exception (IOException, try)
@@ -67,7 +68,7 @@ import Crucible.Decode (DecodeError, decodeLLM)
 data MemoryKind = Episodic | Semantic | Procedural
   deriving (Eq, Show)
 
-newtype MemoryId = MemoryId Int deriving (Eq, Show)
+newtype MemoryId = MemoryId Int deriving (Eq, Ord, Show)
 
 idInt :: MemoryId -> Int
 idInt (MemoryId i) = i
