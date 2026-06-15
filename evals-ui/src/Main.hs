@@ -48,6 +48,7 @@ updateModel = \case
     -- feed at the correct prefixed URL (Effect cannot sequence IO results, so
     -- we use 'io' to lift the prefix read into an action).
     io (ConnectSse <$> getOrgPrefix)
+    io (SetOrgSlug <$> getOrgPrefix)
     updateModel HashChanged
   ConnectSse prefix -> do
     -- connect once; the browser EventSource auto-reconnects on failure, so
@@ -57,12 +58,14 @@ updateModel = \case
     io (SetRoute . parseHash <$> getHash)
   SetRoute r -> do
     routeL .= r
+    compareMenuL .= Nothing
     case r of
       RunsR ->
         runsL .= Loading
       RunR _ -> do
         detailL .= Loading
         expandedL .= []
+        runTabL .= "examples"
       CompareR _ _ -> do
         compareL .= Loading
         expandedL .= []
@@ -74,16 +77,16 @@ updateModel = \case
     fetchRoute r
   Navigate h ->
     io_ (setHash h)
-  ToggleSelect i ->
-    selectedL %= toggleSelect i
+  SetOrgSlug s ->
+    orgSlugL .= s
+  SetRunTab t ->
+    runTabL .= t
+  ToggleCompareMenu mi ->
+    compareMenuL .= mi
   ToggleExpand k ->
     expandedL %= toggleElem k
-  GotRuns e -> do
+  GotRuns e ->
     runsL %= \old -> keepStale old (fromEither e)
-    -- prune ghost selections: drop ids no longer present in the fetched list
-    case e of
-      Right rs -> selectedL %= pruneSelection rs
-      Left _ -> pure ()
   GotDetail rid e -> do
     -- stale-response guard: commit only when the response matches the current route
     route <- use routeL

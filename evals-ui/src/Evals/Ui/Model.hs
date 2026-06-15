@@ -19,7 +19,9 @@ module Evals.Ui.Model
   , compareL
   , exampleL
   , calibrationL
-  , selectedL
+  , orgSlugL
+  , runTabL
+  , compareMenuL
   , expandedL
   , liveL
   , refetchQueuedL
@@ -39,7 +41,6 @@ module Evals.Ui.Model
   , keepStale
   , toggleSelect
   , toggleElem
-  , pruneSelection
   , msShow
   ) where
 
@@ -82,8 +83,12 @@ data Model = Model
   , _compareM :: RemoteData CompareDto
   , _exampleM :: RemoteData ExampleDetailDto
   , _calibrationM :: RemoteData [CalibrationSeriesDto]
-  , _selectedM :: [Int]
-    -- ^ run ids ticked for comparison on the runs view (at most two)
+  , _orgSlugM :: MisoString
+    -- ^ org slug from the URL first path segment (e.g. "/acme")
+  , _runTabM :: MisoString
+    -- ^ active tab key in the run-detail view ("examples" or a grader key)
+  , _compareMenuM :: Maybe Int
+    -- ^ run id whose per-row compare ⋮ menu is open, or Nothing
   , _expandedM :: [MisoString]
     -- ^ output cells toggled to full text (keys are view-local)
   , _liveM :: LiveStatus
@@ -97,7 +102,7 @@ data Model = Model
   } deriving (Show, Eq)
 
 emptyModel :: Model
-emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked [] [] LiveReconnecting False False
+emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked "" "examples" Nothing [] LiveReconnecting False False
 
 data Action
   = Startup
@@ -110,7 +115,12 @@ data Action
   | Navigate MisoString
   -- ^ in-app navigation: set the location hash (the hashchange sub drives
   -- the actual route switch, so back/forward and manual edits behave the same)
-  | ToggleSelect Int
+  | SetRunTab MisoString
+  -- ^ switch the active tab in the run-detail view
+  | ToggleCompareMenu (Maybe Int)
+  -- ^ open (Just runId) or close (Nothing) the per-row compare ⋮ menu
+  | SetOrgSlug MisoString
+  -- ^ store the org slug read from the URL prefix
   | ToggleExpand MisoString
   | GotRuns (Either MisoString [RunSummaryDto])
   | GotDetail Int (Either MisoString RunDetailDto)
@@ -154,8 +164,14 @@ exampleL = lens _exampleM $ \r x -> r { _exampleM = x }
 calibrationL :: Lens Model (RemoteData [CalibrationSeriesDto])
 calibrationL = lens _calibrationM $ \r x -> r { _calibrationM = x }
 
-selectedL :: Lens Model [Int]
-selectedL = lens _selectedM $ \r x -> r { _selectedM = x }
+orgSlugL :: Lens Model MisoString
+orgSlugL = lens _orgSlugM $ \r x -> r { _orgSlugM = x }
+
+runTabL :: Lens Model MisoString
+runTabL = lens _runTabM $ \r x -> r { _runTabM = x }
+
+compareMenuL :: Lens Model (Maybe Int)
+compareMenuL = lens _compareMenuM $ \r x -> r { _compareMenuM = x }
 
 expandedL :: Lens Model [MisoString]
 expandedL = lens _expandedM $ \r x -> r { _expandedM = x }
@@ -251,10 +267,6 @@ toggleElem :: MisoString -> [MisoString] -> [MisoString]
 toggleElem k xs
   | k `elem` xs = filter (/= k) xs
   | otherwise = k : xs
-
--- | Drop selected run ids that are no longer present in the fetched run list.
-pruneSelection :: [RunSummaryDto] -> [Int] -> [Int]
-pruneSelection rs = filter (\i -> any (\r -> r.runId == i) rs)
 
 msShow :: Show a => a -> MisoString
 msShow = ms . show

@@ -10,7 +10,7 @@ import qualified Data.Aeson.Key as AK
 import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Text (encodeToLazyText)
 import Data.Foldable (toList)
-import Data.List (nub)
+import Data.List (intersperse, nub)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -23,7 +23,7 @@ import Miso.CSS (styleInline_)
 import Miso.Event.Types (Options (..))
 import Miso.Html
 import qualified Miso.Html.Property as P
-import Miso.String (MisoString, ms)
+import Miso.String (MisoString, fromMisoString, ms)
 import qualified Miso.Svg.Element as S
 import qualified Miso.Svg.Property as SP
 
@@ -36,7 +36,7 @@ viewModel _ m =
     [ P.class_ "app" ]
     [ header_
         [ P.class_ "topbar" ]
-        [ h1_ [] [ a_ [ P.href_ runsHash ] [ text "manifest evals" ] ]
+        [ h1_ [] [ a_ [ P.href_ "/" ] [ text "manifest evals" ] ]
         , liveDot (_liveM m)
         ]
     , main_ [ P.class_ "content" ] [ body ]
@@ -70,15 +70,37 @@ remoteView rd f =
   where
     loadingBox = div_ [ P.class_ "loading" ] [ text "loading…" ]
 
+-- Shared navigation components -----------------------------------------------
+
+breadcrumb :: [(MisoString, Maybe MisoString)] -> View Model Action
+breadcrumb crumbs = nav_ [ P.class_ "breadcrumb" ] (intersperse sep (map crumb crumbs))
+  where
+    sep = span_ [ P.class_ "sep" ] [ text "/" ]
+    crumb (label, Just href) = a_ [ P.href_ href ] [ text label ]
+    crumb (label, Nothing)   = span_ [ P.class_ "here" ] [ text label ]
+
+orgCrumb :: Model -> (MisoString, Maybe MisoString)
+orgCrumb m = (ms (T.dropWhile (== '/') (fromMisoString (_orgSlugM m))), Just "/")
+
+tabBar :: [(MisoString, MisoString, Bool)] -> View Model Action
+tabBar tabs = div_ [ P.class_ "tabbar" ] (map one tabs)
+  where one (label, href, active) =
+          a_ [ P.class_ ("tab" <> if active then " active" else ""), P.href_ href ] [ text label ]
+
 -- Runs list -------------------------------------------------------------------
 
 runsView :: Model -> View Model Action
 runsView m =
   remoteView (_runsM m) $ \rs ->
     div_ []
-      ( a_ [ P.class_ "nav-link", P.href_ calibrationHash ] [ text "grader calibration \8594" ]
-      : compareBar m rs
-      : map (runGroup m) (groupRuns rs) )
+      ( breadcrumb [ orgCrumb m, ("runs", Nothing) ]
+      : runsTabBar RunsR
+      : map (runGroup m rs) (groupRuns rs) )
+
+runsTabBar :: Route -> View Model Action
+runsTabBar active = tabBar
+  [ ("Runs", runsHash, active == RunsR)
+  , ("Grader calibration", calibrationHash, active == CalibrationR) ]
 
 -- | Group runs under (datasetName, datasetVersion) headings, first-seen
 -- order (the API returns newest first).
@@ -87,94 +109,86 @@ groupRuns rs = [ (k, [ r | r <- rs, key r == k ]) | k <- nub (map key rs) ]
   where
     key r = (r.datasetName, r.datasetVersion)
 
-runGroup :: Model -> ((Text, Int), [RunSummaryDto]) -> View Model Action
-runGroup m ((dn, dv), rs) =
-  section_
-    [ P.class_ "run-group" ]
+runGroup :: Model -> [RunSummaryDto] -> ((Text, Int), [RunSummaryDto]) -> View Model Action
+runGroup m allRs ((dn, dv), rs) =
+  section_ [ P.class_ "run-group" ]
     [ h2_ [] [ text (ms dn <> " · v" <> msShow dv) ]
-    , table_
-        []
-        [ thead_ [] [ tr_ [] (map thTxt [ "run", "target", "status", "started", "metrics", "compare" ]) ]
-        , tbody_ [] (map (runRow m) rs)
-        ]
-    ]
+    , table_ []
+        [ thead_ [] [ tr_ [] (map thTxt [ "run", "target", "status", "started", "metrics", "" ]) ]
+        , tbody_ [] (map (runRow m allRs) rs) ] ]
 
-runRow :: Model -> RunSummaryDto -> View Model Action
-runRow m r =
-  tr_
-    [ P.class_ "clickable", onClick (Navigate (runHash r.runId)) ]
+runRow :: Model -> [RunSummaryDto] -> RunSummaryDto -> View Model Action
+runRow m allRs r =
+  tr_ [ P.class_ "clickable", onClick (Navigate (runHash r.runId)) ]
     [ td_ [ P.class_ "key" ] [ text ("#" <> msShow r.runId) ]
     , td_ [] [ text (targetLabel r) ]
     , td_ [] [ statusChip r.status ]
     , td_ [] [ text (fmtMaybeTime r.startedAt) ]
     , td_ [ P.class_ "metrics" ] (map metricChip r.metrics)
-    , td_ [ P.class_ "pick" ]
-        [ input_
-            [ P.type_ "checkbox"
-            , P.checked_ (r.runId `elem` _selectedM m)
-              -- fully controlled checkbox: prevent the native toggle (the
-              -- model decides, e.g. a third tick is ignored) and stop the
-              -- click from bubbling into the row's navigate handler
-            , onClickWithOptions
-                (Options { _preventDefault = True, _stopPropagation = True })
-                (ToggleSelect r.runId)
-            ]
-        ]
+    , td_ [ P.class_ "row-menu" ] [ compareMenu m allRs r ]
     ]
 
-compareBar :: Model -> [RunSummaryDto] -> View Model Action
-compareBar m rs =
-  div_ [ P.class_ "comparebar" ] $
-    -- filter to ids that are actually present in the current run list; a
-    -- ghost id (not in rs) is treated as not-selected rather than showing a
-    -- misleading version-mismatch hint
-    case filter (\i -> any (\r -> r.runId == i) rs) (_selectedM m) of
-      [a, b]
-        | sameVersion a b ->
-            [ hint "2 runs selected"
-            , button_
-                [ P.class_ "compare-btn", onClick (Navigate (compareHash a b)) ]
-                [ text "Compare" ]
-            ]
-        | otherwise ->
-            [ hint "selected runs are from different dataset versions — pick two from the same group"
-            , button_ [ P.class_ "compare-btn", P.disabled_ ] [ text "Compare" ]
-            ]
-      [_] -> [ hint "tick one more run (same dataset version) to compare" ]
-      _ -> [ hint "tick two runs to compare them" ]
+compareMenu :: Model -> [RunSummaryDto] -> RunSummaryDto -> View Model Action
+compareMenu m allRs r =
+  span_ [ P.class_ "menu-wrap" ]
+    ( a_ [ P.class_ "kebab"
+         , onClickWithOptions (Options { _preventDefault = True, _stopPropagation = True })
+             (ToggleCompareMenu (if _compareMenuM m == Just r.runId then Nothing else Just r.runId)) ]
+        [ text "\8942" ]   -- ⋮
+    : [ dropdown | _compareMenuM m == Just r.runId ] )
   where
-    hint t = span_ [ P.class_ "hint" ] [ text t ]
-    dvOf i = [ r.datasetVersionId | r <- rs, r.runId == i ]
-    sameVersion a b = case (dvOf a, dvOf b) of
-      ([x], [y]) -> x == y
-      _ -> False
+    sibs = [ o | o <- allRs, o.runId /= r.runId, o.datasetVersionId == r.datasetVersionId ]
+    dropdown = div_ [ P.class_ "menu" ]
+      ( div_ [ P.class_ "menu-head" ] [ text ("compare #" <> msShow r.runId <> " with") ]
+      : if null sibs
+          then [ div_ [ P.class_ "menu-empty" ] [ text "no comparable runs" ] ]
+          else map item sibs )
+    item o = a_ [ P.class_ "menu-item"
+                , onClickWithOptions (Options { _preventDefault = True, _stopPropagation = True })
+                    (Navigate (compareHash r.runId o.runId)) ]
+               [ text ("#" <> msShow o.runId)
+               , span_ [ P.class_ "muted" ] [ text (" · " <> fmtMaybeTime o.startedAt) ] ]
 
 -- Run detail ------------------------------------------------------------------
 
 detailView :: Model -> Int -> View Model Action
 detailView m _ =
   remoteView (_detailM m) $ \d ->
-    div_
-      [ P.class_ "detail" ]
-      [ backLink
-      , runHeader (_expandedM m) d.run
-      , outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
-      , calibrationSection d.calibration
-      ]
+    let graders = d.run.metrics
+        tabKey mc = ms mc.graderName <> "v" <> msShow mc.graderVersion
+        active = _runTabM m
+        tabs = ("Examples", "examples", active == "examples")
+             : [ (ms mc.graderName, tabKey mc, active == tabKey mc) | mc <- graders ]
+        content
+          | active == "examples" = outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
+          | otherwise = case [ mc | mc <- graders, tabKey mc == active ] of
+              (mc : _) -> graderTabPanel d mc
+              []       -> outputsTable d.run.runId (_expandedM m) d.run.metrics d.outputs
+    in div_ [ P.class_ "detail" ]
+         [ breadcrumb [ orgCrumb m, ("runs", Just runsHash), ("run #" <> msShow d.run.runId, Nothing) ]
+         , runHeader d.run
+         , detailTabBar tabs
+         , content ]
 
-runHeader :: [MisoString] -> RunSummaryDto -> View Model Action
-runHeader _ r =
-  div_
-    [ P.class_ "run-header" ]
+detailTabBar :: [(MisoString, MisoString, Bool)] -> View Model Action
+detailTabBar tabs = div_ [ P.class_ "tabbar" ] (map one tabs)
+  where one (label, key, active) =
+          a_ [ P.class_ ("tab" <> if active then " active" else ""), onClick (SetRunTab key) ] [ text label ]
+
+graderTabPanel :: RunDetailDto -> MetricDto -> View Model Action
+graderTabPanel d mc =
+  div_ [ P.class_ "grader-tab" ]
+    ( graderDetailSection mc
+    : [ calibCard s | s <- d.calibration, s.graderName == mc.graderName, s.graderVersion == mc.graderVersion ] )
+
+runHeader :: RunSummaryDto -> View Model Action
+runHeader r =
+  div_ [ P.class_ "run-header" ]
     [ h2_ [] [ text ("run #" <> msShow r.runId <> " — " <> ms r.datasetName <> " · v" <> msShow r.datasetVersion) ]
-    , div_
-        [ P.class_ "meta" ]
+    , div_ [ P.class_ "meta" ]
         [ span_ [] [ text (targetLabel r) ]
         , statusChip r.status
-        , span_ [] [ text ("started " <> fmtMaybeTime r.startedAt <> " · finished " <> fmtMaybeTime r.finishedAt) ]
-        ]
-    , div_ [ P.class_ "grader-details" ] (map graderDetailSection r.metrics)
-    ]
+        , span_ [] [ text ("started " <> fmtMaybeTime r.startedAt <> " · finished " <> fmtMaybeTime r.finishedAt) ] ] ]
 
 outputsTable :: Int -> [MisoString] -> [MetricDto] -> [OutputRowDto] -> View Model Action
 outputsTable rid expandedKeys metrics outputs =
@@ -240,22 +254,25 @@ exampleView :: Model -> Int -> Text -> View Model Action
 exampleView m _ _ =
   remoteView (_exampleM m) $ \d ->
     div_ [ P.class_ "example" ]
-      [ a_ [ P.href_ (runHash d.runId), P.class_ "back" ] [ text "← run" ]
+      [ breadcrumb [ orgCrumb m, ("runs", Just runsHash)
+                   , ("run #" <> msShow d.runId, Just (runHash d.runId))
+                   , (ms d.exampleKey, Nothing) ]
       , div_ [ P.class_ "ex-card" ]
-          [ h2_ [] [ text ("example " <> ms d.exampleKey) ]
+          [ div_ [ P.class_ "ex-head" ]
+              [ h2_ [] [ text ("example " <> ms d.exampleKey) ]
+              , div_ [ P.class_ "ex-nav" ]
+                  [ navBtn "\8592 prev" (fmap (exampleHash d.runId) d.prevKey)
+                  , navBtn "next \8594" (fmap (exampleHash d.runId) d.nextKey) ] ]
           , div_ [ P.class_ "ex-cols" ]
               [ div_ [ P.class_ "ex-main" ]
                   [ exSection "Input" [ pre_ [ P.class_ "io" ] [ text (renderJson d.input) ] ]
                   , exSection "Generated prompt" (map promptMsg d.prompt)
-                  , exSection "Response" [ responseBlock d.responseText d.responseError ]
-                  ]
-              , div_ [ P.class_ "ex-side" ]
-                  [ exSection "Grades" (map gradeBlock d.grades) ]
-              ]
-          ]
-      ]
+                  , exSection "Response" [ responseBlock d.responseText d.responseError ] ]
+              , div_ [ P.class_ "ex-side" ] [ exSection "Grades" (map gradeBlock d.grades) ] ] ] ]
   where
     exSection title kids = div_ [ P.class_ "ex-section" ] (h3_ [] [ text title ] : kids)
+    navBtn label Nothing     = span_ [ P.class_ "ex-navbtn disabled" ] [ text label ]
+    navBtn label (Just href) = a_ [ P.class_ "ex-navbtn", P.href_ href ] [ text label ]
 
 -- | Pretty-print a JSON value with 2-space indentation. Scalars are encoded
 -- via aeson (correct escaping); objects/arrays are hand-indented.
@@ -309,11 +326,11 @@ gradeBlock g =
 -- Compare -----------------------------------------------------------------------
 
 compareView :: Model -> Int -> Int -> View Model Action
-compareView m _ _ =
+compareView m a b =
   remoteView (_compareM m) $ \c ->
     div_
       [ P.class_ "compare" ]
-      [ backLink
+      [ breadcrumb [ orgCrumb m, ("runs", Just runsHash), ("compare #" <> msShow a <> " \215 #" <> msShow b, Nothing) ]
       , div_ [ P.class_ "cards" ] [ runCard "A" c.runA, runCard "B" c.runB ]
       , div_
           [ P.class_ "grader-line" ]
@@ -369,9 +386,6 @@ deltaCell (Just d) = td_ [ P.class_ cls ] [ text txt ]
     txt = (if d > 0 then "+" else "") <> fmtD d
 
 -- Shared bits ----------------------------------------------------------------------
-
-backLink :: View Model Action
-backLink = a_ [ P.href_ runsHash, P.class_ "back" ] [ text "← runs" ]
 
 targetLabel :: RunSummaryDto -> MisoString
 targetLabel r = ms r.targetName <> " v" <> msShow r.targetVersion <> " · " <> ms r.model
@@ -540,25 +554,11 @@ calibrationView :: Model -> View Model Action
 calibrationView m =
   remoteView (_calibrationM m) $ \ss ->
     div_ [ P.class_ "calib calib-page" ]
-      [ backLink
-      , h2_ [] [ text "grader calibration" ]
-      , div_ [ P.class_ "calib-legend" ]
-          [ text ("\954 (Cohen's kappa) measures judge\8211human agreement beyond chance. "
-                  <> "The bar shows \954 with its 95% CI; the tick at 0.6 is the trust threshold "
-                  <> "\8212 a grader is \8220trustworthy\8221 when the CI lower bound clears it. "
-                  <> "fail precision/recall describe how well it catches real failures.") ]
-      , if null ss
-          then p_ [ P.class_ "empty" ] [ text "no calibration runs yet." ]
-          else div_ [] (map calibCard ss)
-      ]
-
--- | Run-detail calibration block — omitted entirely when the run has no
--- meta-evals (the common case for older runs).
-calibrationSection :: [CalibrationSeriesDto] -> View Model Action
-calibrationSection [] = text ""
-calibrationSection ss =
-  div_ [ P.class_ "calib" ]
-    ( h3_ [] [ text "grader calibration" ] : map calibCard ss )
+      ( breadcrumb [ orgCrumb m, ("runs", Just runsHash) ]
+      : runsTabBar CalibrationR
+      : div_ [ P.class_ "calib-legend" ] [ text "\954 measures judge\8211human agreement beyond chance; the 0.6 tick is the trust threshold." ]
+      : if null ss then [ p_ [ P.class_ "empty" ] [ text "no calibration runs yet." ] ]
+        else map calibCard ss )
 
 nsHint :: Text -> MisoString
 nsHint n = case n of
