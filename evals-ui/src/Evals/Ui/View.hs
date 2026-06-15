@@ -355,7 +355,7 @@ gradeBlock humanByCrit g =
         ( div_ [ P.class_ "vrow-pills" ]
             ( span_ [ P.class_ (if c.met then "m ok" else "m fail") ] [ text (if c.met then "✓" else "✗") ]
             : agreeBadge c
-            ++ [ span_ [ P.class_ "tag" ] [ text (ms t) ] | t <- c.tags ]
+            ++ [ span_ [ P.class_ "tag", P.title_ (ms t) ] [ text (prettyTag t) ] | t <- c.tags ]
             ++ [ span_ [ P.class_ "earn" ] [ text (if c.met then "+" <> fmtD c.points else "0 / " <> fmtD c.points) ] ] )
         : div_ [ P.class_ "crit-text" ] [ text (ms c.criterion) ]
         : [ div_ [ P.class_ "why" ] [ text (ms c.explanation) ] | not (T.null c.explanation) ] )
@@ -658,6 +658,15 @@ thTxt s = th_ [] [ text s ]
 
 fmtD :: Double -> MisoString
 fmtD d = ms (showFFloat (Just 3) d "")
+
+-- | Display form of a structured tag like
+-- @category:cluster:emergency_referrals_emergent_emergency_behavior@: keep only
+-- the leaf segment (after the last @:@) and turn underscores into spaces. The
+-- full raw tag is kept in the element's @title@ for hover.
+prettyTag :: Text -> MisoString
+prettyTag = ms . T.map underToSpace . last . T.splitOn ":"
+  where underToSpace '_' = ' '
+        underToSpace c   = c
 
 fmtMaybeTime :: Maybe UTCTime -> MisoString
 fmtMaybeTime = maybe "–" (ms . formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S")
