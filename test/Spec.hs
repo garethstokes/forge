@@ -92,6 +92,7 @@ import qualified Effectful.State.Static.Local as ES
 import qualified Effectful.Error.Static as EE
 import qualified Crucible.Workflow as W
 import Crucible.Workflow (WorkflowEnv (..), WaitSpec (..), Suspended (..))
+import Crucible.Eval.Replay (runReplayEval, settle, noteDivergence, ddmin)
 
 -- Sample types for codec tests
 
@@ -3034,4 +3035,50 @@ main = runChecks
        check "workflow: executeChild hit -> returns child result"
          (Right (Right (BC.pack "child-result")) :: Either Suspended (Either J.JournalError BSTEST.ByteString))
          res
+
+  -- Crucible.Eval.Replay tests
+
+  , check "replay: settle collects diverged ops, passes values through"
+      ([1,2,3] :: [Int], 2 :: Int)
+      (let (vals, ds) = runPureEff (runReplayEval (do
+              a <- settle (J.Replayed (1 :: Int))
+              b <- settle (J.Diverged (J.Divergence (J.mkKey "op" ["1"])) 2)
+              c <- settle (J.Diverged (J.Divergence (J.mkKey "op" ["2"])) 3)
+              pure [a, b, c]))
+       in (vals, length ds))
+
+  , check "replay: divergence keys collected in order"
+      [J.mkKey "op" ["1"], J.mkKey "op" ["2"]]
+      (map J.dKey (snd (runPureEff (runReplayEval (do
+         _ <- settle (J.Diverged (J.Divergence (J.mkKey "op" ["1"])) ())
+         settle (J.Diverged (J.Divergence (J.mkKey "op" ["2"])) ()))))))
+
+  , do -- end-to-end replay-to-eval: changed code diverges on the new op only
+       let ident0 = J.JournalIdentity "twin" "" "v1" "2026-06-15T00:00:00Z"
+           keyA   = J.mkKey "twin" ["a"]
+           keyB   = J.mkKey "twin" ["b"]
+           -- original code recorded only keyA
+           j = J.insertEntry keyA (encInt 42) (J.emptyJournal ident0)
+       -- replay: keyA hits (Replayed), keyB misses (Diverged under Signal)
+       -- runEff . runErrorNoCallStack @JournalError . runReplayEval :: Either JournalError ((a, b), [Divergence])
+       outcome <- runEff (EE.runErrorNoCallStack @J.JournalError
+                    (runReplayEval (do
+                      oa <- J.replayFrom j J.Signal keyA decInt (pure (42 :: Int))
+                      ob <- J.replayFrom j J.Signal keyB decInt (pure (99 :: Int))
+                      a  <- settle oa
+                      b  <- settle ob
+                      pure (a, b))))
+       let divKeys = fmap (map J.dKey . snd) outcome
+       check "replay: end-to-end — only new/changed op is a divergence"
+         (Right [keyB] :: Either J.JournalError [J.CassetteKey])
+         divKeys
+
+  , do got <- ddmin (\sub -> pure (5 `elem` sub)) [1..8 :: Int]
+       check "ddmin: reduces to the single required element" [5 :: Int] got
+
+  , do got <- ddmin (\sub -> pure (sum sub >= 10)) [1..8 :: Int]
+       check "ddmin: result is minimal-ish and still reproduces" True (sum got >= 10 && length got < 8)
+
+  , do got <- ddmin (\_ -> pure True) ([] :: [Int])
+       check "ddmin: empty input is a no-op" ([] :: [Int]) got
   ]
