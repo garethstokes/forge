@@ -11,7 +11,7 @@ import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Text (encodeToLazyText)
 import Data.Foldable (toList)
 import Data.List (intersperse, nub, sort)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
@@ -182,7 +182,8 @@ graderTabPanel :: RunDetailDto -> MetricDto -> View Model Action
 graderTabPanel d mc =
   div_ [ P.class_ "grader-tab" ]
     ( graderDetailSection mc
-    : [ calibCard s | s <- d.calibration, s.graderName == mc.graderName, s.graderVersion == mc.graderVersion ] )
+    : map calibCard (mergeSeries
+        [ s | s <- d.calibration, s.graderName == mc.graderName, s.graderVersion == mc.graderVersion ]) )
 
 runHeader :: RunSummaryDto -> View Model Action
 runHeader r =
@@ -592,35 +593,80 @@ breakdownChart mc =
           , span_ [ P.class_ "ci" ]  [ text (ciCol b.stderr) ]
           , span_ [ P.class_ "n" ]   [ text (msShow b.count) ] ] ]
 
--- | One grader version's calibration: headline κ bar + verdict, sparkline,
--- and the secondary precision/recall/agreement line. Reused by the run-detail
--- section and (later) the cross-run view.
-calibCard :: CalibrationSeriesDto -> View Model Action
-calibCard s =
+-- | Collapse a grader version's live/stored calibration series into one card.
+-- Stored is canonical (persisted verdicts); the note says how the live re-run
+-- compared. One mode -> stands alone.
+mergeSeries :: [CalibrationSeriesDto] -> [(CalibrationSeriesDto, Maybe MisoString)]
+mergeSeries ss = [ collapse grp | grp <- groups ]
+  where
+    keyOf s = (s.graderName, s.graderVersion)
+    groups  = [ [ s | s <- ss, keyOf s == k ] | k <- nub (map keyOf ss) ]
+    collapse grp =
+      let stored  = listToMaybe [ s | s <- grp, s.mode == "stored" ]
+          live    = listToMaybe [ s | s <- grp, s.mode == "live" ]
+          primary = fromMaybe (head grp) stored
+          note = case (stored, live) of
+            (Just st, Just lv)
+              | abs (st.latest.kappa - lv.latest.kappa) < 0.005 ->
+                  Just "\10003 live re-run matched the stored verdicts"
+              | otherwise ->
+                  Just ("live re-run differs: \954 " <> fmtD lv.latest.kappa
+                        <> " (n=" <> msShow lv.latest.measured <> ")")
+            (Nothing, Just _) -> Just "from a live re-run (verdicts not persisted)"
+            _                 -> Nothing
+      in (primary, note)
+
+-- | One grader version's calibration card: leads with a plain-language "so
+-- what" verdict, then the κ bar, sparkline, a compact details line, and the
+-- live/stored note.
+calibCard :: (CalibrationSeriesDto, Maybe MisoString) -> View Model Action
+calibCard (s, mNote) =
   div_ [ P.class_ "calib-card" ]
-    [ div_ [ P.class_ "calib-head" ]
-        [ span_ [ P.class_ "gname" ] [ text (ms s.graderName <> " v" <> msShow s.graderVersion) ]
-        , span_ [ P.class_ ("kind " <> ms s.graderKind) ] [ text (ms s.graderKind) ]
-        , span_ [ P.class_ "mode" ] [ text (ms s.mode) ]
-        ]
-    , kappaBar s.latest
-    , div_ [ P.class_ "calib-f1" ]
-        [ text ("balanced-F1 " <> fmtD s.latest.balancedF1
-                <> " (met " <> fmtD s.latest.passF1
-                <> " \183 not-met " <> fmtD s.latest.failF1 <> ")") ]
-    , calibSpark s.trend
-    , div_ [ P.class_ "calib-sub" ]
-        [ text ("fail precision " <> fmtD s.latest.failPrecision
-                <> " \183 fail recall " <> fmtD s.latest.failRecall
-                <> " \183 agreement " <> pct s.latest.agreement
-                <> " \183 n=" <> msShow s.latest.measured
-                <> (if s.latest.judgeErrors > 0
-                      then " \183 " <> msShow s.latest.judgeErrors <> " judge errors" else ""))
-        ]
-    , div_ [ P.class_ "calib-band" ]
-        [ text ("\954 " <> fmtD s.latest.kappa <> " \8212 \8220" <> ms s.latest.band
-                <> "\8221 on the Landis\8211Koch scale") ]
-    ]
+    (  div_ [ P.class_ "calib-head" ]
+         [ span_ [ P.class_ "gname" ] [ text (ms s.graderName <> " v" <> msShow s.graderVersion) ]
+         , span_ [ P.class_ ("kind " <> ms s.graderKind) ] [ text (ms s.graderKind) ] ]
+    :  soWhatBlock s.latest
+    :  kappaBar s.latest
+    :  calibSpark s.trend
+    :  div_ [ P.class_ "calib-details" ]
+         [ text ("\954 " <> fmtD s.latest.kappa <> " (CI " <> fmtD s.latest.kappaLow
+                 <> "\8211" <> fmtD s.latest.kappaHigh <> ") \183 agreement " <> pct s.latest.agreement
+                 <> " \183 bal-F1 " <> fmtD s.latest.balancedF1
+                 <> " \183 fail prec " <> fmtD s.latest.failPrecision
+                 <> " / recall " <> fmtD s.latest.failRecall
+                 <> " \183 n=" <> msShow s.latest.measured
+                 <> " \183 \8220" <> ms s.latest.band <> "\8221"
+                 <> (if s.latest.judgeErrors > 0
+                       then " \183 " <> msShow s.latest.judgeErrors <> " judge errors" else "")) ]
+    :  [ div_ [ P.class_ "calib-note" ] [ text n ] | Just n <- [mNote] ] )
+
+-- | The plain-language verdict: a prescriptive headline (driven by the trust
+-- verdict + κ) and a one-sentence read of the failure-detection behaviour.
+soWhatBlock :: MetaEvalDto -> View Model Action
+soWhatBlock me =
+  div_ [ P.class_ ("calib-sowhat " <> tierClass) ]
+    [ div_ [ P.class_ "sw-head" ] [ text (tierIcon <> " " <> headline) ]
+    , div_ [ P.class_ "sw-body" ] [ text body ] ]
+  where
+    (tierClass, tierIcon, headline)
+      | me.trusted      = ("ok",   "\10003", "Trustworthy — can score unsupervised")
+      | me.kappa >= 0.4 = ("warn", "\9888", "Use with review — not reliable enough to run alone")
+      | otherwise       = ("bad",  "\10007", "Not reliable — don't use this grader to score")
+    failPart
+      | me.failRecall >= 0.8 && me.failPrecision < 0.65 =
+          "Catches ~" <> pctOf me.failRecall <> " of real failures, but ~"
+          <> pctOf (1 - me.failPrecision) <> " of the failures it flags are false alarms."
+      | me.failPrecision >= 0.8 && me.failRecall < 0.65 =
+          "When it flags a failure it's usually right, but it misses ~"
+          <> pctOf (1 - me.failRecall) <> " of real failures."
+      | otherwise =
+          "Failure calls are fairly balanced (precision " <> fmtD me.failPrecision
+          <> ", recall " <> fmtD me.failRecall <> ")."
+    body = failPart <> " Agrees with humans " <> ms me.band
+           <> " (\954 " <> fmtD me.kappa <> " of 1.0)."
+
+pctOf :: Double -> MisoString
+pctOf x = msShow (round (x * 100) :: Int) <> "%"
 
 -- | κ value + 95% CI on a 0–1 track with a trust-threshold tick at 0.6 and a
 -- verdict driven by the CI lower bound.
@@ -672,7 +718,7 @@ calibrationView m =
       : runsTabBar CalibrationR
       : div_ [ P.class_ "calib-legend" ] [ text "\954 measures judge\8211human agreement beyond chance; the 0.6 tick is the trust threshold." ]
       : if null ss then [ p_ [ P.class_ "empty" ] [ text "no calibration runs yet." ] ]
-        else map calibCard ss )
+        else map calibCard (mergeSeries ss) )
 
 nsHint :: Text -> MisoString
 nsHint n = case n of

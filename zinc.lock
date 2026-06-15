@@ -375,7 +375,7 @@ depends = ["OneTuple", "indexed-traversable", "tagged", "unordered-containers", 
 [[locked]]
 name = "integer-conversion"
 vendored = "0.1.1"
-sha256 = "sha256:7d21999a091607b9ef55839b151bf856f14cd86c837263953822e071bd9a02a5"
+sha256 = "sha256:dc3ccfafd75820bbb1e6018455a4d949e9e1dd02182b8c6a066777bfb259f982"
 depends = ["primitive"]
 
 [[locked]]

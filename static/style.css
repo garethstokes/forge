@@ -313,9 +313,19 @@ td.pick input { cursor: pointer; }
 .calib-spark .thr { stroke: var(--muted); stroke-width: .5; stroke-dasharray: 2 2; }
 .calib-spark .pt { fill: var(--accent); }
 .calib-spark .pt.cur { fill: #1a7f4b; }
-.calib-sub { font-size: .8rem; color: var(--muted); }
-.calib-band { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
-.calib-f1 { font-size: .82rem; color: var(--fg); margin: .15rem 0 .35rem; font-variant-numeric: tabular-nums; }
+.calib-details { font-size: .78rem; color: var(--muted); margin-top: .35rem; font-variant-numeric: tabular-nums; }
+.calib-note { font-size: .78rem; color: var(--muted); margin-top: .3rem; }
+
+/* Plain-language "so what" verdict at the top of a calibration card. */
+.calib-sowhat { border-radius: 7px; padding: .5rem .65rem; margin-bottom: .6rem; border: 1px solid var(--line); }
+.calib-sowhat.ok   { background: #f0fbf4; border-color: #cdedd8; }
+.calib-sowhat.warn { background: #fff8ec; border-color: #f2e2c2; }
+.calib-sowhat.bad  { background: #fdf1f1; border-color: #f3d2d2; }
+.calib-sowhat .sw-head { font-weight: 600; font-size: .9rem; }
+.calib-sowhat.ok   .sw-head { color: #166534; }
+.calib-sowhat.warn .sw-head { color: #92600c; }
+.calib-sowhat.bad  .sw-head { color: #991b1b; }
+.calib-sowhat .sw-body { font-size: .82rem; color: var(--fg); margin-top: .25rem; line-height: 1.45; }
 .nav-link { color: var(--accent); text-decoration: none; font-size: .9rem; }
 .nav-link:hover { text-decoration: underline; }
 .calib-page .empty { color: var(--muted); padding: .5rem 0; font-size: .9rem; }
