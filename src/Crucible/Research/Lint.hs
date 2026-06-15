@@ -88,7 +88,9 @@ lintStale n facts pages = concat <$> mapM check pages
     check :: Page meta -> Eff es [Finding]
     check p = do
       out <- vote True (defaultJudgeOpts :: JudgeOpts) { votes = n }
-               ("The page conflicts with or is out of date relative to these current facts:\n" <> facts)
+               ("Pass ONLY if the page makes a claim that the current facts below show to be wrong or out of date. "
+                 <> "If the page is unrelated to these facts, or is consistent with them, do not pass.\n\n"
+                 <> "Current facts:\n" <> facts)
                p.body
       pure $ case out of
         Decided True why _ _ _ -> [Stale p.slug why]
