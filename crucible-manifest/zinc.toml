@@ -10,8 +10,9 @@ depends = ["base", "text", "bytestring", "crucible", "manifest", "manifest-core"
 [build.test.spec]
 source-dirs = ["test"]
 main = "Spec.hs"
+other-modules = ["Conformance"]
 ghc-options = ["-lpq", "-threaded"]
-depends = ["base", "text", "crucible", "crucible-manifest", "manifest", "manifest-core"]
+depends = ["base", "text", "crucible", "crucible-manifest", "manifest", "manifest-core", "directory", "filepath"]
 
 [dependencies.crucible]
 path = ".."

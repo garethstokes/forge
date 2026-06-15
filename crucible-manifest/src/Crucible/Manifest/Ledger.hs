@@ -18,6 +18,7 @@ module Crucible.Manifest.Ledger
   , migrateLedger
   ) where
 
+import Data.List (sortOn)
 import Data.Proxy (Proxy (..))
 
 import Manifest
@@ -109,5 +110,5 @@ ledgerStoreManifest pool = LedgerStore
       pure ()
 
   , doListReady = withSession pool $
-      selectWhere @WorkItem [#state ==. Ready]
+      sortOn ((.wid) :: WorkItem -> WorkId) <$> selectWhere @WorkItem [#state ==. Ready]
   }
