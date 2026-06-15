@@ -66,6 +66,25 @@ history for free. A later session reading the same directory sees the earlier
 pages. `index` lists the `.md` files on disk, which may include a file whose
 head no longer decodes.
 
+### The backend handle
+
+Both interpreters are now thin wrappers over a *thick backend handle* — a
+`ResearchStore meta` record holding one `IO` action per operation
+(`doRead`/`doWrite`/`doIndex`/`doSearch`/`doLog`) — run by `runResearchWith`:
+
+```haskell
+runResearchWith :: (IOE :> es) => ResearchStore meta -> Eff (Research meta : es) a -> Eff es a
+researchStoreDir   :: JSONCodec meta -> FilePath -> ResearchStore meta   -- the on-disk backend
+researchStoreState :: IORef [Page meta] -> IORef [Text] -> ResearchStore meta  -- in-memory, in IO
+```
+
+`runResearchDir mc dir = runResearchWith (researchStoreDir mc dir)`. The handle
+is the seam where persistence becomes a *parameter* of the interpreter rather
+than a fresh interpreter per backend: a future Postgres backend ships a
+`researchStoreManifest` in a satellite package and plugs into the same
+`runResearchWith`, with no database dependency in crucible-core. The pure
+`runResearchState` is kept for fast IO-free property tests.
+
 ## Grounding-gated writes
 
 A page is only as trustworthy as the write that created it. `writeGrounded`
