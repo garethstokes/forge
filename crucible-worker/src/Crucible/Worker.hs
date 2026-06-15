@@ -17,6 +17,7 @@ module Crucible.Worker
   ( WorkflowDef (..)
   , RunResult (..)
   , runOnce
+  , unkeyablePending
   ) where
 
 import Data.Text (Text)
@@ -30,6 +31,8 @@ import Crucible.Journal
   ( Journal
   , JournalStore (..)
   , JournalError
+  , CassetteKey (..)
+  , ActivityKind (..)
   )
 
 import Crucible.Workflow
@@ -45,6 +48,7 @@ import Crucible.Manifest.Journal
   , journalStoreManifest
   , completeExecution
   , suspendTimer
+  , pendingIntents
   )
 
 -- | A workflow definition the worker can run.
@@ -118,3 +122,18 @@ runOnce pool who lease env def loadInput = do
         Right (Right o) -> do
           completeExecution pool eid
           pure (Just (Completed o))
+
+-- | Return the 'CassetteKey's of activities that recorded an intent but no
+-- result AND are 'Unkeyable' — i.e. they cannot be made exactly-once.
+--
+-- These represent crashed-mid-flight side effects that cannot be safely
+-- retried (no deterministic idempotency key). 'Keyable' and 'Idempotent'
+-- pending intents are omitted because they are safe to re-run (the idem key
+-- deduplicates / the op is inherently idempotent).
+--
+-- Callers can surface this list to an alert sink; the exact alerting strategy
+-- is out of scope for the worker itself.
+unkeyablePending :: Pool -> Int -> IO [CassetteKey]
+unkeyablePending pool eid = do
+  ps <- pendingIntents pool eid
+  pure [ k | (k, Unkeyable) <- ps ]

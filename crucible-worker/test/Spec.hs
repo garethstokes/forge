@@ -8,7 +8,7 @@
 import Control.Exception (SomeException, try, evaluate)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
-import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
+import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Text (Text)
 import System.Exit (exitFailure, exitSuccess)
 import System.IO (hPutStrLn, stderr)
@@ -23,9 +23,12 @@ import Crucible.Journal
   , JournalError
   , MissPolicy (..)
   , ReplayOutcome (..)
+  , ActivityKind (..)
+  , IdemKey (..)
   , mkKey
   , recordTo
   , replayFrom
+  , recordActivity
   )
 import Crucible.Manifest.Journal
   ( migrateJournal
@@ -34,11 +37,13 @@ import Crucible.Manifest.Journal
   , listReadyExecutions
   , executionStatus
   , fireDueTimers
+  , pendingIntents
   )
 import Crucible.Worker
   ( WorkflowDef (..)
   , RunResult (..)
   , runOnce
+  , unkeyablePending
   )
 import Crucible.Workflow
   ( Workflow
@@ -123,6 +128,9 @@ ident0 = JournalIdentity "test-3-activity" "" "v1" "2026-06-15T00:00:00Z"
 
 identSleep :: JournalIdentity
 identSleep = JournalIdentity "test-durable-sleep" "" "v1" "2026-06-15T00:00:00Z"
+
+identExactlyOnce :: JournalIdentity
+identExactlyOnce = JournalIdentity "test-exactly-once" "" "v1" "2026-06-15T00:00:00Z"
 
 -- ---------------------------------------------------------------------------
 -- Fixed WorkflowEnv for tests
@@ -311,6 +319,53 @@ workerTests =
         -- Execution is completed
         st2 <- executionStatus pool eid
         assertEq "execution completed after resume" (Just ("completed" :: Text)) st2
+
+  , Test "exactly-once: deterministic idem key + unkeyable pending observability" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid   <- createExecution pool identExactlyOnce
+        store <- journalStoreManifest pool eid
+
+        -- (1) Run a Keyable activity to completion; capture the IdemKey it receives.
+        capturedA <- newIORef (Nothing :: Maybe IdemKey)
+        _ <- runEff (recordActivity store Keyable (mkKey "charge" []) "charge" encInt
+                       (\idem -> liftIO (writeIORef capturedA (Just idem)) >> pure (1 :: Int)))
+        idem1 <- readIORef capturedA
+
+        -- Completed → not pending (has a result row).
+        p1 <- pendingIntents pool eid
+        assertEq "completed charge not pending" True
+          (all ((/= mkKey "charge" []) . fst) p1)
+
+        -- (2) Re-run the SAME key on a fresh store (same db, same eid):
+        --     the IdemKey is derived solely from the CassetteKey bytes, so it
+        --     must be identical across calls — proving deterministic deduplication.
+        capturedB <- newIORef (Nothing :: Maybe IdemKey)
+        store2    <- journalStoreManifest pool eid
+        _ <- runEff (recordActivity store2 Keyable (mkKey "charge" []) "charge" encInt
+                       (\idem -> liftIO (writeIORef capturedB (Just idem)) >> pure (1 :: Int)))
+        idem2 <- readIORef capturedB
+        assertEq "keyable idem key deterministic across re-runs" idem1 idem2
+
+        -- (3) Simulate a crashed-mid-flight Unkeyable activity:
+        --     record the intent but do NOT append a result (simulates crash after
+        --     side effect, before the result is journaled).
+        jsIntent store (mkKey "email" []) "email" Unkeyable
+        -- (no jsAppend → the "email" key has an intent row but no result row)
+
+        -- unkeyablePending must surface the crashed email key.
+        unk <- unkeyablePending pool eid
+        assertEq "unkeyablePending surfaces the crashed email"
+          [mkKey "email" []] unk
+
+        -- pendingIntents must also include it (with Unkeyable kind).
+        pend <- pendingIntents pool eid
+        assertEq "pendingIntents includes the email intent" True
+          (any ((== mkKey "email" []) . fst) pend)
+
+        -- The completed "charge" key must NOT appear in pendingIntents.
+        assertEq "pendingIntents does not include completed charge" True
+          (all ((/= mkKey "charge" []) . fst) pend)
   ]
 
 -- ---------------------------------------------------------------------------
