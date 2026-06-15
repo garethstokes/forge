@@ -365,18 +365,20 @@ gradeBlock humanByCrit g =
                  in [ span_ [ P.class_ ("agree " <> if agrees then "ok" else "fail") ]
                         [ text (if agrees then "agrees" else "disagrees") ] ]
 
--- | A human consensus label: a verdict-chip header tagged "human consensus"
--- (so it reads as ground truth, not a model grade) over the criterion text.
--- Same card/padding as 'gradeBlock'; the criterion is pre-wrapped so its
--- rubric bullets keep their line breaks.
+-- | A human consensus label: the gold human verdict on a rubric criterion.
+-- Leads with an explicit MET / NOT MET verdict (the human's actual answer),
+-- then shows the criterion it answers, clearly labelled and de-emphasised so
+-- it doesn't read as unanswered instructions.
 labelBlock :: CriterionLabelDto -> View Model Action
 labelBlock l =
   div_ [ P.class_ "grade label" ]
     [ div_ [ P.class_ "grade-head" ]
-        ( span_ [ P.class_ (if l.human then "m ok" else "m fail") ] [ text (if l.human then "✓" else "✗") ]
-        : strong_ [] [ text "human consensus" ]
+        ( strong_ [] [ text "human consensus" ]
+        : span_ [ P.class_ ("verdict " <> if l.human then "ok" else "fail") ]
+            [ text (if l.human then "✓ met" else "✗ not met") ]
         : [ span_ [ P.class_ "src" ] [ text (ms s) ] | Just s <- [l.source] ] )
-    , div_ [ P.class_ "crit-text" ] [ text (ms l.criterion) ] ]
+    , div_ [ P.class_ "crit-label" ] [ text "rubric criterion" ]
+    , div_ [ P.class_ "crit-text muted" ] [ text (ms l.criterion) ] ]
 
 -- | A judge that errored on this example during meta-eval. Same card as a
 -- grade so it lines up with the blocks above it.

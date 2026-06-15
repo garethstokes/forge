@@ -249,7 +249,11 @@ td.pick input { cursor: pointer; }
 
 /* Human consensus label + judge-error blocks: reuse the .grade card so they
    share padding with model grades; criterion text keeps its line breaks. */
-.example .label .m.ok { color:#166534; } .example .label .m.fail { color:#991b1b; }
+.example .label .verdict { font-size:11px; font-weight:600; border-radius:999px; padding:1px 9px; }
+.example .label .verdict.ok { background:#dcfce7; color:#166534; }
+.example .label .verdict.fail { background:#fee2e2; color:#991b1b; }
+.example .crit-label { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-top:9px; }
+.example .crit-label + .crit-text { margin-top:2px; }
 .example .judge-err .m.warn { color:#9a6700; }
 .example .grade-head .src { margin-left:auto; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
 .example .crit-text { white-space:pre-wrap; font-size:12px; line-height:1.5; color:#3a4254; margin-top:7px; }
