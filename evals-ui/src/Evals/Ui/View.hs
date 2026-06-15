@@ -275,6 +275,7 @@ outputCell expandedKeys k mtext merr =
 exampleView :: Model -> Int -> Text -> View Model Action
 exampleView m _ _ =
   remoteView (_exampleM m) $ \d ->
+    let humanByCrit = [ (l.criterion, l.human) | l <- d.labels ] in
     div_ [ P.class_ "example" ]
       [ breadcrumb [ orgCrumb m, ("runs", Just runsHash)
                    , ("run #" <> msShow d.runId, Just (runHash d.runId))
@@ -292,7 +293,7 @@ exampleView m _ _ =
                   , exSection "Response" [ responseBlock d.responseText d.responseError ] ]
               , div_ [ P.class_ "ex-side" ]
                   [ exSection "Grades"
-                      (  map gradeBlock d.grades
+                      (  map (gradeBlock humanByCrit) d.grades
                       ++ map labelBlock d.labels
                       ++ map judgeErrorBlock d.judgeErrors ) ] ] ] ]
   where
@@ -331,8 +332,12 @@ responseBlock _ (Just e)       = div_ [ P.class_ "cell-error" ] [ text (ms e) ]
 responseBlock (Just t) Nothing = pre_ [ P.class_ "io" ] [ text (ms t) ]
 responseBlock Nothing Nothing  = div_ [ P.class_ "muted" ] [ text "–" ]
 
-gradeBlock :: GradeDto -> View Model Action
-gradeBlock g =
+-- | A model grade. @humanByCrit@ maps a criterion to its human gold verdict
+-- (from this example's consensus labels); when a criterion is labelled, the
+-- judge's verdict gets an "agrees / disagrees" badge — the per-example
+-- calibration signal.
+gradeBlock :: [(Text, Bool)] -> GradeDto -> View Model Action
+gradeBlock humanByCrit g =
   div_ [ P.class_ "grade" ]
     ( div_ [ P.class_ "grade-head" ]
         [ strong_ [] [ text (ms g.graderName) ], text (" v" <> msShow g.graderVersion)
@@ -345,9 +350,17 @@ gradeBlock g =
     verdictRow c =
       div_ [ P.class_ "cr" ]
         [ span_ [ P.class_ (if c.met then "m ok" else "m fail") ] [ text (if c.met then "✓" else "✗") ]
-        , span_ [ P.class_ "ctxt" ] [ text (ms c.criterion), span_ [ P.class_ "why" ] [ text (ms c.explanation) ] ]
+        , span_ [ P.class_ "ctxt" ]
+            ( text (ms c.criterion)
+            : agreeBadge c
+            ++ [ span_ [ P.class_ "why" ] [ text (ms c.explanation) ] ] )
         , span_ [ P.class_ "crit-tags" ] [ span_ [ P.class_ "tag" ] [ text (ms t) ] | t <- c.tags ]
         , span_ [ P.class_ "earn" ] [ text (if c.met then "+" <> fmtD c.points else "0 / " <> fmtD c.points) ] ]
+    agreeBadge c = case lookup c.criterion humanByCrit of
+      Nothing -> []
+      Just h  -> let agrees = h == c.met
+                 in [ span_ [ P.class_ ("agree " <> if agrees then "ok" else "fail") ]
+                        [ text (if agrees then "agrees" else "disagrees") ] ]
 
 -- | A human consensus label: a verdict-chip header tagged "human consensus"
 -- (so it reads as ground truth, not a model grade) over the criterion text.
