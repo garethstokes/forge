@@ -63,7 +63,7 @@ import qualified Crucible.Research as Research
 import Crucible.Research.Grounded (writeGrounded, defaultGroundGate, GroundingOutcome (..))
 import Crucible.Research.Lint (lintWiki, LintOpts (..), defaultLintOpts, linkedPairs)
 import Crucible.Research.Tools (researchTools, researchInstructions)
-import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
+import Crucible.Memory (MemoryKind (..), MemoryItemT (..), MemoryItem, MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
 import Crucible.Memory.Eval (memoryLift, liftDelta)
 import Crucible.Skill.Multimodal (callMedia)

@@ -68,7 +68,7 @@ import qualified Crucible.LLM.CallLog as CallLog
 import Crucible.Eval.Metrics (normMatch, tokenF1, rougeL)
 import Crucible.Embed (embed, runEmbedScripted, cosine, consistency)
 import qualified Crucible.Embed as Embed
-import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItem (..), Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile, runMemoryWith, newMemoryStorePure, memoryStoreFile)
+import Crucible.Memory (MemoryKind (..), MemoryId (..), Provenance (..), MemoryDraft (..), MemoryItemT (..), MemoryItem, Query (..), remember, recall, forget, recallAs, runMemoryScripted, runMemoryPure, runMemoryFile, runMemoryWith, newMemoryStorePure, memoryStoreFile)
 import Crucible.Memory.Consolidate (ConsolidationOp (..), ConsolidationPlan (..), consolidationSkill, applyPlan, unaddressed, consolidate)
 import Crucible.Memory.Eval (renderMemories, withMemories, memoryLift, liftDelta)
 import System.IO (openTempFile, hClose)

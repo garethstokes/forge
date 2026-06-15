@@ -33,7 +33,7 @@ import Crucible.Codec (JSONCodec, object, field, optField, str, int, list', bima
 import Crucible.Decode (DecodeError)
 import Crucible.LLM (LLM)
 import Crucible.Memory
-  ( Memory, MemoryItem (..), MemoryId (..), MemoryKind (..), MemoryDraft (..)
+  ( Memory, MemoryItemT (..), MemoryItem, MemoryId (..), MemoryKind (..), MemoryDraft (..)
   , Provenance (..), Query, recall, remember, forget
   , memoryItemCodec, memoryKindCodec )
 import Crucible.Skill (Skill, skill, call)

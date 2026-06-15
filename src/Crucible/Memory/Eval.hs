@@ -26,7 +26,7 @@ import Crucible.Decode (DecodeError)
 import Crucible.Embed (Embed)
 import Crucible.Eval (Report (..))
 import Crucible.LLM (LLM)
-import Crucible.Memory (MemoryItem (..))
+import Crucible.Memory (MemoryItemT (..), MemoryItem)
 import Crucible.Skill (Skill (..), Instruction (..), withPreamble, testSkill)
 
 -- | Render memory contents as a labelled preamble block. Content only;

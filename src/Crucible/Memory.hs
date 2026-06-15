@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -24,11 +26,14 @@ module Crucible.Memory
   , MemoryId (..)
   , Provenance (..)
   , MemoryDraft (..)
-  , MemoryItem (..)
+  , MemoryItemT (..)
+  , MemoryItem
+  , MemoryEntry (..)
   , Query (..)
   , Memory (..)
   , remember, recall, forget
   , recallAs
+  , queryLive
   , runMemoryScripted
   , runMemoryPure
   , runMemoryFile
@@ -42,12 +47,15 @@ module Crucible.Memory
   ) where
 
 import Control.Exception (IOException, try)
+import Data.Functor.Identity (Identity)
 import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.List (sortOn)
 import Data.Ord (Down (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import GHC.Generics (Generic)
+import Manifest.Core.Table (Field, Pk)
 
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
@@ -81,15 +89,20 @@ data MemoryDraft = MemoryDraft
   }
   deriving (Eq, Show)
 
-data MemoryItem = MemoryItem
-  { memId     :: MemoryId
-  , kind      :: MemoryKind
-  , content   :: Text
-  , tags      :: [Text]
-  , source    :: Provenance
-  , createdAt :: Int
+data MemoryItemT f = MemoryItem
+  { memId     :: Field f (Pk MemoryId)
+  , kind      :: Field f MemoryKind
+  , content   :: Field f Text
+  , tags      :: Field f [Text]
+  , source    :: Field f Provenance
+  , createdAt :: Field f Int
   }
-  deriving (Eq, Show)
+  deriving Generic
+
+type MemoryItem = MemoryItemT Identity
+
+deriving instance Eq   (MemoryItemT Identity)
+deriving instance Show (MemoryItemT Identity)
 
 data Query = Query
   { needle   :: Text
