@@ -2762,6 +2762,18 @@ main = runChecks
       (let j = J.emptyJournal (J.JournalIdentity "wf" "" "v1")
            v = toJSONVia J.journalCodec j
        in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
+  , check "journal: codec round-trips non-UTF8 binary result + input bytes"
+      (Right True)
+      (let j = J.insertEntry (J.mkKey "blob" [BSTEST.pack [0,255,0x1f]]) (BSTEST.pack [0,255,31,128,7])
+                 (J.emptyJournal (J.JournalIdentity "wf" (BSTEST.pack [200,0,255]) "v1"))
+           v = toJSONVia J.journalCodec j
+       in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
+  , check "journal: duplicate key is last-write-wins on lookup (history retained)"
+      (Just "v2", 2 :: Int)
+      (let k = J.mkKey "op" ["a"]
+           j = J.insertEntry k (BC.pack "v2") (J.insertEntry k (BC.pack "v1")
+                 (J.emptyJournal (J.JournalIdentity "wf" "" "v1")))
+       in (BC.unpack . J.eResult <$> J.lookupEntry k j, length (J.jEntries j)))
   , check "journal: record-then-replay-changed surfaces exactly the new op as Diverged"
       (Right [J.Replayed (6 :: Int), J.Diverged (J.Divergence (J.mkKey "triple" ["3"])) 9] :: Either J.JournalError [J.ReplayOutcome Int])
       (let ident = J.JournalIdentity "calc" "" "v1"

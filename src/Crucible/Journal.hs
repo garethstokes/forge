@@ -61,6 +61,9 @@ import Crucible.Codec (JSONCodec, object, field, list', str, int, bimapCodec, di
 newtype CassetteKey = CassetteKey ByteString
   deriving (Eq, Ord, Show)
 
+-- | Build a 'CassetteKey' from an op name and normalized argument parts, joined
+-- by the 0x1f unit separator. Parts must not themselves contain 0x1f (the key is
+-- not escaped or length-prefixed), or two distinct part lists could collide.
 mkKey :: Text -> [ByteString] -> CassetteKey
 mkKey op parts = CassetteKey (BS.intercalate sep (TE.encodeUtf8 op : parts))
   where sep = BS.pack [0x1f]  -- ASCII unit separator
@@ -93,12 +96,17 @@ data Journal = Journal
 emptyJournal :: JournalIdentity -> Journal
 emptyJournal ident = Journal ident []
 
+-- | The most recent entry recorded under a key (last write wins), or 'Nothing'.
+-- The full append-only list is retained (ordering/audit); only the read picks the
+-- latest, so a re-'record' of the same key is served correctly on replay.
 lookupEntry :: CassetteKey -> Journal -> Maybe Entry
-lookupEntry k = L.lookup k . jEntries
+lookupEntry k = L.foldl' (\acc (k', e) -> if k' == k then Just e else acc) Nothing . jEntries
 
--- | Append an entry under a key, assigning the next sequence number. Last write
--- wins on a duplicate key; a caller that genuinely repeats one op with
--- identical normalized args disambiguates by adding a call index to the parts.
+-- | Append an entry under a key, assigning the next sequence number. The list is
+-- append-only (history retained); 'lookupEntry' returns the latest entry for a
+-- key, so a duplicate key is last-write-wins on read. Callers should still key
+-- each op call uniquely — disambiguate a genuine repeat of one op with identical
+-- normalized args by adding a call-index part — so replay is unambiguous.
 insertEntry :: CassetteKey -> ByteString -> Journal -> Journal
 insertEntry k bs j = j { jEntries = jEntries j ++ [(k, Entry (length (jEntries j)) bs)] }
 
@@ -130,7 +138,8 @@ data JournalError
   deriving (Eq, Show)
 
 -- | Run a live action and append its encoded result under the key. The record
--- path of live execution.
+-- path of live execution. The key should be unique per op call (see 'mkKey'):
+-- recording the same key twice retains both entries but replay serves the latest.
 record :: (State Journal :> es)
        => CassetteKey -> (a -> ByteString) -> Eff es a -> Eff es a
 record k enc act = do
