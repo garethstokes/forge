@@ -186,7 +186,7 @@ The example program records two activities through `store` (recordTo) keyed by o
 ---
 
 ## Self-Review
-- **Spec coverage:** Task 1 = Layer A (IO JournalStore, recordTo/replayFrom, in-memory store, jiCapturedAt). Task 2 = Layer B (3 tables, journalStoreManifest, claim-with-lease, transactional append, exactly-once intent rows). Task 3 = Layer C (crucible-worker package, loop, crash/resume acceptance test).
-- **Decisions honoured:** crucible-worker new member (Q5); intent/result via `jsIntent` + activity-kind (Q1, idempotent/keyable built, un-keyable documented); IO sink + captured-at (bead). Pure Phase-0 path untouched.
+- **Spec coverage:** Task 1 = Layer A (IO JournalStore, recordTo/replayFrom, in-memory store, jiCapturedAt). Task 2 = Layer B (3 tables, journalStoreManifest, claim-with-lease, transactional append; intent rows DEFERRED — not built). Task 3 = Layer C (crucible-worker package, loop, crash/resume acceptance test).
+- **Decisions honoured:** crucible-worker new member (Q5); IO sink + captured-at (bead). Pure Phase-0 path untouched. **Intent/result + activity-kind + idempotency keys (Q1) are DEFERRED to a follow-on slice — NOT built in Phase 1.** Phase 1 ships only *basic durable resume*: committed activities replay; the uncommitted tail is at-least-once on resume.
 - **Risk handling:** Entry-op decision = (b) store-tracks-op (minimize Phase-0 churn); base64 Text columns (no bytea DbType); member→member path dep validated in Task 3 Step 1; simulated crash via IORef counter oracle.
 - **Placeholder scan:** the skeletons mark where the implementer fills exact manifest API calls (claim SQL, withTransaction) — all reference shipped equivalents (`ledgerStoreManifest`), not invented APIs.

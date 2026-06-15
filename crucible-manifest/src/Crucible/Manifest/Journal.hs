@@ -29,6 +29,7 @@ module Crucible.Manifest.Journal
   , claimExecution
   , heartbeat
   , completeExecution
+  , executionStatus
   , listReadyExecutions
   ) where
 
@@ -160,9 +161,6 @@ createExecution pool ident = withSession pool $ withTransaction $ do
 --                journal_entry rows; base64-decodes all byte columns.
 -- * 'jsAppend' — inserts a journal_entry row (next seq = current count); the
 --                @op@ argument is stored in @je_op@; result is base64-encoded.
--- * 'jsIntent' — inserts an intent row with an empty result (for exactly-once
---                semantics: the intent is recorded before the side effect so a
---                crash-then-resume knows the op was started).
 --
 -- Each call runs in its own 'withSession' (autocommit). For Phase 1's
 -- single-workflow slice this is acceptable; wrap in 'withTransaction' if you
@@ -195,11 +193,6 @@ journalStoreManifest pool eid = pure JournalStore
   , jsAppend = \(CassetteKey k) op bs -> withSession pool $ do
       es <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
       _  <- add (JournalEntryRow 0 eid (length es) (b64 k) op (b64 bs) :: JournalEntryRow)
-      pure ()
-
-  , jsIntent = \(CassetteKey k) op -> withSession pool $ do
-      es <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
-      _  <- add (JournalEntryRow 0 eid (length es) (b64 k) op "" :: JournalEntryRow)
       pure ()
   }
 
@@ -255,6 +248,12 @@ completeExecution pool eid = withSession pool $ withTransaction $ do
     "UPDATE run_queue SET rq_state = 'done' WHERE rq_exec = $1"
     [ encode eid ]
   pure ()
+
+-- | The status of an execution ('running'/'completed'/'failed'), or Nothing if absent.
+executionStatus :: Pool -> Int -> IO (Maybe Text)
+executionStatus pool eid = withSession pool $ do
+  exs <- selectWhere [#exId ==. eid] :: Db [ExecutionRow]
+  pure (case exs of (e:_) -> Just (exStatus e); [] -> Nothing)
 
 -- | List execution ids currently in the 'ready' state (for polling / tests).
 listReadyExecutions :: Pool -> IO [Int]

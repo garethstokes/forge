@@ -176,14 +176,11 @@ replay pol k dec live = do
 -- IO journal store ----------------------------------------------------------
 
 -- | A thick handle: one IO action per journal op (the durable seam, à la
--- 'MemoryStore'). 'jsAppend' persists one recorded result; 'jsIntent' records
--- an activity intent (started, no result yet) before its side effect, for
--- exactly-once on resume. The in-memory store ignores op\/intent; the Postgres
--- store in crucible-manifest uses them.
+-- 'MemoryStore'). 'jsAppend' persists one recorded result. The in-memory store
+-- ignores op; the Postgres store in crucible-manifest stores it in a column.
 data JournalStore = JournalStore
   { jsLoad   :: IO Journal
   , jsAppend :: CassetteKey -> Text -> ByteString -> IO ()   -- ^ key, op, encoded result
-  , jsIntent :: CassetteKey -> Text -> IO ()                 -- ^ key, op
   }
 
 -- | Run a live action and durably append its encoded result. The store-backed
@@ -217,15 +214,13 @@ replayFrom j pol k dec live = case lookupEntry k j of
 
 -- | In-memory store over an 'IORef' 'Journal' (testable; the Phase-3 eval
 -- consumer uses it). Ignores op (the 'Entry' type has no op field — that is
--- tracked by the Postgres store's column) and intent (in-memory needs no
--- separate intent rows).
+-- tracked by the Postgres store's column).
 newInMemoryJournalStore :: Journal -> IO JournalStore
 newInMemoryJournalStore j0 = do
   ref <- newIORef j0
   pure JournalStore
     { jsLoad   = readIORef ref
     , jsAppend = \k _op bs -> modifyIORef' ref (insertEntry k bs)
-    , jsIntent = \_ _ -> pure ()
     }
 
 -- Wire codec ----------------------------------------------------------------

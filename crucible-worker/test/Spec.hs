@@ -31,6 +31,7 @@ import Crucible.Manifest.Journal
   , createExecution
   , journalStoreManifest
   , listReadyExecutions
+  , executionStatus
   )
 import Crucible.Worker
   ( WorkflowDef (..)
@@ -158,8 +159,11 @@ workerTests =
         -- 3. RESUME with a fresh worker
         let def = fullWorkflowDef counter
         let lease = "2099-01-01T00:00:00Z"
-        meid <- runOnce pool "worker-1" lease def (const (pure ()))
-        assertEq "runOnce claimed and ran the execution" (Just eid) meid
+        res <- runOnce pool "worker-1" lease def (const (pure ()))
+        case res of
+          Just (Right _) -> pure ()
+          other          -> assertEq "runOnce claimed and ran the execution to success"
+                              "Just (Right _)" (show (fmap (fmap (const ())) other))
 
         -- 4. Assertions
         --    counter == 3 total: 2 from partial + 1 from resume (only step3 ran live)
@@ -175,6 +179,33 @@ workerTests =
         j     <- jsLoad store
         let entries = length (jEntries j)
         assertEq "final journal has 3 entries" 3 entries
+
+  , Test "worker: an errored run is NOT silently completed (stays 'running')" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+        eid <- createExecution pool ident0
+
+        -- A workflow whose program returns Left: replayFrom with Fail against an
+        -- empty journal misses → throwError (MissError …) → runEff yields Left.
+        let failingDef = WorkflowDef
+              { wdType    = "test-3-activity"
+              , wdProgram = \() j _store -> do
+                  _ <- replayFrom j Fail (mkKey "absent" []) decInt (pure (0 :: Int))
+                  pure (0 :: Int)
+              }
+        let lease = "2099-01-01T00:00:00Z"
+        res <- runOnce pool "worker-err" lease failingDef (const (pure ()))
+
+        -- (a) runOnce ran but reported the error
+        case res of
+          Just (Left _) -> pure ()
+          other         -> assertEq "runOnce returned Just (Left _)"
+                            "Just (Left _)" (show (fmap (fmap (const ())) other))
+
+        -- (b) the execution is NOT completed — it must remain 'running'
+        st <- executionStatus pool eid
+        assertEq "errored execution stays 'running' (not 'completed')"
+          (Just ("running" :: Text)) st
   ]
 
 -- ---------------------------------------------------------------------------

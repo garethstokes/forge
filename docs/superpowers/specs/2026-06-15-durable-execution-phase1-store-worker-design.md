@@ -12,9 +12,10 @@ Phase 0 gave a pure, in-memory `Journal` + `record`/`replay`. Phase 1 makes it
 worker runs the program backed by that store, and if the worker dies mid-run a
 fresh worker reclaims the execution and **replay-to-resumes** — rebuilding
 in-flight state from the journal and continuing past the head, with at most the
-uncommitted tail lost. End state (the acceptance): *a workflow survives a worker
-kill and resumes, re-running nothing it had already committed.* Single workflow
-type; orchestration (timers/signals/children) is Phase 2.
+uncommitted tail lost. End state (the acceptance): **basic durable resume** — *a
+workflow survives a worker kill and resumes, re-running nothing it had already
+committed.* Single workflow type; orchestration (timers/signals/children) is
+Phase 2.
 
 ## Decisions resolved here
 
@@ -23,11 +24,15 @@ type; orchestration (timers/signals/children) is Phase 2.
   `crucible-manifest`. It is the bridge that knows both the substrate and the
   store. (Rejected: manifest-side — wrong layer, manifest knows no effects;
   app-level — every app would re-implement the loop.)
-- **Q1 — exactly-once → intent/result + idempotency key**, with an honest
-  at-least-once tail for un-keyable side effects (per the design doc). See
-  "Exactly-once" below. In Phase 1 we build the intent/result discipline and the
-  per-activity *activity-kind* annotation; the un-keyable residual is documented
-  as at-least-once (no fabricated guarantee).
+- **Q1 — exactly-once → intent/result + idempotency key is DEFERRED to a
+  follow-on slice.** Phase 1 does **not** build the intent/result discipline,
+  the per-activity *activity-kind* annotation, or idempotency keys. The
+  Phase-1 guarantee is the more modest **basic durable resume**: *committed
+  activities replay (their side effects are not re-run); the last in-flight
+  activity whose result was not journaled before a crash is re-run on resume
+  (at-least-once for that tail).* The full exactly-once design (intent/result +
+  activity-kind + idempotency key) is retained below as **future work**. See
+  "Exactly-once" below.
 - **Journal composition → an IO `JournalStore` thick handle** (the bead's "IO
   journal sink"), mirroring the persistence epic's `MemoryStore`/`LedgerStore`
   pattern. crucible gains a store-backed journaling path; the Postgres
@@ -115,35 +120,45 @@ The claim/run/heartbeat/recover loop:
 The worker is generic over a `WorkflowDef` (input type, output type, the program
 `input -> Eff (… : IOE) output`); Phase 1 ships one example def for the test.
 
-## Exactly-once (the crux — Q1)
+## Exactly-once (the crux — Q1) — DEFERRED to a follow-on slice
 
+**Phase-1 guarantee (what is actually built): basic durable resume.**
 - **Transactional journaling** gives exactly-once for the *journal+queue* writes
   (one txn).
-- **The activity's own side effect is not transactional with its journal.**
-  Adopt **intent-then-result**: `recordTo` first `jsIntent`s a row (key, started),
-  performs the effect, then appends the result. On resume, if intent is present
-  but result absent, the activity *may* have run — policy by **activity kind**
-  (crucible exposes the annotation; the app declares it per op):
+- **The activity's own side effect is not transactional with its journal.** In
+  Phase 1, `recordTo` runs the effect and then appends the result. So:
+  *committed activities replay (their side effects are not re-run); the last
+  in-flight activity whose result was not journaled before a crash is re-run on
+  resume — at-least-once for that uncommitted tail.* Phase 1 stops here.
+
+**Future work (the full exactly-once design — NOT built in Phase 1):**
+Adopt **intent-then-result**: `recordTo` first records an intent row (key,
+started), performs the effect, then appends the result. On resume, if intent is
+present but result absent, the activity *may* have run — policy by **activity
+kind** (crucible exposes the annotation; the app declares it per op):
   - **idempotent** → re-run safely;
   - **non-idempotent + keyable** → pass an **idempotency key** derived from the
     `CassetteKey` so the downstream dedupes;
   - **un-keyable** → at-least-once, marked (no fabricated guarantee).
-  Phase 1 builds the intent/result rows + the activity-kind annotation and the
-  idempotent / keyable paths; the un-keyable tail is documented, not solved.
+A follow-on slice builds the intent/result rows + the activity-kind annotation
+and the idempotent / keyable paths; the un-keyable tail is documented, not solved.
 
 ## Phase 1 slice boundary (what's IN vs deferred)
 
-**IN:** the three tables + migrations; `journalStoreManifest`; the IO
-`recordTo`/`replayFrom` + in-memory `JournalStore` in crucible; the
-`crucible-worker` claim/run/heartbeat/recover loop for **one** example workflow
-type; intent/result exactly-once (idempotent + keyable); an **ephemeral-Postgres
+**IN (basic durable resume):** the three tables + migrations;
+`journalStoreManifest`; the IO `recordTo`/`replayFrom` + in-memory
+`JournalStore` in crucible; the `crucible-worker` claim/run/recover loop for
+**one** example workflow type (completing an execution only on success; an
+errored run is left claimed for lease-expiry reclaim); an **ephemeral-Postgres
 test that simulates a crash** (run a workflow partway recording activities, drop
 the in-memory runtime, reclaim with a fresh worker, assert it resumes — replaying
 the pre-crash activities (side effects NOT re-run) and completing).
 
-**DEFERRED (Phase 2/3):** `Crucible.Workflow` orchestration (timers, signals,
-children, retry, journaled now/newId); a real multi-process worker pool + a
-background heartbeat thread; the eval consumer.
+**DEFERRED (follow-on slice / Phase 2/3):** intent/result exactly-once
+(intent rows + activity-kind annotation + idempotency keys — the full Q1
+design above); `Crucible.Workflow` orchestration (timers, signals, children,
+retry, journaled now/newId); a real multi-process worker pool + a background
+heartbeat thread; the eval consumer.
 
 ## Testing
 
