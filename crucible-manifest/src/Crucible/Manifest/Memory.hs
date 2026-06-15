@@ -28,7 +28,8 @@ import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 
 import Manifest
-  ( DbType (..), dimap
+  ( DbType (..), dimap, lmap, refine
+  , DecodeError (..)
   , Entity (..), Table (..)
   , withSession
   , add, selectWhere
@@ -37,8 +38,10 @@ import Manifest
 import Manifest.Core.Table (Field, Pk)
 import Manifest.Postgres (Pool)
 
+import qualified Data.Text as T
 import Crucible.Codec (encodeText)
 import Crucible.Decode (decodeLLM)
+import qualified Crucible.Decode as Dec
 import Crucible.Memory
   ( MemoryDraft (..)
   , MemoryEntry (..)
@@ -61,32 +64,32 @@ instance DbType MemoryId where
   dbType = dimap (\(MemoryId i) -> i) MemoryId (dbType @Int)
 
 instance DbType MemoryKind where
-  dbType = dimap encKind decKind (dbType @Text)
+  dbType = refine decKind (lmap encKind (dbType @Text))
     where
       encKind Episodic   = "episodic"
       encKind Semantic   = "semantic"
       encKind Procedural = "procedural"
       decKind t = case t of
-        "episodic"   -> Episodic
-        "semantic"   -> Semantic
-        "procedural" -> Procedural
-        other        -> error ("DbType MemoryKind: unknown value: " <> show other)
+        "episodic"   -> Right Episodic
+        "semantic"   -> Right Semantic
+        "procedural" -> Right Procedural
+        other        -> Left (DecodeError ("DbType MemoryKind: unknown value: " <> show other))
 
 instance DbType Provenance where
-  dbType = dimap encodeProv decodeProv (dbType @Text)
+  dbType = refine decodeProv (lmap encodeProv (dbType @Text))
     where
       encodeProv = encodeText provenanceCodec
       decodeProv t = case decodeLLM provenanceCodec t of
-        Right p  -> p
-        Left err -> error ("DbType Provenance: " <> show err)
+        Right p                    -> Right p
+        Left (Dec.DecodeError m _) -> Left (DecodeError ("DbType Provenance: " <> T.unpack m))
 
 instance DbType [Text] where
-  dbType = dimap encTags decTags (dbType @Text)
+  dbType = refine decTags (lmap encTags (dbType @Text))
     where
       encTags ts = TE.decodeUtf8 . LB.toStrict . A.encode $ ts
       decTags t  = case A.eitherDecode (LB.fromStrict (TE.encodeUtf8 t)) of
-        Right ts -> ts
-        Left err -> error ("DbType [Text]: " <> err)
+        Right ts -> Right ts
+        Left err -> Left (DecodeError ("DbType [Text]: " <> err))
 
 -- ---------------------------------------------------------------------------
 -- Entity instances

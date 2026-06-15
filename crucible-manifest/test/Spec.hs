@@ -52,6 +52,10 @@ assertBool msg ok = if ok then pure () else ioError (userError msg)
 itemContent :: MemoryItem -> Text
 itemContent (MemoryItem _ _ c _ _ _) = c
 
+-- | Extract the (memId, createdAt) pair from a MemoryItem positionally.
+itemIdAndCreated :: MemoryItem -> (MemoryId, Int)
+itemIdAndCreated (MemoryItem mid _ _ _ _ ca) = (mid, ca)
+
 -- | Unwrap the three store operations from a MemoryStore.
 storeOps :: MemoryStore
          -> ( MemoryDraft -> IO MemoryId
@@ -102,4 +106,18 @@ main = runTests
       _ <- remember (MemoryDraft Semantic  ("c" :: Text) ["t"] Curated)
       r3 <- recall (Query "" ["t"] 1)
       assertEq "budget 1" (["c"] :: [Text]) (map itemContent r3)
+
+  , Test "recalled createdAt mirrors the assigned id" $ withEphemeralDb $ \pool -> do
+      migrateMemory pool
+      let (remember, recall, _forget) = storeOps (memoryStoreManifest pool)
+      _ <- remember (MemoryDraft Semantic  ("a" :: Text) ["t"] Curated)
+      _ <- remember (MemoryDraft Episodic  ("b" :: Text) ["t"] Curated)
+      _ <- remember (MemoryDraft Semantic  ("c" :: Text) ["t"] Curated)
+      -- The most recent item ("c") is returned first.
+      rc <- recall (Query "" ["t"] 1)
+      case rc of
+        (it:_) -> do
+          let (mid, ca) = itemIdAndCreated it
+          assertEq "createdAt mirrors id" mid (MemoryId ca)
+        [] -> ioError (userError "expected at least one recalled item")
   ]
