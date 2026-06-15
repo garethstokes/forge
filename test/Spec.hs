@@ -81,7 +81,7 @@ import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), Agents, spaw
 import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
-import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
+import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, runLedgerWith, newLedgerStorePure, ledgerStoreFile, workItemCodec)
 import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), Research, readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, runResearchWith, researchStoreState, linkCodec, pageCodec, slugCodec)
 import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))
@@ -2352,6 +2352,26 @@ main = runChecks
        removeFile path
        check "ledger file: a claim is visible in a later session" (True, ([] :: [WorkId]))
          (ok, map ((.wid) :: WorkItem -> WorkId) ready)
+  , do store <- newLedgerStorePure
+       got <- runEff $ runLedgerWith store $ do
+                w  <- Ledger.record "task-1"
+                c1 <- Ledger.claim w "alice"
+                c2 <- Ledger.claim w "bob"   -- already claimed -> False
+                rs <- Ledger.listReady
+                pure (c1, c2, length rs)
+       check "ledger: runLedgerWith pure handle records/claims (CAS) and lists" (True, False, 0 :: Int) got
+  , do (path2, h2) <- openTempFile "/tmp" "crucible-ledger-parity.jsonl"
+       hClose h2
+       let prog = do w  <- Ledger.record "A"
+                     _  <- Ledger.claim w "w1"
+                     w2 <- Ledger.record "B"
+                     rs <- Ledger.listReady
+                     pure (map ((.wid) :: WorkItem -> WorkId) rs, w, w2)
+       fromFile <- runEff (runLedgerWith (ledgerStoreFile path2) prog)
+       removeFile path2 `catch` \(_ :: SomeException) -> pure ()
+       store2 <- newLedgerStorePure
+       fromPure <- runEff (runLedgerWith store2 prog)
+       check "ledger: file and pure handles agree (record/claim/listReady)" fromFile fromPure
   , do ref <- newIORef (Nothing :: Maybe (Either AgentFailure Text))
        let child :: SubAgent '[Chat.Chat, IOE] Text Text
            child = subAgent "child" C.str C.str "child instruction" []
