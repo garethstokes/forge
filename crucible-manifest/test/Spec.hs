@@ -26,6 +26,15 @@ import Crucible.Ledger
   , LedgerStore (..)
   )
 import Crucible.Manifest.Ledger (ledgerStoreManifest, migrateLedger)
+import Crucible.Research
+  ( Page (..)
+  , Slug (..)
+  , Link (..)
+  , LinkType (..)
+  , ResearchStore (..)
+  )
+import Crucible.Manifest.Research (researchStoreManifest, migrateResearch)
+import qualified Crucible.Codec as C
 
 -- ---------------------------------------------------------------------------
 -- Tiny harness (no hspec dep)
@@ -182,4 +191,43 @@ main = runTests
       s.doComplete i2
       items <- s.doListReady
       assertEq "1 ready after complete" 1 (length items)
+
+  -- Research tests
+  , Test "research: doRead returns written page" $ withEphemeralDb $ \pool -> do
+      migrateResearch pool
+      let rs = researchStoreManifest C.str pool
+      rs.doWrite (Page (Slug "a") "Alpha" [Link (Slug "b") Extends] "alpha body" ("m" :: Text))
+      rs.doWrite (Page (Slug "b") "Beta"  [] "beta body" ("n" :: Text))
+      mpa <- rs.doRead (Slug "a")
+      assertEq "read page a"
+        (Just (Page (Slug "a") "Alpha" [Link (Slug "b") Extends] "alpha body" ("m" :: Text)))
+        mpa
+
+  , Test "research: overwrite replaces title/body/links/meta" $ withEphemeralDb $ \pool -> do
+      migrateResearch pool
+      let rs = researchStoreManifest C.str pool
+      rs.doWrite (Page (Slug "a") "Alpha" [Link (Slug "b") Extends] "alpha body" ("m" :: Text))
+      rs.doWrite (Page (Slug "a") "Alpha2" [] "new body" ("m2" :: Text))
+      mpa <- rs.doRead (Slug "a")
+      case mpa of
+        Nothing -> ioError (userError "overwrite: page not found")
+        Just pg -> do
+          assertEq "overwrite title" "Alpha2" pg.title
+          assertEq "overwrite body"  "new body" pg.body
+
+  , Test "research: doIndex returns sorted slugs" $ withEphemeralDb $ \pool -> do
+      migrateResearch pool
+      let rs = researchStoreManifest C.str pool
+      rs.doWrite (Page (Slug "a") "Alpha" [] "alpha body" ("m" :: Text))
+      rs.doWrite (Page (Slug "b") "Beta"  [] "beta body"  ("n" :: Text))
+      idx <- rs.doIndex
+      assertEq "index" [Slug "a", Slug "b"] idx
+
+  , Test "research: doSearch finds matching pages" $ withEphemeralDb $ \pool -> do
+      migrateResearch pool
+      let rs = researchStoreManifest C.str pool
+      rs.doWrite (Page (Slug "a") "Alpha" [] "alpha body" ("m" :: Text))
+      rs.doWrite (Page (Slug "b") "Beta"  [] "beta body"  ("n" :: Text))
+      results <- rs.doSearch "beta"
+      assertEq "search beta" [Slug "b"] results
   ]

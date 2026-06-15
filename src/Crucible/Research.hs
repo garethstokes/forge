@@ -22,6 +22,7 @@
 module Crucible.Research
   ( Slug (..)
   , mkSlug
+  , unSlug
   , LinkType (..)
   , Link (..)
   , Page (..)
@@ -34,6 +35,7 @@ module Crucible.Research
   , researchStoreState
   , runResearchDir
   , slugCodec, linkTypeCodec, linkCodec, pageCodec
+  , matchesQuery
   ) where
 
 import Control.Exception (IOException, try)
