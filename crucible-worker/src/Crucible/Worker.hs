@@ -28,9 +28,10 @@ module Crucible.Worker
   ) where
 
 import Control.Monad (replicateM_)
+import Data.ByteString (ByteString)
 import Data.Text (Text)
 
-import Effectful (Eff, IOE, runEff, liftIO)
+import Effectful (Eff, IOE, runEff)
 import Effectful.Error.Static (Error, runErrorNoCallStack)
 
 import Manifest.Postgres (Pool)
@@ -39,6 +40,7 @@ import Crucible.Journal
   ( Journal
   , JournalStore (..)
   , JournalError
+  , JournalIdentity (..)
   , CassetteKey (..)
   , ActivityKind (..)
   )
@@ -55,6 +57,9 @@ import Crucible.Manifest.Journal
   ( claimExecution
   , journalStoreManifest
   , completeExecution
+  , completeExecutionWith
+  , createChildExecution
+  , suspendChild
   , suspendTimer
   , suspendSignal
   , fireDueTimers
@@ -70,6 +75,10 @@ import Crucible.Manifest.Journal
 -- 'Error' 'Suspended', so programs can call 'now', 'durableSleep', 'recordTo',
 -- 'replayFrom', etc.
 --
+-- 'wdEncodeOutput' converts the program's output value to 'ByteString' so the
+-- worker can persist it (via 'completeExecutionWith') and propagate it to a
+-- waiting parent execution when this is a child.
+--
 -- REPLAY-SAFETY: any domain activity that can execute *before* a suspend point
 -- (a 'durableSleep'/'awaitSignal'/'executeChild') MUST be wrapped in 'replayFrom'
 -- so that on resume it is served from the journal instead of re-run. Bare
@@ -77,8 +86,9 @@ import Crucible.Manifest.Journal
 -- it is replay-safe ONLY for steps strictly after the last suspend. ('now'/'newId'
 -- are journaled by the interpreter and are always replay-safe.)
 data WorkflowDef i o = WorkflowDef
-  { wdType    :: Text
-  , wdProgram :: i -> Journal -> JournalStore -> Eff '[Workflow, Error JournalError, Error Suspended, IOE] o
+  { wdType         :: Text
+  , wdProgram      :: i -> Journal -> JournalStore -> Eff '[Workflow, Error JournalError, Error Suspended, IOE] o
+  , wdEncodeOutput :: o -> ByteString
   }
 
 -- | The outcome of a single 'runOnce' call for a claimed execution.
@@ -130,10 +140,16 @@ runOnce pool who lease env def loadInput = do
         Left (Suspended (WaitSignal k name)) -> do
           suspendSignal pool eid k name
           pure (Just (SuspendedRun (WaitSignal k name)))
+        Left (Suspended (WaitChild k ctype cinput)) -> do
+          capAt <- weNow env
+          let childIdent = JournalIdentity ctype cinput "v1" capAt
+          _ <- createChildExecution pool childIdent eid k
+          suspendChild pool eid k
+          pure (Just (SuspendedRun (WaitChild k ctype cinput)))
         Right (Left e) ->
           pure (Just (Errored e))   -- leave claimed; lease expiry → reclaim for retry
         Right (Right o) -> do
-          completeExecution pool eid
+          completeExecutionWith pool eid (wdEncodeOutput def o)
           pure (Just (Completed o))
 
 -- | Run every currently-ready execution once (to completion or suspension),

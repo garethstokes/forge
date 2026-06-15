@@ -8,6 +8,7 @@
 import Control.Exception (SomeException, try, evaluate)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
+import qualified Data.Text.Encoding as TE
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Text (Text)
 import System.Exit (exitFailure, exitSuccess)
@@ -36,6 +37,7 @@ import Crucible.Manifest.Journal
   , journalStoreManifest
   , listReadyExecutions
   , executionStatus
+  , executionInput
   , fireDueTimers
   , deliverSignal
   , pendingIntents
@@ -56,6 +58,7 @@ import Crucible.Workflow
   , now
   , durableSleep
   , awaitSignal
+  , executeChild
   )
 
 import Effectful (Eff, IOE, runEff, liftIO, (:>))
@@ -142,6 +145,9 @@ identSignal = JournalIdentity "test-await-signal" "" "v1" "2026-06-15T00:00:00Z"
 identPollLoop :: JournalIdentity
 identPollLoop = JournalIdentity "test-poll-loop" "" "v1" "2026-06-15T00:00:00Z"
 
+identExecuteChild :: JournalIdentity
+identExecuteChild = JournalIdentity "calc" "parent" "v1" "2026-06-15T00:00:00Z"
+
 -- ---------------------------------------------------------------------------
 -- Fixed WorkflowEnv for tests
 -- ---------------------------------------------------------------------------
@@ -161,12 +167,13 @@ fixedEnv = WorkflowEnv
 -- recordTo/replayFrom (Workflow ops are present in the row but unused here).
 fullWorkflowDef :: IORef Int -> WorkflowDef () Int
 fullWorkflowDef counter = WorkflowDef
-  { wdType    = "test-3-activity"
-  , wdProgram = \() j store -> do
+  { wdType         = "test-3-activity"
+  , wdProgram      = \() j store -> do
       v1 <- step counter store j "step1" 10
       v2 <- step counter store j "step2" 20
       v3 <- step counter store j "step3" 30
       pure (v1 + v2 + v3)
+  , wdEncodeOutput = encInt
   }
 
 workerTests :: [Test]
@@ -234,10 +241,11 @@ workerTests =
         -- The program is typed over the full Workflow effect stack; only
         -- replayFrom is used (Workflow ops are present in the row but unused).
         let failingDef = WorkflowDef
-              { wdType    = "test-3-activity"
-              , wdProgram = \() j _store -> do
+              { wdType         = "test-3-activity"
+              , wdProgram      = \() j _store -> do
                   _ <- replayFrom j Fail (mkKey "absent" []) decInt (pure (0 :: Int))
                   pure (0 :: Int)
+              , wdEncodeOutput = encInt
               }
         let lease = "2099-01-01T00:00:00Z"
         res <- runOnce pool "worker-err" lease fixedEnv failingDef (const (pure ()))
@@ -265,13 +273,14 @@ workerTests =
         -- The workflow: journal the current time, durable-sleep 10s, run a
         -- counted activity, return the journaled clock value.
         let sleepDef = WorkflowDef
-              { wdType    = "test-durable-sleep"
-              , wdProgram = \() j store -> do
+              { wdType         = "test-durable-sleep"
+              , wdProgram      = \() j store -> do
                   t <- now
                   durableSleep 10
                   _ <- recordTo store (mkKey "act" []) "act" encInt
                          (liftIO (modifyIORef' counter (+1)) >> pure (1 :: Int))
                   pure t
+              , wdEncodeOutput = TE.encodeUtf8
               }
         let lease = "2099-01-01T00:00:00Z"
 
@@ -386,12 +395,13 @@ workerTests =
 
         -- The workflow: await signal "go", record the payload as an activity output.
         let signalDef = WorkflowDef
-              { wdType    = "test-await-signal"
-              , wdProgram = \() j store -> do
+              { wdType         = "test-await-signal"
+              , wdProgram      = \() j store -> do
                   p <- awaitSignal "go"
                   _ <- recordTo store (mkKey "act" []) "act" id
                          (liftIO (writeIORef ran True) >> pure p)
                   pure p
+              , wdEncodeOutput = id
               }
         let lease = "2099-01-01T00:00:00Z"
 
@@ -457,13 +467,14 @@ workerTests =
         -- Using durableSleep 0 means wakeAt = weNow + 0 = weNow, so
         -- fireDueTimers pool weNow will satisfy (wakeAt <= weNow) and fire it.
         let pollDef = WorkflowDef
-              { wdType    = "test-poll-loop"
-              , wdProgram = \() j store -> do
+              { wdType         = "test-poll-loop"
+              , wdProgram      = \() j store -> do
                   t <- now
                   durableSleep 0
                   _ <- recordTo store (mkKey "act" []) "act" encInt
                          (liftIO (modifyIORef' counter (+1)) >> pure (1 :: Int))
                   pure t
+              , wdEncodeOutput = TE.encodeUtf8
               }
 
         -- A fixed env: weNow = some future time. wakeAt = weNow + 0s = weNow,
@@ -483,6 +494,92 @@ workerTests =
         -- Execution is completed
         st <- executionStatus pool eid
         assertEq "execution completed after pollRounds" (Just ("completed" :: Text)) st
+
+  , Test "worker: ExecuteChild — parent spawns child, child completes, result propagates to parent" $
+      withEphemeralDb $ \pool -> do
+        migrateJournal pool
+
+        -- The workflow def: branches on input.
+        -- "parent" → executeChild "calc" "child", returns "got:" <> result.
+        -- anything else → returns "child-result".
+        let childProg inp _j _store = case inp of
+              "parent" -> do
+                r <- executeChild "calc" "child"
+                pure ("got:" <> r)
+              _ -> pure "child-result"
+            def = WorkflowDef
+              { wdType         = "calc"
+              , wdProgram      = childProg
+              , wdEncodeOutput = id
+              }
+
+        -- Load each execution's own stored input from the DB.
+        let loadInput eid = executionInput pool eid
+
+        let lease = "2099-01-01T00:00:00Z"
+
+        -- ----------------------------------------------------------------
+        -- Step 1: create the parent execution with input "parent".
+        -- ----------------------------------------------------------------
+        eid <- createExecution pool identExecuteChild
+
+        -- ----------------------------------------------------------------
+        -- Step 2: first runOnce (parent) → hits executeChild → SuspendedRun.
+        -- ----------------------------------------------------------------
+        r1 <- runOnce pool "worker-child" lease fixedEnv def loadInput
+        case r1 of
+          Just (SuspendedRun (WaitChild _ ct ci)) -> do
+            assertEq "child type is 'calc'" "calc" ct
+            assertEq "child input is 'child'" "child" ci
+          other ->
+            ioError (userError ("step 2: expected SuspendedRun (WaitChild _ \"calc\" \"child\") but got: " <> show other))
+
+        -- A child execution should now be ready (and it's not the parent).
+        ready2 <- listReadyExecutions pool
+        case filter (/= eid) ready2 of
+          [cid] -> do
+            -- Child exists and is distinct from parent.
+            assertEq "child execution id differs from parent" True (cid /= eid)
+          other ->
+            ioError (userError ("step 2: expected one ready child exec, got: " <> show other))
+
+        -- Parent should be 'running' (waiting for child).
+        st2 <- executionStatus pool eid
+        assertEq "parent status is 'running' after suspend" (Just ("running" :: Text)) st2
+
+        -- ----------------------------------------------------------------
+        -- Step 3: second runOnce (claims the child) → child completes.
+        -- The child's completion propagates output into parent's journal
+        -- and re-queues the parent.
+        -- ----------------------------------------------------------------
+        r2 <- runOnce pool "worker-child" lease fixedEnv def loadInput
+        case r2 of
+          Just (Completed result) ->
+            assertEq "child output is 'child-result'" (BC.pack "child-result") result
+          other ->
+            ioError (userError ("step 3: expected Completed \"child-result\" but got: " <> show other))
+
+        -- After child completes, parent should be back in ready list.
+        ready3 <- listReadyExecutions pool
+        assertEq "parent is ready after child completes" [eid] ready3
+
+        -- ----------------------------------------------------------------
+        -- Step 4: third runOnce (resumes the parent) → parent completes.
+        -- ----------------------------------------------------------------
+        r3 <- runOnce pool "worker-child" lease fixedEnv def loadInput
+        case r3 of
+          Just (Completed result) ->
+            assertEq "parent output is 'got:child-result'" (BC.pack "got:child-result") result
+          other ->
+            ioError (userError ("step 4: expected Completed \"got:child-result\" but got: " <> show other))
+
+        -- Parent execution should be completed.
+        st4 <- executionStatus pool eid
+        assertEq "parent execution completed" (Just ("completed" :: Text)) st4
+
+        -- No more ready executions.
+        ready4 <- listReadyExecutions pool
+        assertEq "no ready executions after parent completes" [] ready4
   ]
 
 -- ---------------------------------------------------------------------------
