@@ -54,9 +54,8 @@ depends = ["aeson", "autodocodec", "scientific", "unordered-containers", "validi
 
 [[locked]]
 name = "base-orphans"
-repo = "https://github.com/haskell-compat/base-orphans"
-rev = "14f89082857f9b96180203116e21c1f0632c8eb4"
-sha256 = "sha256:ff9b73f7dc531e836e8fba4182eb84f0108f09f6fd435c8b63d02ab7997169bf"
+vendored = "0.9.4"
+sha256 = "sha256:d144b6dc9be81f222f77b463a13a07779482a9a25fd823c836587344bb6a2eb8"
 depends = []
 
 [[locked]]
@@ -314,7 +313,7 @@ depends = ["OneTuple", "indexed-traversable", "tagged", "unordered-containers", 
 [[locked]]
 name = "integer-conversion"
 vendored = "0.1.1"
-sha256 = "sha256:93bf8cb8d3f8550c4e677b343269d96f8cf185fe86932411516acd58cc90e97e"
+sha256 = "sha256:7d21999a091607b9ef55839b151bf856f14cd86c837263953822e071bd9a02a5"
 depends = ["primitive"]
 
 [[locked]]
@@ -328,6 +327,20 @@ name = "iproute"
 vendored = "1.7.15"
 sha256 = "sha256:d78e3c432221b9755a31b429b9714899b0279b40b0e5408da26f79f57cc38faf"
 depends = ["appar", "byteorder", "network"]
+
+[[locked]]
+name = "manifest"
+repo = "https://github.com/garethstokes/manifest.git"
+rev = "62f097c9dbb68a385aeb8551df68990e1da2bba2"
+sha256 = "sha256:83d6af7adaa87226597ed717732d236a5cddad8cb3bfb12a35ac48487affaf09"
+depends = ["autodocodec", "postgresql-libpq", "profunctors"]
+
+[[locked]]
+name = "manifest-core"
+repo = "https://github.com/garethstokes/manifest.git#manifest-core"
+rev = "62f097c9dbb68a385aeb8551df68990e1da2bba2"
+sha256 = "sha256:83d6af7adaa87226597ed717732d236a5cddad8cb3bfb12a35ac48487affaf09"
+depends = []
 
 [[locked]]
 name = "megaparsec"
@@ -386,8 +399,8 @@ depends = ["th-compat"]
 
 [[locked]]
 name = "os-string"
-vendored = "2.0.10"
-sha256 = "sha256:b5fbc1fd0f4a06e2f561c369b13a44d243fb8659c84dae2034ab9cc6ff4b76ca"
+vendored = "2.0.11"
+sha256 = "sha256:681f0919903760def5712dc94134c9a1245e8907e8fe0ae0aef4e5a06851b213"
 depends = []
 
 [[locked]]
@@ -397,10 +410,31 @@ sha256 = "sha256:c3fc5d68a238548220f601cdd136bb8158f5028c98ab7a1009f7cd17ac4b107
 depends = []
 
 [[locked]]
+name = "postgresql-libpq"
+repo = "https://github.com/haskellari/postgresql-libpq"
+rev = "a9122f8ecc11365a26a5489b3a2e1cdf64c0c661"
+sha256 = "sha256:c6207346aa8be1c0495bd3b62e5a3c1ba107bd7d09093b0fd12bd57eac5d4e2e"
+depends = ["postgresql-libpq-pkgconfig"]
+flags = { use-pkg-config = true }
+
+[[locked]]
+name = "postgresql-libpq-pkgconfig"
+vendored = "0.11"
+sha256 = "sha256:1e17fa82796625d3872fd3d068d108d8769fa107487fc6d6c23cb19cdb5f045e"
+depends = []
+system-libs = ["postgresql"]
+
+[[locked]]
 name = "primitive"
 vendored = "0.9.1.0"
 sha256 = "sha256:51d40598ea110819d5d89cb3ee3ed3501675875d9c4fe694bbdb021e98c6a631"
 depends = []
+
+[[locked]]
+name = "profunctors"
+vendored = "5.6.3"
+sha256 = "sha256:85706b286334a9c981be2d5769bcd32b45796a6b289f1f12b16c20318f4fd938"
+depends = ["base-orphans", "bifunctors", "comonad", "contravariant", "distributive", "tagged"]
 
 [[locked]]
 name = "ram"

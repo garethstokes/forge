@@ -3,7 +3,7 @@
 # coexist here (member ".") — a flat single-package layout: src/, app/, test/.
 
 [workspace]
-members = ["."]
+members = [".", "crucible-manifest"]
 ghc = "9.12.2"
 
 [package]
@@ -73,3 +73,19 @@ repo = "https://github.com/NorfairKing/autodocodec"
 
 [dependencies.neat-interpolation]
 repo = "https://github.com/nikita-volkov/neat-interpolation.git"
+
+[dependencies.manifest]
+repo = "https://github.com/garethstokes/manifest.git"
+rev = "62f097c9dbb68a385aeb8551df68990e1da2bba2"
+
+[dependencies.manifest-core]
+repo = "https://github.com/garethstokes/manifest.git#manifest-core"
+rev = "62f097c9dbb68a385aeb8551df68990e1da2bba2"
+
+[dependencies.postgresql-libpq]
+rev = "240147a5225b4e19e20abb9d1103e66b1b55b5a2"
+repo = "https://github.com/haskellari/postgresql-libpq"
+flags = { use-pkg-config = true }
+
+[dependencies.profunctors]
+repo = "https://github.com/ekmett/profunctors.git"
