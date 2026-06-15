@@ -81,7 +81,7 @@ import Crucible.Agents (SubAgent (..), subAgent, AgentFailure (..), Agents, spaw
 import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
-import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, runLedgerWith, newLedgerStorePure, ledgerStoreFile, workItemCodec)
+import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItemT (..), WorkItem, runLedgerState, runLedgerFile, runLedgerWith, newLedgerStorePure, ledgerStoreFile, workItemCodec)
 import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), Research, readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, runResearchWith, researchStoreState, linkCodec, pageCodec, slugCodec)
 import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))

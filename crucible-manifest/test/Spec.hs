@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 import Control.Exception (SomeException, try, evaluate)
 import Data.Text (Text)
@@ -17,6 +18,14 @@ import Crucible.Memory
   , Query (..)
   )
 import Crucible.Manifest.Memory (memoryStoreManifest, migrateMemory)
+import Crucible.Ledger
+  ( WorkId (..)
+  , WorkState (..)
+  , WorkItemT (..)
+  , WorkItem
+  , LedgerStore (..)
+  )
+import Crucible.Manifest.Ledger (ledgerStoreManifest, migrateLedger)
 
 -- ---------------------------------------------------------------------------
 -- Tiny harness (no hspec dep)
@@ -120,4 +129,57 @@ main = runTests
           let (mid, ca) = itemIdAndCreated it
           assertEq "createdAt mirrors id" mid (MemoryId ca)
         [] -> ioError (userError "expected at least one recalled item")
+
+  -- Ledger tests
+  , Test "ledger: ids are distinct and increasing" $ withEphemeralDb $ \pool -> do
+      migrateLedger pool
+      let s = ledgerStoreManifest pool
+      i1 <- s.doRecord "A"
+      i2 <- s.doRecord "B"
+      i3 <- s.doRecord "C"
+      assertBool "i1 < i2" (i1 < i2)
+      assertBool "i2 < i3" (i2 < i3)
+
+  , Test "ledger: listReady returns all three items Ready" $ withEphemeralDb $ \pool -> do
+      migrateLedger pool
+      let s = ledgerStoreManifest pool
+      _ <- s.doRecord "A"
+      _ <- s.doRecord "B"
+      _ <- s.doRecord "C"
+      items <- s.doListReady
+      assertEq "listReady count" 3 (length items)
+      let states = map (\(WorkItem _ _ st _) -> st) items
+      assertBool "all Ready" (all (== Ready) states)
+
+  , Test "ledger: claim CAS — first claim wins, second fails" $ withEphemeralDb $ \pool -> do
+      migrateLedger pool
+      let s = ledgerStoreManifest pool
+      i1 <- s.doRecord "A"
+      _ <- s.doRecord "B"
+      _ <- s.doRecord "C"
+      r1 <- s.doClaim i1 "alice"
+      assertBool "alice claimed" r1
+      r2 <- s.doClaim i1 "bob"
+      assertBool "bob rejected" (not r2)
+
+  , Test "ledger: claimed item absent from listReady" $ withEphemeralDb $ \pool -> do
+      migrateLedger pool
+      let s = ledgerStoreManifest pool
+      i1 <- s.doRecord "A"
+      _ <- s.doRecord "B"
+      _ <- s.doRecord "C"
+      _ <- s.doClaim i1 "alice"
+      items <- s.doListReady
+      assertEq "2 ready after claim" 2 (length items)
+
+  , Test "ledger: complete removes item from listReady" $ withEphemeralDb $ \pool -> do
+      migrateLedger pool
+      let s = ledgerStoreManifest pool
+      i1 <- s.doRecord "A"
+      i2 <- s.doRecord "B"
+      _ <- s.doRecord "C"
+      _ <- s.doClaim i1 "alice"
+      s.doComplete i2
+      items <- s.doListReady
+      assertEq "1 ready after complete" 1 (length items)
   ]

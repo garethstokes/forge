@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -20,7 +22,8 @@
 module Crucible.Ledger
   ( WorkId (..)
   , WorkState (..)
-  , WorkItem (..)
+  , WorkItemT (..)
+  , WorkItem
   , Ledger (..)
   , record, claim, complete, listReady
   , runLedgerState
@@ -35,10 +38,13 @@ module Crucible.Ledger
   ) where
 
 import Control.Exception (IOException, try)
+import Data.Functor.Identity (Identity)
 import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import GHC.Generics (Generic)
+import Manifest.Core.Table (Field, Pk)
 
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
@@ -47,7 +53,7 @@ import Effectful.State.Static.Local (runState, get, put, modify)
 import Crucible.Codec (JSONCodec, object, field, optField, enum, str, int, bimapCodec, dimapCodec, encodeText)
 import Crucible.Decode (decodeLLM)
 
-newtype WorkId = WorkId Int deriving (Eq, Show)
+newtype WorkId = WorkId Int deriving (Eq, Show, Ord)
 
 widInt :: WorkId -> Int
 widInt (WorkId i) = i
@@ -55,13 +61,17 @@ widInt (WorkId i) = i
 data WorkState = Ready | Claimed | Done
   deriving (Eq, Show)
 
-data WorkItem = WorkItem
-  { wid      :: WorkId
-  , payload  :: Text
-  , state    :: WorkState
-  , claimant :: Maybe Text
-  }
-  deriving (Eq, Show)
+data WorkItemT f = WorkItem
+  { wid      :: Field f (Pk WorkId)
+  , payload  :: Field f Text
+  , state    :: Field f WorkState
+  , claimant :: Field f (Maybe Text)
+  } deriving Generic
+
+type WorkItem = WorkItemT Identity
+
+deriving instance Eq   (WorkItemT Identity)
+deriving instance Show (WorkItemT Identity)
 
 data Ledger :: Effect where
   Record    :: Text -> Ledger m WorkId
