@@ -82,7 +82,8 @@ import Effectful.Concurrent (Concurrent, runConcurrent)
 import Crucible.Agents.Gate (Gate (..), gate, spawnGated)
 import qualified Crucible.Ledger as Ledger
 import Crucible.Ledger (WorkId (..), WorkState (Ready, Claimed), WorkItem (..), runLedgerState, runLedgerFile, workItemCodec)
-import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec)
+import Crucible.Research (Slug (..), mkSlug, LinkType (..), Link (..), Page (..), readPage, writePage, index, search, appendLog, runResearchState, runResearchDir, linkCodec, pageCodec, slugCodec)
+import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))
 
 -- Sample types for codec tests
@@ -2505,4 +2506,45 @@ main = runChecks
   , check "writeGrounded: defaultGroundGate fields"
       (1.0, 1 :: Int, CommitNoClaims)
       (defaultGroundGate.threshold, defaultGroundGate.votes, defaultGroundGate.onNoClaims)
+  -- Research.Tools: researchTools + researchInstructions
+  , let pageVal = object [ "slug" .= String "p", "title" .= String "P"
+                         , "links" .= ([] :: [Value]), "body" .= String "the body", "meta" .= String "" ]
+        expected = Page (Slug "p") "P" [] "the body" ("" :: Text)
+        (res, pages, _) = runPureEff (runResearchState []
+          (Tl.invoke (researchTools C.str !! 1) pageVal))
+    in check "researchTools: write_page lands the page"
+         (True, [expected])
+         (either (const False) (const True) res, pages)
+  , let known = Page (Slug "p") "P" [] "b" ("" :: Text)
+        (r1, _, _) = runPureEff (runResearchState [known]
+          (Tl.invoke (researchTools C.str !! 0) (object ["slug" .= String "p"])))
+        (r2, _, _) = runPureEff (runResearchState [known]
+          (Tl.invoke (researchTools C.str !! 0) (object ["slug" .= String "absent"])))
+        decodeRP v = case decodeLLM (C.nullable' (pageCodec C.str)) (C.encodeText C.anyValue v) of
+                       Right x -> Right x
+                       Left  _ -> Left ("decode error" :: Text)
+    in check "researchTools: read_page returns the page or null"
+         (Right (Just known), Right Nothing)
+         ( either (\_ -> Left ("tool error" :: Text)) decodeRP r1
+         , either (\_ -> Left ("tool error" :: Text)) decodeRP r2 )
+  , let p1 = Page (Slug "a") "Apple" [] "red fruit" ("" :: Text)
+        p2 = Page (Slug "b") "Boat" [] "floats" ("" :: Text)
+        (r, _, _) = runPureEff (runResearchState [p1, p2]
+          (Tl.invoke (researchTools C.str !! 2) (object ["query" .= String "fruit"])))
+        decodeSL v = case decodeLLM (C.list' slugCodec) (C.encodeText C.anyValue v) of
+                       Right x -> Right x
+                       Left  _ -> Left ("decode error" :: Text)
+    in check "researchTools: search_pages returns matching slugs"
+         (Right [Slug "a"])
+         (either (\_ -> Left ("tool error" :: Text)) decodeSL r)
+  , let pageVal = object [ "slug" .= String "x", "title" .= String "X"
+                         , "links" .= ([] :: [Value]), "body" .= String "recorded", "meta" .= String "" ]
+        expected = Page (Slug "x") "X" [] "recorded" ("" :: Text)
+        (_, pages, _) = runPureEff (runChatScripted
+          [ Turn "" [ToolUse "u1" "write_page" pageVal], Turn "\"done\"" [] ]
+          (runResearchState [] (runToolAgent (researchTools C.str) "record X")))
+    in check "researchTools: agent loop writes a page via write_page" [expected] pages
+  , check "researchInstructions: names the three tools"
+      True
+      (all (`T.isInfixOf` researchInstructions) ["read_page", "write_page", "search_pages"])
   ]

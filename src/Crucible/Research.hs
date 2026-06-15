@@ -29,7 +29,7 @@ module Crucible.Research
   , readPage, writePage, index, search, appendLog
   , runResearchState
   , runResearchDir
-  , slugCodec, linkTypeCodec, linkCodec
+  , slugCodec, linkTypeCodec, linkCodec, pageCodec
   ) where
 
 import Control.Exception (IOException, try)
@@ -137,6 +137,16 @@ linkTypeCodec = enum
 linkCodec :: JSONCodec Link
 linkCodec = object (Link <$> field "target" ((.target) :: Link -> Slug) slugCodec
                          <*> field "linkType" ((.linkType) :: Link -> LinkType) linkTypeCodec)
+
+-- | A full page codec (slug, title, links, body, meta); used by the Research
+-- tools and by callers serializing a page for a model.
+pageCodec :: JSONCodec meta -> JSONCodec (Page meta)
+pageCodec mc = object (Page
+  <$> field "slug"  ((.slug)  :: Page meta -> Slug)   slugCodec
+  <*> field "title" ((.title) :: Page meta -> Text)   str
+  <*> field "links" ((.links) :: Page meta -> [Link]) (list' linkCodec)
+  <*> field "body"  ((.body)  :: Page meta -> Text)   str
+  <*> field "meta"  ((.meta)  :: Page meta -> meta)   mc)
 
 -- The serialized page head (everything but the slug, which is the filename).
 data PageHead meta = PageHead { title :: Text, links :: [Link], meta :: meta }
