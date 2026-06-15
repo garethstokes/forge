@@ -107,9 +107,12 @@ staticHandler staticDir segments respond = do
   where
     unsafe s = s == ".." || T.isInfixOf ".." s || s == ""
 
+-- | Drop empty path segments (a trailing slash like @/acme/@ yields @[""]@),
+-- then default an empty path to the SPA index.
 normalise :: [T.Text] -> [T.Text]
-normalise [] = ["index.html"]
-normalise ps = ps
+normalise ps = case filter (not . T.null) ps of
+  [] -> ["index.html"]
+  xs -> xs
 
 contentType :: FilePath -> BS8.ByteString
 contentType path = case takeExtension path of

@@ -351,6 +351,7 @@ serverSpec = withEphemeralDb $ \pool -> do
   let staticDir = "test-static"
   createDirectoryIfMissing True staticDir
   writeFile (staticDir <> "/probe.css") "body { color: red; }"
+  writeFile (staticDir <> "/index.html") "<!doctype html><title>spa</title>"
   -- Seed the database: insert e2 BEFORE e1 so heap order != key order,
   -- ensuring the sort-by-key in the handler is actually exercised.
   (runId_, dvId, globexRunId) <- withSession pool $ do
@@ -550,6 +551,11 @@ serverSpec = withEphemeralDb $ \pool -> do
     expect "static probe.css content-type" $
       lookup hContentType (responseHeaders r7) == Just "text/css"
     expect "static probe.css body" (responseBody r7 == "body { color: red; }")
+    -- the SPA index serves under the slug both bare (/acme) and trailing-slash (/acme/)
+    rSpa  <- getReq "/acme"
+    rSpaS <- getReq "/acme/"
+    expect "SPA /acme serves index"  (statusCode (responseStatus rSpa)  == 200)
+    expect "SPA /acme/ serves index" (statusCode (responseStatus rSpaS) == 200)
     -- static file: missing file -> 404
     r8 <- getReq "/acme/missing.css"
     expect "static missing.css 404" (statusCode (responseStatus r8) == 404)
