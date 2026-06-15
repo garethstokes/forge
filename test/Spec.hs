@@ -2560,9 +2560,14 @@ main = runChecks
   , let pA = Page (Slug "a") "A" [Link (Slug "b") Relates] "aaaaa" ()
         pB = Page (Slug "b") "B" [] "bbbbb" ()
         pC = Page (Slug "c") "C" [] "ccccc" ()
-    in check "lint: linkedPairs only joined pairs; allPairs all"
-         (1 :: Int, 3 :: Int)
-         (length (linkedPairs [pA, pB, pC]), length (allPairs [pA, pB, pC]))
+    in check "lint: linkedPairs is only the joined pair; allPairs is all three"
+         ([(pA, pB)], [(pA, pB), (pA, pC), (pB, pC)])
+         (linkedPairs [pA, pB, pC], allPairs [pA, pB, pC])
+  , let pA = Page (Slug "a") "A" [Link (Slug "b") Relates] "aaaaa" ()
+        pB = Page (Slug "b") "B" [Link (Slug "a") Relates] "bbbbb" ()
+    in check "lint: no orphans and no broken links when every page is linked and resolvable"
+         (([] :: [Finding]), ([] :: [Finding]))
+         (orphans [pA, pB], brokenLinks [pA, pB])
   , let pA = Page (Slug "a") "A" [] "x" ()
         pB = Page (Slug "b") "B" [] "y" ()
     in check "lint: contradiction on a passing vote"
@@ -2574,6 +2579,12 @@ main = runChecks
     in check "lint: no contradiction on a failing vote"
          ([] :: [Finding])
          (runPureEff (runLLMScripted ["{\"why\":\"unrelated\",\"pass\":false}"]
+            (lintContradictions 1 [(pA, pB)])))
+  , let pA = Page (Slug "a") "A" [] "x" ()
+        pB = Page (Slug "b") "B" [] "y" ()
+    in check "lint: a judge failure invents no finding (empty script -> AllErrored)"
+         ([] :: [Finding])
+         (runPureEff (runLLMScripted []
             (lintContradictions 1 [(pA, pB)])))
   , let p = Page (Slug "a") "A" [] "the moon is made of cheese" ()
     in check "lint: stale on a passing vote against current facts"

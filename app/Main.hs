@@ -61,7 +61,7 @@ import Crucible.Emit (runEmitIO)
 import qualified Crucible.Ledger as Ledger
 import qualified Crucible.Research as Research
 import Crucible.Research.Grounded (writeGrounded, defaultGroundGate, GroundingOutcome (..))
-import Crucible.Research.Lint (lintWiki, LintOpts (..), defaultLintOpts, allPairs)
+import Crucible.Research.Lint (lintWiki, LintOpts (..), defaultLintOpts, linkedPairs)
 import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
@@ -395,9 +395,13 @@ main = do
                 "The Moon orbits Earth." ("" :: T.Text)
             , Research.Page (Research.Slug "stub") "Stub" [] "x" ("" :: T.Text)
             , Research.Page (Research.Slug "hot") "Climate" [] "The planet is cooling rapidly." ("" :: T.Text)
-            , Research.Page (Research.Slug "cold") "Climate2" [] "The planet is warming rapidly." ("" :: T.Text)
+            , Research.Page (Research.Slug "cold") "Climate2" [Research.Link (Research.Slug "hot") Research.Contradicts]
+                "The planet is warming rapidly." ("" :: T.Text)
             ]
-          lintOpts = (defaultLintOpts :: LintOpts T.Text) { sparseThreshold = 5, pairs = allPairs }
+          lintOpts = (defaultLintOpts :: LintOpts T.Text)
+                       { sparseThreshold = 5
+                       , pairs = linkedPairs
+                       , currentFacts = Just "There are eight planets; Pluto is a dwarf planet." }
       findings <- runEff (Anthropic.run cfg (lintWiki lintOpts lintPages))
       TIO.putStrLn ("lint: " <> T.pack (show (length findings)) <> " finding(s):")
       mapM_ (\f -> TIO.putStrLn ("  " <> T.pack (show f))) findings
