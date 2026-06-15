@@ -61,6 +61,7 @@ import Crucible.Emit (runEmitIO)
 import qualified Crucible.Ledger as Ledger
 import qualified Crucible.Research as Research
 import Crucible.Research.Grounded (writeGrounded, defaultGroundGate, GroundingOutcome (..))
+import Crucible.Research.Lint (lintWiki, LintOpts (..), defaultLintOpts, allPairs)
 import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Memory (MemoryKind (..), MemoryItem (..), MemoryId (..), Provenance (..), MemoryDraft (..), Query (..), remember, recall, recallAs, runMemoryFile)
 import Crucible.Memory.Consolidate (ConsolidationOp, ConsolidationPlan (..), consolidationSkill, consolidate)
@@ -386,6 +387,20 @@ main = do
       brisbane <- runEff (Research.runResearchDir str toolsDir (Research.readPage (Research.Slug "brisbane")))
       TIO.putStrLn ("research tools: brisbane page is "
                     <> maybe "absent" (\pg -> "present: " <> (pg :: Research.Page T.Text).title) brisbane)
+      -- Lint: structural issues (pure) plus a judged contradiction, over a small set.
+      let lintPages =
+            [ Research.Page (Research.Slug "earth") "Earth" [Research.Link (Research.Slug "moon") Research.Relates]
+                "Earth is the third planet." ("" :: T.Text)
+            , Research.Page (Research.Slug "moon") "Moon" []
+                "The Moon orbits Earth." ("" :: T.Text)
+            , Research.Page (Research.Slug "stub") "Stub" [] "x" ("" :: T.Text)
+            , Research.Page (Research.Slug "hot") "Climate" [] "The planet is cooling rapidly." ("" :: T.Text)
+            , Research.Page (Research.Slug "cold") "Climate2" [] "The planet is warming rapidly." ("" :: T.Text)
+            ]
+          lintOpts = (defaultLintOpts :: LintOpts T.Text) { sparseThreshold = 5, pairs = allPairs }
+      findings <- runEff (Anthropic.run cfg (lintWiki lintOpts lintPages))
+      TIO.putStrLn ("lint: " <> T.pack (show (length findings)) <> " finding(s):")
+      mapM_ (\f -> TIO.putStrLn ("  " <> T.pack (show f))) findings
       -- OpenAI: the same skills and loops, only the interpreter changes.
       mOpenKey <- lookupEnv "OPENAI_API_KEY"
       case mOpenKey of
