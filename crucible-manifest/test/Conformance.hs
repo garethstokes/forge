@@ -116,10 +116,20 @@ memoryConformance be withS =
 
 ledgerConformance :: String -> WithStore LedgerStore -> [Test]
 ledgerConformance be withS =
-  [ Test (lbl "listReady is record order") $ withS $ \s -> do
-      mapM_ s.doRecord ["A", "B", "C"]
+  [ -- NOTE: through the LedgerStore API, Ready rows are insert-only (claim/complete
+    -- move a row OUT of Ready), so a black-box test cannot force Postgres to return
+    -- Ready rows out of insertion order; the manifest backend's sortOn (.wid) in
+    -- doListReady is therefore DEFENSIVE (Postgres does not promise scan order).
+    -- This check still catches a wrong sort (descending / wrong column) and pins the
+    -- record-order contract across all backends.
+    Test (lbl "listReady is record order (mid-removal preserves order)") $ withS $ \s -> do
+      _  <- s.doRecord "A"
+      ib <- s.doRecord "B"
+      _  <- s.doRecord "C"
+      _  <- s.doRecord "D"
+      s.doComplete ib
       rs <- s.doListReady
-      assertEq "payloads" (["A", "B", "C"] :: [Text]) (map ((.payload) :: WorkItem -> Text) rs)
+      assertEq "payloads" (["A", "C", "D"] :: [Text]) (map ((.payload) :: WorkItem -> Text) rs)
 
   , Test (lbl "claim drops from listReady; CAS rejects re-claim") $ withS $ \s -> do
       i  <- s.doRecord "A"

@@ -94,19 +94,6 @@ withResearchDir :: (ResearchStore Text -> IO a) -> IO a
 withResearchDir k = withTempDir (\d -> k (researchStoreDir C.str d))
 
 -- ---------------------------------------------------------------------------
--- Backend-specific helper: extract positional fields
--- ---------------------------------------------------------------------------
-
--- | Extract content field from a MemoryItem (positional pattern match avoids
--- the NoFieldSelectors restriction on the .content selector).
-itemContent :: MemoryItem -> Text
-itemContent (MemoryItem _ _ c _ _ _) = c
-
--- | Extract the (memId, createdAt) pair from a MemoryItem positionally.
-itemIdAndCreated :: MemoryItem -> (MemoryId, Int)
-itemIdAndCreated (MemoryItem mid _ _ _ _ ca) = (mid, ca)
-
--- ---------------------------------------------------------------------------
 -- Backend-specific extras (not covered by conformance suite)
 -- ---------------------------------------------------------------------------
 
@@ -122,7 +109,8 @@ memorySpecific =
         rc <- s.doRecall (Query "" ["t"] 1)
         case rc of
           (it : _) -> do
-            let (mid, ca) = itemIdAndCreated it
+            let mid = (it.memId   :: MemoryId)
+                ca  = (it.createdAt :: Int)
             assertEq "createdAt mirrors id" mid (MemoryId ca)
           [] -> ioError (userError "expected at least one recalled item")
   ]
