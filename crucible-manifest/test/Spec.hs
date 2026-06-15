@@ -214,6 +214,8 @@ main = runTests
         Just pg -> do
           assertEq "overwrite title" "Alpha2" pg.title
           assertEq "overwrite body"  "new body" pg.body
+          assertEq "overwrite links" [] pg.links
+          assertEq "overwrite meta"  ("m2" :: Text) pg.meta
 
   , Test "research: doIndex returns sorted slugs" $ withEphemeralDb $ \pool -> do
       migrateResearch pool
