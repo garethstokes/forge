@@ -113,7 +113,13 @@ staticHandler staticDir segments respond = do
       let path = staticDir </> foldr1 (</>) (map T.unpack segments)
       exists <- doesFileExist path
       if exists
-        then respond (responseFile status200 [("Content-Type", contentType path)] path Nothing)
+        -- no-cache: the browser must revalidate every load (warp adds
+        -- Last-Modified and answers 304 when unchanged). Without this the
+        -- rebuilt wasm/css/js stay cached and the dashboard serves stale UI.
+        then respond (responseFile status200
+                       [ ("Content-Type", contentType path)
+                       , ("Cache-Control", "no-cache") ]
+                       path Nothing)
         else respond notFound
   where
     unsafe s = s == ".." || T.isInfixOf ".." s || s == ""
