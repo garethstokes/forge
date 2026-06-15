@@ -2723,4 +2723,31 @@ main = runChecks
                       _ <- J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))
                       J.record (J.mkKey "triple" ["3"]) encInt (pure (9 :: Int))))
        in map (J.eSeq . snd) (J.jEntries j))
+  , check "journal: replay hit returns Replayed with the decoded value"
+      (Right (J.Replayed (6 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int))
+      (fmap fst (runPureEff (EE.runErrorNoCallStack
+        (ES.runState
+          (J.insertEntry (J.mkKey "double" ["3"]) (encInt 6) (J.emptyJournal (J.JournalIdentity "double" "" "v1")))
+          (J.replay J.Signal (J.mkKey "double" ["3"]) decInt (pure 0))))))
+  , check "journal: replay miss under Signal flags divergence and runs live"
+      (Right (J.Diverged (J.Divergence (J.mkKey "double" ["99"])) (198 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int))
+      (fmap fst (runPureEff (EE.runErrorNoCallStack
+        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+          (J.replay J.Signal (J.mkKey "double" ["99"]) decInt (pure 198))))))
+  , check "journal: replay miss under Fallthrough runs live silently (no divergence)"
+      (Right (J.Replayed (198 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int))
+      (fmap fst (runPureEff (EE.runErrorNoCallStack
+        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+          (J.replay J.Fallthrough (J.mkKey "double" ["99"]) decInt (pure 198))))))
+  , check "journal: replay miss under Fail aborts with MissError"
+      (Left (J.MissError (J.mkKey "double" ["99"])) :: Either J.JournalError (J.ReplayOutcome Int))
+      (fmap fst (runPureEff (EE.runErrorNoCallStack
+        (ES.runState (J.emptyJournal (J.JournalIdentity "double" "" "v1"))
+          (J.replay J.Fail (J.mkKey "double" ["99"]) decInt (pure 0))))))
+  , check "journal: replay hit with undecodable bytes is a DecodeError"
+      (Left (J.DecodeError (J.mkKey "double" ["3"]) "bad int") :: Either J.JournalError (J.ReplayOutcome Int))
+      (fmap fst (runPureEff (EE.runErrorNoCallStack
+        (ES.runState
+          (J.insertEntry (J.mkKey "double" ["3"]) (BC.pack "not-a-number") (J.emptyJournal (J.JournalIdentity "double" "" "v1")))
+          (J.replay J.Signal (J.mkKey "double" ["3"]) decInt (pure 0))))))
   ]
