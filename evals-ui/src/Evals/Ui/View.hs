@@ -158,7 +158,7 @@ detailView m _ =
         tabKey mc = ms mc.graderName <> "v" <> msShow mc.graderVersion
         active = _runTabM m
         tabs = ("Examples", "examples", active == "examples")
-             : [ (ms mc.graderName, tabKey mc, active == tabKey mc) | mc <- graders ]
+             : [ (ms mc.graderName <> " v" <> msShow mc.graderVersion, tabKey mc, active == tabKey mc) | mc <- graders ]
         content
           | active == "examples" =
               div_ []
@@ -554,9 +554,10 @@ criteriaBlock cs =
       div_ [ P.class_ "crit" ]
         [ span_ [ P.class_ (if c.points < 0 then "pts neg" else "pts pos") ]
             [ text ((if c.points < 0 then "" else "+") <> fmtD c.points) ]
-        , span_ [ P.class_ "crit-txt" ] [ text (ms c.criterion) ]
-        , span_ [ P.class_ "crit-tags" ] (map tagChip c.tags) ]
-    tagChip t = span_ [ P.class_ ("tag " <> ms (namespace t)) ] [ text (ms (labelOf t)) ]
+        , div_ [ P.class_ "crit-main" ]
+            ( div_ [ P.class_ "crit-txt" ] [ text (ms c.criterion) ]
+            : [ div_ [ P.class_ "crit-tags" ] (map tagChip c.tags) | not (null c.tags) ] ) ]
+    tagChip t = span_ [ P.class_ ("tag " <> ms (namespace t)), P.title_ (ms t) ] [ text (prettyTag t) ]
 
 methodLine :: Text -> MisoString
 methodLine k = case k of
@@ -571,23 +572,25 @@ breakdownChart :: MetricDto -> View Model Action
 breakdownChart mc =
   div_ [ P.class_ "chart" ]
     ( div_ [ P.class_ "chart-head" ]
-        [ span_ [] [], span_ [] []
+        [ span_ [] []
         , span_ [ P.class_ "r" ] [ text "score" ], span_ [ P.class_ "r" ] [ text "95% CI" ], span_ [ P.class_ "r" ] [ text "n" ] ]
       : concatMap grp nsOrder
-      ++ [ div_ [ P.class_ "scale" ] [ span_ [] [], div_ [ P.class_ "ticks" ] [ span_ [] [text "0"], span_ [] [text "0.5"], span_ [] [text "1.0"] ], span_ [] [] ]
-         , div_ [ P.class_ "legend" ] [ text "μ mean · ± 95% CI (bootstrap) · n = examples" ] ] )
+      ++ [ div_ [ P.class_ "legend" ] [ text "μ mean · ± 95% CI (bootstrap) · n = examples" ] ] )
   where
     nss     = nub (map (namespace . (.tag)) mc.breakdowns)
     known   = filter (`elem` nss) ["theme", "axis", "cluster"]
     nsOrder = known <> filter (`notElem` ["theme", "axis", "cluster"]) nss
     grp n   = div_ [ P.class_ "grp-label" ] [ text (ms n), span_ [ P.class_ "muted" ] [ text (nsHint n) ] ]
             : [ brow n b | b <- mc.breakdowns, namespace b.tag == n ]
+    -- Label on its own line above the bar, so long humanised cluster names get
+    -- the full width instead of being truncated in a fixed column.
     brow n b = div_ [ P.class_ ("brow " <> ms n) ]
-      [ span_ [ P.class_ ("tag " <> ms n) ] [ text (ms (labelOf b.tag)) ]
-      , div_ [ P.class_ "track" ] [ span_ [ widthStyle b.mean ] [] ]
-      , span_ [ P.class_ "val" ] [ text (fmtD b.mean) ]
-      , span_ [ P.class_ "ci" ]  [ text (ciCol b.stderr) ]
-      , span_ [ P.class_ "n" ]   [ text (msShow b.count) ] ]
+      [ div_ [ P.class_ "brow-label", P.title_ (ms b.tag) ] [ text (prettyTag b.tag) ]
+      , div_ [ P.class_ "brow-bar" ]
+          [ div_ [ P.class_ "track" ] [ span_ [ widthStyle b.mean ] [] ]
+          , span_ [ P.class_ "val" ] [ text (fmtD b.mean) ]
+          , span_ [ P.class_ "ci" ]  [ text (ciCol b.stderr) ]
+          , span_ [ P.class_ "n" ]   [ text (msShow b.count) ] ] ]
 
 -- | One grader version's calibration: headline κ bar + verdict, sparkline,
 -- and the secondary precision/recall/agreement line. Reused by the run-detail
