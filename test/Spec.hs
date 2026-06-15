@@ -90,6 +90,8 @@ import qualified Crucible.Journal as J
 import Crucible.Journal (Journal (..), JournalIdentity (..), Entry (..), CassetteKey (..), MissPolicy (Signal, Fallthrough), Divergence (..), ReplayOutcome (..), JournalError (..))
 import qualified Effectful.State.Static.Local as ES
 import qualified Effectful.Error.Static as EE
+import qualified Crucible.Workflow as W
+import Crucible.Workflow (WorkflowEnv (..), WaitSpec (..), Suspended (..))
 
 -- Sample types for codec tests
 
@@ -2806,4 +2808,115 @@ main = runChecks
                 (J.replayFrom j J.Signal (J.mkKey "new" ["x"]) decInt (pure (99 :: Int))))
        check "journal store: replayFrom miss under Signal is Diverged + live"
          (Right (J.Diverged (J.Divergence (J.mkKey "new" ["x"])) (99 :: Int)) :: Either J.JournalError (J.ReplayOutcome Int)) out
+
+  -- Crucible.Workflow tests (Phase 2a)
+
+  -- Helper: run a Workflow program against an in-memory store + loaded journal.
+  -- Returns Either Suspended (Either JournalError a).
+  -- Discharge order: runEff > runErrorNoCallStack @Suspended > runErrorNoCallStack @JournalError > runWorkflow
+  , do let ident = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+       st <- J.newInMemoryJournalStore (J.emptyJournal ident)
+       -- Run 1: record "now"
+       j1   <- J.jsLoad st
+       res1 <- runEff
+                 (EE.runErrorNoCallStack @Suspended
+                   (EE.runErrorNoCallStack @J.JournalError
+                     (W.runWorkflow fixedEnv st j1 W.now)))
+       -- Run 2: replay with a different env (weNow returns something else)
+       let altEnv = WorkflowEnv (pure "9999-01-01T00:00:00Z") (pure "id-x")
+       j2   <- J.jsLoad st
+       res2 <- runEff
+                 (EE.runErrorNoCallStack @Suspended
+                   (EE.runErrorNoCallStack @J.JournalError
+                     (W.runWorkflow altEnv st j2 W.now)))
+       check "workflow: now determinism across runs (replay ignores changed env)"
+         (Right (Right "2026-06-15T00:00:00Z") :: Either Suspended (Either J.JournalError Text))
+         res2
+
+  , do let ident = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+       st <- J.newInMemoryJournalStore (J.emptyJournal ident)
+       j  <- J.jsLoad st
+       -- Run two now calls in one pass
+       res <- runEff
+                (EE.runErrorNoCallStack @Suspended
+                  (EE.runErrorNoCallStack @J.JournalError
+                    (W.runWorkflow fixedEnv st j (do
+                       t1 <- W.now
+                       t2 <- W.now
+                       pure (t1, t2)))))
+       j' <- J.jsLoad st
+       check "workflow: two now calls get distinct keys (both recorded)"
+         (Right (Right ("2026-06-15T00:00:00Z", "2026-06-15T00:00:00Z")) :: Either Suspended (Either J.JournalError (Text, Text)), 2 :: Int)
+         (res, length (J.jEntries j'))
+
+  , do let ident = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+       idRef <- newIORef (0 :: Int)
+       let idSrc = modifyIORef' idRef (+ 1) >> fmap (T.pack . ("id-" ++) . show) (readIORef idRef)
+           env1  = WorkflowEnv (pure "2026-06-15T00:00:00Z") idSrc
+           env2  = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-different")
+       st <- J.newInMemoryJournalStore (J.emptyJournal ident)
+       j1 <- J.jsLoad st
+       res1 <- runEff
+                 (EE.runErrorNoCallStack @Suspended
+                   (EE.runErrorNoCallStack @J.JournalError
+                     (W.runWorkflow env1 st j1 W.newId)))
+       j2 <- J.jsLoad st
+       res2 <- runEff
+                 (EE.runErrorNoCallStack @Suspended
+                   (EE.runErrorNoCallStack @J.JournalError
+                     (W.runWorkflow env2 st j2 W.newId)))
+       check "workflow: newId replay returns first-run value (journaled determinism)"
+         (res1 :: Either Suspended (Either J.JournalError Text))
+         res2
+
+  , do -- retryN: Left twice then Right -> returns Right
+       counter <- newIORef (0 :: Int)
+       let act = do
+             n <- readIORef counter
+             modifyIORef' counter (+ 1)
+             if n < 2 then pure (Left ("fail" :: Text)) else pure (Right n)
+       res <- W.retryN 3 act
+       check "workflow: retryN 3 succeeds after two failures"
+         (Right (2 :: Int))
+         res
+
+  , do -- retryN: always-Left -> returns last Left
+       counter2 <- newIORef (0 :: Int)
+       let alwaysFail2 :: IO (Either Text Int)
+           alwaysFail2 = modifyIORef' counter2 (+ 1) >> pure (Left "fail")
+       res2 <- W.retryN 3 alwaysFail2
+       finalN <- readIORef counter2
+       check "workflow: retryN 3 all-fail returns last Left and ran 3 times"
+         (Left ("fail" :: Text) :: Either Text Int, 3 :: Int)
+         (res2, finalN)
+
+  , do -- durableSleep: first encounter (empty journal) -> Suspended
+       let ident = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+       st <- J.newInMemoryJournalStore (J.emptyJournal ident)
+       j  <- J.jsLoad st
+       res <- runEff
+                (EE.runErrorNoCallStack @Suspended
+                  (EE.runErrorNoCallStack @J.JournalError
+                    (W.runWorkflow fixedEnv st j (W.durableSleep 10))))
+       check "workflow: durableSleep suspends on miss with correct wakeAt"
+         (Left (Suspended (WaitTimer (J.mkKey "sleep" ["0"]) "2026-06-15T00:00:10Z")) :: Either Suspended (Either J.JournalError ()))
+         res
+
+  , do -- durableSleep: entry present -> returns ()
+       let ident = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           fixedEnv = WorkflowEnv (pure "2026-06-15T00:00:00Z") (pure "id-1")
+           sleepKey = J.mkKey "sleep" ["0"]
+           seededJ  = J.insertEntry sleepKey (BC.pack "") (J.emptyJournal ident)
+       st <- J.newInMemoryJournalStore seededJ
+       j  <- J.jsLoad st
+       res <- runEff
+                (EE.runErrorNoCallStack @Suspended
+                  (EE.runErrorNoCallStack @J.JournalError
+                    (W.runWorkflow fixedEnv st j (W.durableSleep 10))))
+       check "workflow: durableSleep returns () when journal entry present"
+         (Right (Right ()) :: Either Suspended (Either J.JournalError ()))
+         res
   ]
