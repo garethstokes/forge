@@ -40,6 +40,11 @@ module Crucible.Journal
   , recordTo
   , replayFrom
   , newInMemoryJournalStore
+    -- * Exactly-once activity recording
+  , ActivityKind (..)
+  , IdemKey (..)
+  , recordActivity
+  , newInMemoryJournalStore'
     -- * Wire codec
   , journalCodec
   ) where
@@ -175,12 +180,23 @@ replay pol k dec live = do
 
 -- IO journal store ----------------------------------------------------------
 
+-- | The idempotency class of an activity: whether a safe retry key can be
+-- derived ('Keyable'), the op is inherently idempotent ('Idempotent'), or
+-- the op cannot be safely retried ('Unkeyable').
+data ActivityKind = Idempotent | Keyable | Unkeyable deriving (Eq, Show)
+
+-- | A deterministic idempotency key derived from the 'CassetteKey' bytes.
+-- Passed to the action by 'recordActivity' so the action can attach it to
+-- the upstream call (e.g. a payment charge id, an email message-id).
+newtype IdemKey = IdemKey ByteString deriving (Eq, Show)
+
 -- | A thick handle: one IO action per journal op (the durable seam, à la
 -- 'MemoryStore'). 'jsAppend' persists one recorded result. The in-memory store
 -- ignores op; the Postgres store in crucible-manifest stores it in a column.
 data JournalStore = JournalStore
   { jsLoad   :: IO Journal
   , jsAppend :: CassetteKey -> Text -> ByteString -> IO ()   -- ^ key, op, encoded result
+  , jsIntent :: CassetteKey -> Text -> ActivityKind -> IO () -- ^ key, op, kind
   }
 
 -- | Run a live action and durably append its encoded result. The store-backed
@@ -212,16 +228,52 @@ replayFrom j pol k dec live = case lookupEntry k j of
       Signal      -> Diverged (Divergence k) <$> live
       Fallthrough -> Replayed <$> live
 
+-- | Run a live action, recording an intent before the action and durably
+-- appending the result after. The 'IdemKey' passed to the action is derived
+-- deterministically from the 'CassetteKey' bytes so the action can attach it
+-- to the upstream call for exactly-once deduplication.
+recordActivity :: (IOE :> es)
+               => JournalStore -> ActivityKind -> CassetteKey -> Text
+               -> (a -> ByteString) -> (IdemKey -> Eff es a) -> Eff es a
+recordActivity s kind k op enc act = do
+  liftIO (jsIntent s k op kind)
+  a <- act (idemKeyOf k)
+  liftIO (jsAppend s k op (enc a))
+  pure a
+  where
+    idemKeyOf (CassetteKey b) = IdemKey b
+
 -- | In-memory store over an 'IORef' 'Journal' (testable; the Phase-3 eval
 -- consumer uses it). Ignores op (the 'Entry' type has no op field — that is
--- tracked by the Postgres store's column).
+-- tracked by the Postgres store's column). Intent tracking is a no-op.
 newInMemoryJournalStore :: Journal -> IO JournalStore
 newInMemoryJournalStore j0 = do
   ref <- newIORef j0
   pure JournalStore
     { jsLoad   = readIORef ref
     , jsAppend = \k _op bs -> modifyIORef' ref (insertEntry k bs)
+    , jsIntent = \_ _ _ -> pure ()
     }
+
+-- | Intent-aware in-memory store. Returns the store plus a @pendingIntents@
+-- query that returns keys that have had an intent recorded but no result
+-- appended yet (i.e. they would be orphaned if the process crashed between
+-- 'jsIntent' and 'jsAppend').
+newInMemoryJournalStore' :: Journal -> IO (JournalStore, IO [(CassetteKey, ActivityKind)])
+newInMemoryJournalStore' j0 = do
+  ref       <- newIORef j0
+  intentRef <- newIORef ([] :: [(CassetteKey, ActivityKind)])
+  let store = JournalStore
+        { jsLoad   = readIORef ref
+        , jsAppend = \k _op bs -> modifyIORef' ref (insertEntry k bs)
+        , jsIntent = \k _op kind -> modifyIORef' intentRef (++ [(k, kind)])
+        }
+      pending = do
+        j  <- readIORef ref
+        is <- readIORef intentRef
+        let resultKeys = map fst (jEntries j)
+        pure [ (k, kind) | (k, kind) <- is, k `notElem` resultKeys ]
+  pure (store, pending)
 
 -- Wire codec ----------------------------------------------------------------
 

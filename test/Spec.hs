@@ -87,7 +87,7 @@ import Crucible.Research.Tools (researchTools, researchInstructions)
 import Crucible.Research.Grounded (NoClaimsPolicy (..), GroundGate (..), defaultGroundGate, writeGrounded, GroundingOutcome (..))
 import Crucible.Research.Lint (Finding (..), orphans, brokenLinks, sparsePages, lintStructural, linkedPairs, allPairs, lintContradictions, lintStale, LintOpts (..), defaultLintOpts, lintWiki)
 import qualified Crucible.Journal as J
-import Crucible.Journal (Journal (..), JournalIdentity (..), Entry (..), CassetteKey (..), MissPolicy (Signal, Fallthrough), Divergence (..), ReplayOutcome (..), JournalError (..))
+import Crucible.Journal (Journal (..), JournalIdentity (..), Entry (..), CassetteKey (..), MissPolicy (Signal, Fallthrough), Divergence (..), ReplayOutcome (..), JournalError (..), ActivityKind (..), IdemKey (..))
 import qualified Effectful.State.Static.Local as ES
 import qualified Effectful.Error.Static as EE
 import qualified Crucible.Workflow as W
@@ -2919,4 +2919,59 @@ main = runChecks
        check "workflow: durableSleep returns () when journal entry present"
          (Right (Right ()) :: Either Suspended (Either J.JournalError ()))
          res
+
+  -- recordActivity / newInMemoryJournalStore' tests
+
+  , do -- recordActivity: result is journaled, IdemKey is derived from the CassetteKey bytes
+       let ident0 = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           k      = J.mkKey "act" ["1"]
+       (st, _pending) <- J.newInMemoryJournalStore' (J.emptyJournal ident0)
+       capturedRef <- newIORef (Nothing :: Maybe IdemKey)
+       v <- runEff (J.recordActivity st Keyable k "act" encInt
+              (\idem -> liftIO (writeIORef capturedRef (Just idem)) >> pure (6 :: Int)))
+       j <- J.jsLoad st
+       capturedIdem <- readIORef capturedRef
+       let CassetteKey kb = k
+           expected = IdemKey kb
+       check "recordActivity: result is journaled under the key"
+         (Just "6")
+         (BC.unpack . J.eResult <$> J.lookupEntry k j)
+       check "recordActivity: IdemKey passed to action equals CassetteKey bytes"
+         (Just expected)
+         capturedIdem
+       check "recordActivity: return value equals the action result"
+         (6 :: Int)
+         v
+
+  , do -- recordActivity: IdemKey is deterministic across independent runs
+       let ident0 = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           k      = J.mkKey "act" ["1"]
+       capturedRef1 <- newIORef (Nothing :: Maybe IdemKey)
+       capturedRef2 <- newIORef (Nothing :: Maybe IdemKey)
+       (st1, _) <- J.newInMemoryJournalStore' (J.emptyJournal ident0)
+       _ <- runEff (J.recordActivity st1 Keyable k "act" encInt
+              (\idem -> liftIO (writeIORef capturedRef1 (Just idem)) >> pure (1 :: Int)))
+       (st2, _) <- J.newInMemoryJournalStore' (J.emptyJournal ident0)
+       _ <- runEff (J.recordActivity st2 Keyable k "act" encInt
+              (\idem -> liftIO (writeIORef capturedRef2 (Just idem)) >> pure (1 :: Int)))
+       idem1 <- readIORef capturedRef1
+       idem2 <- readIORef capturedRef2
+       check "recordActivity: IdemKey is deterministic across independent runs"
+         idem1
+         idem2
+
+  , do -- pending intents: jsIntent then query shows pending; jsAppend clears it
+       let ident0 = J.JournalIdentity "wf" "" "v1" "2026-06-15T00:00:00Z"
+           k      = J.mkKey "x" []
+       (st, pending) <- J.newInMemoryJournalStore' (J.emptyJournal ident0)
+       J.jsIntent st k "x" Keyable
+       p1 <- pending
+       check "pending intents: intent without result appears in pending"
+         [(k, Keyable)]
+         p1
+       J.jsAppend st k "x" "v"
+       p2 <- pending
+       check "pending intents: after jsAppend, pending is empty"
+         ([] :: [(CassetteKey, ActivityKind)])
+         p2
   ]
