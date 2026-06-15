@@ -31,8 +31,11 @@ module Crucible.Manifest.Journal
   , completeExecution
   , executionStatus
   , listReadyExecutions
+  , suspendTimer
+  , fireDueTimers
   ) where
 
+import Control.Monad (forM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Base64 as B64
@@ -115,6 +118,9 @@ data RunQueueRowT f = RunQueueRow
   , rqState      :: Field f Text
   , rqClaimant   :: Field f (Maybe Text)
   , rqLeaseUntil :: Field f (Maybe Text)
+  , rqWaitKey    :: Field f (Maybe Text)   -- base64 cassette key of the suspended prim
+  , rqWaitKind   :: Field f (Maybe Text)   -- "timer" (this cycle)
+  , rqWakeAt     :: Field f (Maybe Text)   -- ISO-8601 wake time
   } deriving Generic
 
 type RunQueueRow = RunQueueRowT Identity
@@ -152,7 +158,7 @@ createExecution pool ident = withSession pool $ withTransaction $ do
                "running"
              :: ExecutionRow)
   let eid = ex.exId
-  _ <- add (RunQueueRow eid "ready" Nothing Nothing :: RunQueueRow)
+  _ <- add (RunQueueRow eid "ready" Nothing Nothing Nothing Nothing Nothing :: RunQueueRow)
   pure eid
 
 -- | Build a durable 'JournalStore' for one execution (identified by its id).
@@ -260,3 +266,41 @@ listReadyExecutions :: Pool -> IO [Int]
 listReadyExecutions pool = withSession pool $ do
   rows <- selectWhere [#rqState ==. ("ready" :: Text)] :: Db [RunQueueRow]
   pure (map (.rqExec) rows)
+
+-- ---------------------------------------------------------------------------
+-- Durable timer suspend / fire
+-- ---------------------------------------------------------------------------
+
+-- | Park an execution as waiting-on-timer: set @run_queue.rq_state = 'waiting'@,
+-- store the cassette key (base64-encoded) and wake-at timestamp, and clear the
+-- claimant. The execution will not appear in 'listReadyExecutions' until
+-- 'fireDueTimers' re-queues it.
+suspendTimer :: Pool -> Int -> CassetteKey -> Text -> IO ()
+suspendTimer pool eid (CassetteKey k) wakeAt = withSession pool $ do
+  _ <- execDb
+    "UPDATE run_queue SET rq_state='waiting', rq_wait_key=$1, rq_wait_kind='timer', rq_wake_at=$2, rq_claimant=NULL WHERE rq_exec=$3"
+    [ encode (b64 k)
+    , encode wakeAt
+    , encode eid
+    ]
+  pure ()
+
+-- | Fire all due timers: for each @waiting@ execution whose @rq_wake_at <= nowT@
+-- (lexical ISO-8601 comparison), append a @sleep@ journal entry under its stored
+-- key and set the execution back to @ready@ (clearing the wait fields).
+-- Returns the list of fired execution ids. Runs in a single transaction.
+fireDueTimers :: Pool -> Text -> IO [Int]
+fireDueTimers pool nowT = withSession pool $ withTransaction $ do
+  rows <- selectWhere [#rqState ==. ("waiting" :: Text)] :: Db [RunQueueRow]
+  let due = [ r | r <- rows
+                , rqWaitKind r == Just "timer"
+                , maybe False (<= nowT) (rqWakeAt r) ]
+  forM due $ \r -> do
+    let eid    = rqExec r
+        keyB64 = maybe "" id (rqWaitKey r)   -- already base64 of the cassette key bytes
+    es <- selectWhere [#jeExec ==. eid] :: Db [JournalEntryRow]
+    _  <- add (JournalEntryRow 0 eid (length es) keyB64 "sleep" (b64 "") :: JournalEntryRow)
+    _  <- execDb
+            "UPDATE run_queue SET rq_state='ready', rq_wait_key=NULL, rq_wait_kind=NULL, rq_wake_at=NULL WHERE rq_exec=$1"
+            [ encode eid ]
+    pure eid
