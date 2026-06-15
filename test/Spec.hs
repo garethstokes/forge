@@ -2762,4 +2762,15 @@ main = runChecks
       (let j = J.emptyJournal (J.JournalIdentity "wf" "" "v1")
            v = toJSONVia J.journalCodec j
        in fmap (== j) (AT.parseEither (parseJSONVia J.journalCodec) v))
+  , check "journal: record-then-replay-changed surfaces exactly the new op as Diverged"
+      (Right [J.Replayed (6 :: Int), J.Diverged (J.Divergence (J.mkKey "triple" ["3"])) 9] :: Either J.JournalError [J.ReplayOutcome Int])
+      (let ident = J.JournalIdentity "calc" "" "v1"
+           -- original code recorded only `double 3`
+           (_, j) = runPureEff (ES.runState (J.emptyJournal ident)
+                      (J.record (J.mkKey "double" ["3"]) encInt (pure (6 :: Int))))
+           -- changed code keeps `double 3` (hits) and adds `triple 3` (diverges)
+       in fmap fst (runPureEff (EE.runErrorNoCallStack (ES.runState j (do
+            a <- J.replay J.Signal (J.mkKey "double" ["3"]) decInt (pure 6)
+            b <- J.replay J.Signal (J.mkKey "triple" ["3"]) decInt (pure 9)
+            pure [a, b])))))
   ]
