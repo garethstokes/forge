@@ -1,0 +1,28 @@
+.zinc/
+.direnv/
+result
+result-*
+*.hi
+*.o
+
+# Claude Code worktrees (session-local, never published)
+.claude/worktrees/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+
+# Generated wasm artifacts (restage with scripts/build-ui.sh; GHC-wasm links are non-reproducible)
+static/evals-ui.wasm
+static/ghc_wasm_jsffi.js
+static/js/
+
+# API keys (never commit)
+.env
+
+# superpowers visual-companion / brainstorm scratch
+.superpowers/
+
+# downloaded eval datasets (large, external)
+data/

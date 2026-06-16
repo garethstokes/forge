@@ -1,0 +1,3 @@
+{"key":"c1","input":{"messages":[{"role":"user","content":"What is 2+2?"}]},"completion":"4","rubric":[{"criterion":"is correct","points":5,"tags":["axis:accuracy"]},{"criterion":"is concise","points":2,"tags":["axis:style"]}],"labels":[{"criterion":"is correct","met":true},{"criterion":"is concise","met":true}]}
+{"key":"c2","input":{"messages":[{"role":"user","content":"Capital of France?"}]},"completion":"Berlin","rubric":[{"criterion":"is correct","points":5,"tags":["axis:accuracy"]}],"labels":[{"criterion":"is correct","met":false}]}
+{"key":"c3","input":{"messages":[{"role":"user","content":"hi"}]},"completion":"hello","rubric":[{"criterion":"is polite","points":1,"tags":[]}],"labels":[{"criterion":"is friendly","met":true}]}

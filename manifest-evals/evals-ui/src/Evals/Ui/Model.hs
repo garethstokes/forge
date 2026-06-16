@@ -1,0 +1,303 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings   #-}
+
+-- | The dashboard SPA's pure core: the hash 'Route', 'RemoteData' wrappers
+-- for each fetched resource, the 'Model' + lenses, the 'Action' sum, and the
+-- hash parse/render helpers. No IO here — fetches live in "Evals.Ui.Fetch",
+-- wiring in @Main@.
+module Evals.Ui.Model
+  ( Route (..)
+  , RemoteData (..)
+  , LiveStatus (..)
+  , Model (..)
+  , Action (..)
+  , emptyModel
+    -- * Lenses
+  , routeL
+  , runsL
+  , detailL
+  , compareL
+  , exampleL
+  , calibrationL
+  , orgSlugL
+  , runTabL
+  , outputsOffsetL
+  , gradeVerL
+  , exTabL
+  , compareMenuL
+  , expandedL
+  , liveL
+  , refetchQueuedL
+  , sseConnectedOnceL
+    -- * Live updates (pure)
+  , relevantTo
+    -- * Hash routing (pure)
+  , parseHash
+  , runsHash
+  , runHash
+  , compareHash
+  , exampleHash
+  , calibrationHash
+  , encodeSegment
+    -- * Small helpers
+  , fromEither
+  , keepStale
+  , toggleSelect
+  , toggleElem
+  , msShow
+  , outputsPageSize
+  ) where
+
+import qualified Data.Text as T
+import qualified Data.Text.Read as TR
+import Miso.Lens (Lens, lens)
+import Miso.String (MisoString, fromMisoString, ms)
+
+import Evals.Api
+
+-- | Views, driven by the location hash: @#/runs@, @#/runs/<id>@,
+-- @#/compare/<a>/<b>@.
+data Route
+  = RunsR
+  | RunR Int
+  | CompareR Int Int
+  | ExampleR Int T.Text
+  | CalibrationR
+  deriving (Show, Eq)
+
+-- | Lifecycle of a fetched resource.
+data RemoteData a
+  = NotAsked
+  | Loading
+  | Failed MisoString
+  | Got a
+  deriving (Show, Eq)
+
+-- | Status of the @/api/events@ SSE feed (the EventSource auto-reconnects on
+-- its own; we only reflect what it last told us).
+data LiveStatus
+  = LiveConnected
+  | LiveReconnecting
+  deriving (Show, Eq)
+
+data Model = Model
+  { _routeM :: Route
+  , _runsM :: RemoteData [RunSummaryDto]
+  , _detailM :: RemoteData RunDetailDto
+  , _compareM :: RemoteData CompareDto
+  , _exampleM :: RemoteData ExampleDetailDto
+  , _calibrationM :: RemoteData [CalibrationSeriesDto]
+  , _orgSlugM :: MisoString
+    -- ^ org slug from the URL first path segment (e.g. "/acme")
+  , _runTabM :: MisoString
+    -- ^ active tab key in the run-detail view ("examples" or a grader key)
+  , _outputsOffsetM :: Int
+    -- ^ offset of the run-detail Examples page currently displayed (reset to 0
+    -- on run change; advanced by the pager)
+  , _gradeVerM :: [(MisoString, MisoString)]
+    -- ^ on the example page, the grader-version a grader's card is switched to
+    -- (graderName -> version string); absent -> show the latest
+  , _exTabM :: MisoString
+    -- ^ active tab in the example view's main column ("prompt" | "input")
+  , _compareMenuM :: Maybe Int
+    -- ^ run id whose per-row compare ⋮ menu is open, or Nothing
+  , _expandedM :: [MisoString]
+    -- ^ output cells toggled to full text (keys are view-local)
+  , _liveM :: LiveStatus
+  , _refetchQueuedM :: Bool
+    -- ^ a debounced 'DoRefetch' is already scheduled; coalesce further changes
+  , _sseConnectedOnceM :: Bool
+    -- ^ True after the SSE feed has connected at least once; used to
+    -- distinguish the initial connect (no refetch needed — SetRoute already
+    -- fetched) from a genuine reconnect (may have missed change events, so we
+    -- refetch)
+  } deriving (Show, Eq)
+
+emptyModel :: Model
+emptyModel = Model RunsR NotAsked NotAsked NotAsked NotAsked NotAsked "" "examples" 0 [] "prompt" Nothing [] LiveReconnecting False False
+
+data Action
+  = Startup
+  -- ^ mounted: read the org prefix, then connect the SSE feed and route
+  | ConnectSse MisoString
+  -- ^ connect the SSE feed at the given prefixed URL (dispatched by Startup)
+  | HashChanged
+  -- ^ the location hash changed (popstate/hashchange or initial mount)
+  | SetRoute Route
+  | Navigate MisoString
+  -- ^ in-app navigation: set the location hash (the hashchange sub drives
+  -- the actual route switch, so back/forward and manual edits behave the same)
+  | SetRunTab MisoString
+  -- ^ switch the active tab in the run-detail view
+  | ToggleCompareMenu (Maybe Int)
+  -- ^ open (Just runId) or close (Nothing) the per-row compare ⋮ menu
+  | SetOutputsOffset Int
+  -- ^ display the run-detail Examples page at this output offset (refetches)
+  | SetGradeVersion MisoString MisoString
+  -- ^ switch a grader's card to a version (graderName, version string)
+  | SetExTab MisoString
+  -- ^ switch the example view's main-column tab ("prompt" | "input")
+  | SetOrgSlug MisoString
+  -- ^ store the org slug read from the URL prefix
+  | ToggleExpand MisoString
+  | GotRuns (Either MisoString [RunSummaryDto])
+  | GotDetail Int (Either MisoString RunDetailDto)
+  -- ^ carries the requested run id so stale responses for a different run can
+  --   be dropped before touching the model
+  | GotCompare Int Int (Either MisoString CompareDto)
+  -- ^ carries the requested (a, b) ids for the same stale-response guard
+  | GotExample Int T.Text (Either MisoString ExampleDetailDto)
+  -- ^ carries the requested (run id, example key) for the same stale-response guard
+  | GotCalibration (Either MisoString [CalibrationSeriesDto])
+  | SseOpen
+  -- ^ the EventSource (re)connected
+  | SseError
+  -- ^ the EventSource dropped; it reconnects on its own, we just show status
+  | SseMessage MisoString
+  -- ^ a raw @/api/events@ line; aeson-decoded in update — decodable lines
+  --   become 'GotChange', anything else is ignored silently
+  | GotChange ChangeDto
+  -- ^ a decoded change-feed hint: something in @table@ moved
+  | DoRefetch
+  -- ^ the 300ms debounce fired: refetch whatever the current route shows
+  deriving (Show, Eq)
+
+-- Lenses --------------------------------------------------------------------
+
+routeL :: Lens Model Route
+routeL = lens _routeM $ \r x -> r { _routeM = x }
+
+runsL :: Lens Model (RemoteData [RunSummaryDto])
+runsL = lens _runsM $ \r x -> r { _runsM = x }
+
+detailL :: Lens Model (RemoteData RunDetailDto)
+detailL = lens _detailM $ \r x -> r { _detailM = x }
+
+compareL :: Lens Model (RemoteData CompareDto)
+compareL = lens _compareM $ \r x -> r { _compareM = x }
+
+exampleL :: Lens Model (RemoteData ExampleDetailDto)
+exampleL = lens _exampleM $ \r x -> r { _exampleM = x }
+
+calibrationL :: Lens Model (RemoteData [CalibrationSeriesDto])
+calibrationL = lens _calibrationM $ \r x -> r { _calibrationM = x }
+
+orgSlugL :: Lens Model MisoString
+orgSlugL = lens _orgSlugM $ \r x -> r { _orgSlugM = x }
+
+runTabL :: Lens Model MisoString
+runTabL = lens _runTabM $ \r x -> r { _runTabM = x }
+
+outputsOffsetL :: Lens Model Int
+outputsOffsetL = lens _outputsOffsetM $ \r x -> r { _outputsOffsetM = x }
+
+gradeVerL :: Lens Model [(MisoString, MisoString)]
+gradeVerL = lens _gradeVerM $ \r x -> r { _gradeVerM = x }
+
+exTabL :: Lens Model MisoString
+exTabL = lens _exTabM $ \r x -> r { _exTabM = x }
+
+-- | Run-detail Examples page size; shared by the fetch URL and the pager.
+outputsPageSize :: Int
+outputsPageSize = 50
+
+compareMenuL :: Lens Model (Maybe Int)
+compareMenuL = lens _compareMenuM $ \r x -> r { _compareMenuM = x }
+
+expandedL :: Lens Model [MisoString]
+expandedL = lens _expandedM $ \r x -> r { _expandedM = x }
+
+liveL :: Lens Model LiveStatus
+liveL = lens _liveM $ \r x -> r { _liveM = x }
+
+refetchQueuedL :: Lens Model Bool
+refetchQueuedL = lens _refetchQueuedM $ \r x -> r { _refetchQueuedM = x }
+
+sseConnectedOnceL :: Lens Model Bool
+sseConnectedOnceL = lens _sseConnectedOnceM $ \r x -> r { _sseConnectedOnceM = x }
+
+-- Live updates ----------------------------------------------------------------
+
+-- | Does a change in @table@ affect what the given route is showing?
+-- NOTE: deleting a run only emits @runs@ — the cascade-deleted children
+-- (outputs, scores, …) are silent — hence @runs@ is relevant everywhere.
+relevantTo :: Route -> MisoString -> Bool
+relevantTo route table =
+  case route of
+    RunsR -> table `elem` ["runs", "run_metrics"]
+    RunR _ -> table `elem` detailTables
+    CompareR _ _ -> table `elem` detailTables
+    ExampleR _ _ -> table `elem` detailTables
+    -- meta_evals has no notifyChanges trigger, so the SSE feed never emits it;
+    -- this clause is forward-looking and never actually fires today (the
+    -- calibration page is static once loaded).
+    CalibrationR -> table == "meta_evals"
+  where
+    detailTables = ["runs", "outputs", "scores", "run_metrics"]
+
+-- Hash routing --------------------------------------------------------------
+
+-- | @#/runs@ (also empty/unknown), @#/runs/<id>@, @#/compare/<a>/<b>@.
+parseHash :: MisoString -> Route
+parseHash h =
+  case T.splitOn "/" (T.dropWhile (== '#') (fromMisoString h :: T.Text)) of
+    ["", "runs"] -> RunsR
+    ["", "runs", n] | Just i <- readInt n -> RunR i
+    ["", "compare", a, b] | Just x <- readInt a, Just y <- readInt b -> CompareR x y
+    ["", "runs", n, "ex", k] | Just i <- readInt n -> ExampleR i (decodeSegment k)
+    ["", "calibration"] -> CalibrationR
+    _ -> RunsR
+  where
+    readInt t = case TR.decimal t of
+      Right (i, rest) | T.null rest -> Just i
+      _ -> Nothing
+
+runsHash :: MisoString
+runsHash = "#/runs"
+
+runHash :: Int -> MisoString
+runHash i = "#/runs/" <> msShow i
+
+compareHash :: Int -> Int -> MisoString
+compareHash a b = "#/compare/" <> msShow a <> "/" <> msShow b
+
+exampleHash :: Int -> T.Text -> MisoString
+exampleHash i k = "#/runs/" <> msShow i <> "/ex/" <> ms (encodeSegment k)
+
+calibrationHash :: MisoString
+calibrationHash = "#/calibration"
+
+encodeSegment :: T.Text -> T.Text
+encodeSegment = T.concatMap enc
+  where enc '%' = "%25"; enc '/' = "%2F"; enc '#' = "%23"
+        enc ' ' = "%20"; enc '?' = "%3F"; enc '&' = "%26"; enc c = T.singleton c
+
+decodeSegment :: T.Text -> T.Text
+decodeSegment = T.replace "%25" "%" . T.replace "%2F" "/" . T.replace "%23" "#"
+              . T.replace "%20" " " . T.replace "%3F" "?" . T.replace "%26" "&"
+
+-- Helpers ---------------------------------------------------------------------
+
+fromEither :: Either MisoString a -> RemoteData a
+fromEither = either Failed Got
+
+-- | A background refresh must not replace good data with an error box; manual
+-- navigation resets to Loading first, so user-initiated errors still surface.
+keepStale :: RemoteData a -> RemoteData a -> RemoteData a
+keepStale old@(Got _) (Failed _) = old
+keepStale _           new        = new
+
+-- | Tick/untick a run for comparison; a third tick is ignored.
+toggleSelect :: Int -> [Int] -> [Int]
+toggleSelect i xs
+  | i `elem` xs = filter (/= i) xs
+  | length xs >= 2 = xs
+  | otherwise = xs ++ [i]
+
+toggleElem :: MisoString -> [MisoString] -> [MisoString]
+toggleElem k xs
+  | k `elem` xs = filter (/= k) xs
+  | otherwise = k : xs
+
+msShow :: Show a => a -> MisoString
+msShow = ms . show

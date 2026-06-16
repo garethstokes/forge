@@ -1,0 +1,8 @@
+[package]
+name = "evals-api"
+version = "0.1.0.0"
+
+[build.lib]
+source-dirs = ["src"]
+ghc-options = ["-Wall"]
+depends = ["base", "text", "time", "aeson"]
