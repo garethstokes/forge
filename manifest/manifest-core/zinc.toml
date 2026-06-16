@@ -1,0 +1,18 @@
+[package]
+name = "manifest-core"
+version = "0.1.0.0"
+
+[build.lib]
+source-dirs = ["src"]
+ghc-options = [
+  "-Wall",
+  "-XOverloadedStrings",
+  "-XScopedTypeVariables",
+  "-XTypeApplications",
+  "-XLambdaCase",
+  "-XTupleSections",
+]
+depends = [
+  "base", "bytestring", "containers", "text", "time", "transformers",
+  "profunctors", "autodocodec", "aeson",
+]

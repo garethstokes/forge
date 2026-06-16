@@ -1,0 +1,82 @@
+[workspace]
+members = [".", "manifest-core"]
+ghc = "9.10.1"
+
+[package]
+name = "manifest"
+version = "0.1.0.0"
+
+[build.lib]
+source-dirs = ["src"]
+ghc-options = [
+  "-Wall",
+  "-XOverloadedStrings",
+  "-XScopedTypeVariables",
+  "-XTypeApplications",
+  "-XLambdaCase",
+  "-XTupleSections",
+]
+depends = [
+  "base",
+  "bytestring",
+  "containers",
+  "stm",
+  "text",
+  "time",
+  "transformers",
+  "process",
+  "directory",
+  "postgresql-libpq",
+  "profunctors",
+  "autodocodec",
+  "aeson",
+  "manifest-core",
+]
+
+[build.test.spec]
+source-dirs = ["test", "docs/tutorials"]
+main = "Spec.hs"
+ghc-options = [
+  "-XOverloadedStrings",
+  "-XScopedTypeVariables",
+  "-XTypeApplications",
+  "-XLambdaCase",
+  "-pgmL", "markdown-unlit",  # run literate .lhs tutorials through markdown-unlit (```haskell blocks); .hs unaffected
+  "-lpq",  # link libpq into the test exe (libpq libdir is on LIBRARY_PATH via the flake)
+]
+depends = [
+  "base",
+  "bytestring",
+  "containers",
+  "stm",
+  "text",
+  "time",
+  "transformers",
+  "process",
+  "directory",
+  "filepath",
+  "postgresql-libpq",
+  "manifest",
+  "manifest-core",
+  "autodocodec",
+  "aeson",
+]
+
+[build.exe.manifest-migrate]
+source-dirs = ["app"]
+main = "Main.hs"
+ghc-options = ["-Wall", "-lpq"]
+depends = ["base", "bytestring", "text", "manifest"]
+
+[dependencies]
+
+[dependencies.postgresql-libpq]
+rev = "240147a5225b4e19e20abb9d1103e66b1b55b5a2"  # v0.11.0.0
+repo = "https://github.com/haskellari/postgresql-libpq"
+flags = { use-pkg-config = true }  # Simple pkgconfig provider (avoids build-type Configure)
+
+[dependencies.profunctors]
+repo = "https://github.com/ekmett/profunctors.git"
+
+[dependencies.autodocodec]
+repo = "https://github.com/NorfairKing/autodocodec"

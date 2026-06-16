@@ -1,0 +1,12 @@
+title: manifest
+description: A Unit-of-Work ORM for Haskell on a Higher-Kinded-Data core.
+remote_theme: just-the-docs/just-the-docs
+url: https://garethstokes.github.io
+baseurl: /manifest
+search_enabled: true
+heading_anchors: true
+markdown_ext: "markdown,mkdown,mkdn,mkd,md,lhs"
+aux_links:
+  GitHub: https://github.com/garethstokes/manifest
+exclude:
+  - superpowers/
