@@ -23,6 +23,7 @@ import Data.List (isInfixOf)
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO (hClose, openTempFile)
 import System.Process (readProcessWithExitCode)
+import GoldenGhc (goldenGhcArgs)
 import Harness
 
 -- A standalone module that reads an unloaded relation. Compiling it must fail
@@ -47,15 +48,14 @@ tests = group "RelationError"
       (path, h) <- openTempFile tmp "RelGolden.hs"
       hClose h
       writeFile path goldenSource
+      ghcArgs <- goldenGhcArgs
       (_code, _out, err) <-
         readProcessWithExitCode "ghc"
-          [ "-fno-code", "-fforce-recomp"
-          , "-package-db", ".zinc/pkgdb"
-          , "-i.zinc/lib", "-itest"
-          , "-XOverloadedStrings", "-XScopedTypeVariables", "-XTypeApplications"
-          , "-XLambdaCase", "-XDataKinds", "-XOverloadedLabels"
-          , path
-          ]
+          ( [ "-fno-code", "-fforce-recomp" ] ++ ghcArgs ++
+            [ "-XOverloadedStrings", "-XScopedTypeVariables", "-XTypeApplications"
+            , "-XLambdaCase", "-XDataKinds", "-XOverloadedLabels"
+            , path
+            ] )
           ""
       removeFile path
       -- GHC normalises whitespace/newlines in the rendered message, so compare

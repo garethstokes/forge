@@ -22,6 +22,7 @@ import Manifest.Postgres (execText, withConnection)
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO (hClose, openTempFile)
 import System.Process (readProcessWithExitCode)
+import GoldenGhc (goldenGhcArgs)
 import Fixtures (withEmptyDb)
 import Harness
 
@@ -164,13 +165,10 @@ tests = group "TypedFields"
       (path, h) <- openTempFile tmp "WrongId.hs"
       hClose h
       writeFile path wrongIdSource
+      ghcArgs <- goldenGhcArgs
       (_code, _out, err) <-
         readProcessWithExitCode "ghc"
-          [ "-fno-code", "-fforce-recomp"
-          , "-package-db", ".zinc/pkgdb"
-          , "-i.zinc/lib"
-          , path
-          ]
+          ( [ "-fno-code", "-fforce-recomp" ] ++ ghcArgs ++ [ path ] )
           ""
       removeFile path
       let msg = unwords (words err)

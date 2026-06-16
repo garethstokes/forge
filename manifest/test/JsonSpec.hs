@@ -22,6 +22,7 @@ import Manifest
 import Manifest.Core.SqlType (SqlType (..))
 import Manifest.Postgres (execText, withConnection)
 import Fixtures (withEmptyDb)
+import GoldenGhc (goldenGhcArgs)
 import Harness (Test, group, test, assertEqual, assertBool)
 
 data Prefs = Prefs { prefTheme :: Text, prefTags :: [Text] }
@@ -132,16 +133,15 @@ tests = group "Json"
       (path, h) <- openTempFile tmp "TypedProjGolden.hs"
       hClose h
       writeFile path typoSource
+      ghcArgs <- goldenGhcArgs
       (_code, _out, err) <-
         readProcessWithExitCode "ghc"
-          [ "-fno-code", "-fforce-recomp"
-          , "-package-db", ".zinc/pkgdb"
-          , "-i.zinc/lib", "-itest"
-          , "-XOverloadedStrings", "-XScopedTypeVariables", "-XTypeApplications"
-          , "-XLambdaCase", "-XDataKinds", "-XOverloadedLabels", "-XDeriveGeneric"
-          , "-XDerivingVia", "-XStandaloneDeriving", "-XFlexibleContexts"
-          , path
-          ]
+          ( [ "-fno-code", "-fforce-recomp" ] ++ ghcArgs ++
+            [ "-XOverloadedStrings", "-XScopedTypeVariables", "-XTypeApplications"
+            , "-XLambdaCase", "-XDataKinds", "-XOverloadedLabels", "-XDeriveGeneric"
+            , "-XDerivingVia", "-XStandaloneDeriving", "-XFlexibleContexts"
+            , path
+            ] )
           ""
       removeFile path
       let msg = unwords (words err)
