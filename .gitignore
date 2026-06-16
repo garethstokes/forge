@@ -1,0 +1,31 @@
+# Haskell / zinc build artifacts
+.zinc/
+dist-newstyle/
+*.hi
+*.o
+result
+result-*
+
+# direnv / Nix dev-env cache
+.direnv/
+.envrc
+.env
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+
+# Claude Code worktrees (session-local, never published)
+.claude/worktrees/
+
+# superpowers visual-companion / brainstorm scratch
+.superpowers/
+
+# Generated wasm artifacts (restage with manifest-evals/scripts/build-ui.sh)
+manifest-evals/static/evals-ui.wasm
+manifest-evals/static/ghc_wasm_jsffi.js
+manifest-evals/static/js/
+
+# downloaded eval datasets (large, external)
+manifest-evals/data/

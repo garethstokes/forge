@@ -1,6 +1,6 @@
 {
-  description = "Manifest — the Unit-of-Work layer Haskell never had.";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+  description = "forge — crucible + manifest + manifest-evals monorepo (zinc workspace)";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
   outputs = { self, nixpkgs }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
@@ -11,7 +11,7 @@
         in {
           default = pkgs.mkShell {
             packages = [
-              pkgs.haskell.compiler.ghc9101
+              pkgs.haskell.compiler.ghc9122
               pkgs.git
               pkgs.haskellPackages.alex
               pkgs.haskellPackages.happy
