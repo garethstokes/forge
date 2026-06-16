@@ -1,0 +1,306 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeOperators #-}
+
+-- | Datasets, expectations, and scoring. Deterministic graders first
+-- ('Exactly', 'Predicate', 'Metric'); 'Rubric' asks the LLM judge one
+-- holistic question; 'Checklist' decomposes a quality goal into weighted
+-- binary criteria, each judged with its own call; 'Scale' rates on an
+-- anchored ordinal scale; 'SimilarTo' compares embeddings by cosine. The
+-- judge plumbing (prompt, repair, voting) lives in "Crucible.Eval.Judge".
+module Crucible.Eval
+  ( Case(..), Expectation(..), Criterion(..), criterion, penalty
+  , Score(..), score, Verdict(..)
+  , Result(..), Report(..)
+  , JudgeExample (..), JudgeOpts (..), defaultJudgeOpts
+  , judgeWith, runEvalWith, scoreWith
+  , runEval, runEvalN, scoreM, scoreN, judge, judgeN, renderReport
+  , groundingCheck
+  , LintIssue (..), LintFinding (..), lintChecklist
+  ) where
+
+import Data.Text (Text)
+import qualified Data.Text as T
+import Effectful
+
+import Crucible.Embed (Embed, embed, cosine)
+import Crucible.Eval.Grounding (GroundingOutcome (..), groundingOutcome)
+import Crucible.Eval.Judge (JudgeExample (..), JudgeOpts (..), Verdict (..), VoteOutcome (..), AbstainPolicy (..), defaultJudgeOpts, vote, RateOutcome (..), rate)
+import Crucible.Eval.Lint (LintFinding (..), LintIssue (..), lintLabels)
+import Crucible.LLM (LLM)
+
+-- | What a case's output is checked against.
+data Expectation a
+  = Exactly a              -- ^ must equal (needs Eq a)
+  | Predicate (a -> Bool)  -- ^ must satisfy
+  | Rubric Text            -- ^ LLM-as-judge against this rubric
+  | Checklist [Criterion]  -- ^ weighted binary criteria, judged one by one
+  | Grounded Text          -- ^ every factual claim in the output must be
+                           --   supported by this evidence (derived claims)
+  | Metric Double (a -> Double)
+                           -- ^ pass threshold, scalar metric in [0,1]
+                           --   (see "Crucible.Eval.Metrics"); the scalar IS
+                           --   the score value, passing at value >= threshold
+  | Scale Int Text [(Int, Text)]
+                           -- ^ pass level, rubric, anchored levels: an
+                           --   LLM-rated ordinal scale (1..k, k = highest
+                           --   anchor); value = (level-1)/(k-1), passing at
+                           --   the pass level. Anchor at least the ends.
+                           --   Use a pass level of 2 or higher: at pass
+                           --   level 1 every case passes, including
+                           --   judge errors (which score 0).
+  | SimilarTo Double Text  -- ^ pass threshold, reference text: embeds both
+                           --   the reference and the output, scoring cosine
+                           --   similarity clamped to [0,1], passing at
+                           --   value >= threshold. Needs an Embed
+                           --   interpreter at the edge; 'Crucible.Embed.none'
+                           --   serves programs without similarity cases.
+
+-- | One checklist item: a concrete, observable requirement and its weight.
+-- Write observable criteria ("cites a source URL"), not aspirational ones
+-- ("is trustworthy"). A positive weight rewards; a negative weight (build
+-- it with 'penalty') subtracts for a failure mode. A checklist case passes
+-- (counts in 'Report.passRate') only when every positive criterion holds
+-- and no penalty fires.
+data Criterion = Criterion { label :: Text, weight :: Double }
+
+-- | A criterion with weight 1.
+criterion :: Text -> Criterion
+criterion l = Criterion l 1
+
+-- | A penalty criterion: a failure mode to subtract for. Give a positive
+-- magnitude; the stored weight is negative. The label names the BAD
+-- property ("recommends a specific product"), so the judge fires the
+-- penalty when that property is present, lowering the score.
+penalty :: Double -> Text -> Criterion
+penalty w l = Criterion l (negate (abs w))
+
+-- | One dataset row.
+data Case i a = Case { input :: i, name :: Text, expect :: Expectation a }
+
+-- | A score in [0,1] with a rationale. For judged scores produced by a vote,
+-- 'votes' records the tally (yes, no); both sides nonzero means the judge is
+-- uncertain on this case, and 'dissent' carries the first losing-side
+-- rationale. The rationale of a voted score is a SAMPLE from the majority
+-- side, not the reason the vote went that way. Deterministic scores carry
+-- 'Nothing' for both.
+data Score = Score
+  { value     :: Double
+  , rationale :: Text
+  , votes     :: Maybe (Int, Int)
+  , dissent   :: Maybe Text
+  }
+  deriving (Eq, Show)
+
+-- | Score with no vote tally.
+score :: Double -> Text -> Score
+score v r = Score v r Nothing Nothing
+
+data Result i a = Result { case' :: Case i a, output :: a, score :: Score }
+data Report i a = Report { results :: [Result i a], passRate :: Double, meanScore :: Double }
+
+-- | LLM-as-judge with explicit options (votes, few-shot examples).
+judgeWith :: (LLM :> es) => JudgeOpts -> (a -> Text) -> Text -> a -> Eff es Score
+judgeWith opts render rubric actual =
+  voteScore (opts.votes <= 1) <$> vote True opts rubric (render actual)
+
+-- | LLM-as-judge, single sample (equivalent to @'judgeN' 1@).
+judge :: (LLM :> es) => (a -> Text) -> Text -> a -> Eff es Score
+judge = judgeWith defaultJudgeOpts
+
+-- | LLM-as-judge with n-sample majority voting (use odd n; the vote stops
+-- early once decided, so n=3 typically costs ~2 calls). For n > 1 the tally
+-- is recorded in 'votes'; n <= 1 keeps 'votes' = Nothing. An all-errored
+-- vote yields the judge-error score (value 0, rationale tagged
+-- @judge error: @). Cost note: each sample is one judge call, two if its
+-- reply needs the repair re-prompt.
+judgeN :: (LLM :> es) => Int -> (a -> Text) -> Text -> a -> Eff es Score
+judgeN n = judgeWith defaultJudgeOpts { votes = n }
+
+-- | Convert a vote outcome to a Score; the Bool suppresses the tally for
+-- single-sample judging.
+voteScore :: Bool -> VoteOutcome -> Score
+voteScore _      (AllErrored m)      = score 0.0 ("judge error: " <> m)
+voteScore _      (AllAbstained m)    = score 0.0 ("judge abstained: " <> m)
+voteScore single (Decided p w d y f) =
+  Score (if p then 1.0 else 0.0) w
+    (if single then Nothing else Just (y, f))
+    (if single then Nothing else d)
+
+-- | Score one output with explicit judge options. Examples feed 'Rubric'
+-- judging only; 'Checklist' criteria, 'Grounded' claims, and 'Scale' all
+-- take the vote count but ignore examples (each is its own micro-rubric).
+scoreWith :: (Eq a, LLM :> es, Embed :> es) => JudgeOpts -> (a -> Text) -> Expectation a -> a -> Eff es Score
+scoreWith opts render exp_ actual = case exp_ of
+  Exactly e    -> pure (score (ind (actual == e)) (if actual == e then "exact match" else "mismatch"))
+  Predicate p  -> pure (score (ind (p actual)) (if p actual then "predicate held" else "predicate failed"))
+  Rubric r     -> judgeWith opts render r actual
+  Checklist cs -> checklistScore opts.votes opts.abstain render cs actual
+  Grounded ev  -> groundingScore <$> groundingOutcome opts.votes ev (render actual)
+  Metric _ f   -> let v = max 0.0 (min 1.0 (f actual))
+                  in pure (score v ("metric = " <> T.pack (show v)))
+  Scale _ r as -> scaleScore opts.votes r as (render actual)
+  SimilarTo _ ref -> do
+    rv <- embed ref
+    ov <- embed (render actual)
+    let v = min 1.0 (max 0.0 (cosine rv ov))
+    pure (score v ("cosine = " <> T.pack (show v)))
+  where ind b = if b then 1.0 else 0.0
+
+-- | Score one output against its expectation, single-sample judging.
+scoreM :: (Eq a, LLM :> es, Embed :> es) => (a -> Text) -> Expectation a -> a -> Eff es Score
+scoreM = scoreWith defaultJudgeOpts
+
+-- | 'scoreM' with n-vote judging for 'Rubric' cases and for each
+-- 'Checklist' criterion. Pure for Exactly/Predicate.
+scoreN :: (Eq a, LLM :> es, Embed :> es) => Int -> (a -> Text) -> Expectation a -> a -> Eff es Score
+scoreN n = scoreWith defaultJudgeOpts { votes = n }
+
+-- | Judge each criterion with its own binary call; positive weights set the
+-- denominator, penalties subtract, the score clamps to [0,1]. An abstained
+-- criterion fails (and stays in the denominator) under 'AbstainFails', or
+-- drops from the denominator under 'AbstainSkips'. A judge error fails the
+-- criterion. value reaches 1.0 only when every positive criterion passes
+-- and no penalty fires.
+checklistScore :: (LLM :> es) => Int -> AbstainPolicy -> (a -> Text) -> [Criterion] -> a -> Eff es Score
+checklistScore _ _ _ [] _ = pure (score 1.0 "empty checklist")
+checklistScore n pol render cs actual = do
+  rs <- mapM judge1 cs
+  let posTotal = sum [c.weight | (c, m, _) <- rs, c.weight > 0, m /= Nothing]
+      got      = sum [c.weight | (c, Just True, _) <- rs]
+      clamp    = max 0.0 . min 1.0
+      val | posTotal > 0 = clamp (got / posTotal)
+          | got < 0      = 0.0
+          | otherwise    = 1.0
+  pure (score val (T.intercalate "\n" [ l | (_, _, l) <- rs ]))
+  where
+    judge1 c = do
+      out <- vote True defaultJudgeOpts { votes = n } ("the output must satisfy: " <> c.label) (render actual)
+      pure $ case out of
+        Decided p w _ _ _ -> (c, Just p,     decidedLine c p w)
+        AllErrored m      -> (c, Just False, "[fail] "    <> c.label <> ": judge error: " <> m)
+        AllAbstained m    -> case pol of
+          AbstainFails -> (c, Just False, "[abstain] " <> c.label <> ": judge abstained: " <> m)
+          AbstainSkips -> (c, Nothing,    "[skip] "    <> c.label <> ": judge abstained: " <> m)
+    decidedLine c p w
+      | c.weight < 0 = (if p then "[penalty] " else "[clear] ") <> c.label <> ": " <> w
+      | otherwise    = (if p then "[pass] "    else "[fail] ")  <> c.label <> ": " <> w
+
+-- | Rate the rendered output on an anchored 1..k scale; the median level
+-- normalizes to (level-1)/(k-1). Single-vote keeps votes/dissent Nothing,
+-- like 'judgeWith'. A scale whose anchors do not reach level 2 is a judge
+-- error (never a division by zero).
+scaleScore :: (LLM :> es) => Int -> Text -> [(Int, Text)] -> Text -> Eff es Score
+scaleScore n rubric anchors rendered
+  | k <= 1 = pure (score 0.0 "judge error: a scale needs anchors up to level 2 or higher")
+  | otherwise = do
+      out <- rate n k anchors rubric rendered
+      pure $ case out of
+        RateAllErrored m -> score 0.0 ("judge error: " <> m)
+        Rated lvl w d agree others ->
+          Score (fromIntegral (lvl - 1) / fromIntegral (k - 1))
+            ("level " <> T.pack (show lvl) <> " of " <> T.pack (show k) <> ": " <> w)
+            (if n <= 1 then Nothing else Just (agree, others))
+            (if n <= 1 then Nothing else d)
+  where k = maximum (0 : map fst anchors)
+
+-- | Check that every factual claim in an output is supported by the given
+-- evidence: decompose into atomic claims (at most 20, one decompose call
+-- plus one repair attempt), verify each with an n-vote judge call, and
+-- score supported over total. value reaches 1.0 only when every claim is
+-- supported, so a 'Grounded' case passes only with zero unsupported
+-- claims. A decompose failure scores 0 with a @judge error: @ tagged
+-- rationale; 'votes'\/'dissent' stay Nothing (per-claim tallies do not
+-- aggregate). Cost: 1-2 decompose calls plus claims x votes judge calls.
+groundingCheck :: (LLM :> es) => Int -> (o -> Text) -> Text -> o -> Eff es Score
+groundingCheck n render ev o = groundingScore <$> groundingOutcome n ev (render o)
+
+-- | Advisory lint over a checklist's criterion labels: run the four
+-- documented anti-pattern checks (conflation, direction, redundancy,
+-- vague wording) as one judge call. Advisory only, never a gate. A clean
+-- checklist returns []. Coverage is not checked (it needs your observed
+-- failure modes, not the labels).
+lintChecklist :: (LLM :> es) => [Criterion] -> Eff es [LintFinding]
+lintChecklist = lintLabels . map ((.label) :: Criterion -> Text)
+
+-- | Convert a grounding outcome to a Score.
+groundingScore :: GroundingOutcome -> Score
+groundingScore (GroundingOutcome s t ls) =
+  score (fromIntegral s / fromIntegral t) (T.intercalate "\n" ls)
+groundingScore NoClaims =
+  score 1.0 "no factual claims"
+groundingScore (DecomposeFailed m) =
+  score 0.0 ("judge error: claim decomposition failed: " <> m)
+
+-- | Pass condition per expectation: 'Metric' passes at its threshold,
+-- 'Scale' at its pass level, 'SimilarTo' at its threshold, everything
+-- else at value 1.0.
+passes :: Expectation a -> Double -> Bool
+passes (Metric t _) v = v >= t
+passes (Scale p _ anchors) v =
+  let k = maximum (1 : map fst anchors)
+  in k > 1 && v >= fromIntegral (p - 1) / fromIntegral (k - 1)
+passes (SimilarTo t _) v = v >= t
+passes _ v = v >= 1.0
+
+-- | 'runEval' with n-vote judging for Rubric cases and Checklist criteria.
+runEvalWith :: (Eq a, LLM :> es, Embed :> es)
+            => JudgeOpts -> (a -> Text) -> (i -> Eff es a) -> [Case i a]
+            -> Eff es (Report i a)
+runEvalWith opts render sut cases = do
+  rs <- mapM run1 cases
+  let vals   = map (\Result{score = s} -> s.value) rs
+      len    = length rs
+      mean   = if len == 0 then 0 else sum vals / fromIntegral len
+      passed = length [() | Result{case' = Case{expect = ex}, score = s} <- rs, passes ex s.value]
+      pr     = if len == 0 then 0 else fromIntegral passed / fromIntegral len
+  pure (Report rs pr mean)
+  where
+    run1 c@Case{input = i, expect = ex} = do
+      out <- sut i
+      s   <- scoreWith opts render ex out
+      pure (Result c out s)
+
+-- | Run a system-under-test over a dataset and aggregate, single-sample
+-- judging (equivalent to @'runEvalN' 1@).
+runEval :: (Eq a, LLM :> es, Embed :> es) => (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
+runEval = runEvalWith defaultJudgeOpts
+
+-- | 'runEval' with n-vote judging for Rubric cases and Checklist criteria.
+runEvalN :: (Eq a, LLM :> es, Embed :> es) => Int -> (a -> Text) -> (i -> Eff es a) -> [Case i a] -> Eff es (Report i a)
+runEvalN n = runEvalWith defaultJudgeOpts { votes = n }
+
+-- | A human-readable report: one line per case, then a summary. Voted
+-- scores show the tally and label their rationale as majority-side (a
+-- sample from the winning votes, not the reason the vote went that way);
+-- contested cases are flagged with the dissenting rationale shown, and
+-- judge errors are called out.
+renderReport :: Report i a -> Text
+renderReport Report{results = rs, passRate = pr, meanScore = ms} =
+  T.intercalate "\n" $
+  [ caseName <> ": " <> tshow s.value <> " (" <> body s <> ")" <> annot s
+  | Result{case' = Case{name = caseName}, score = s} <- rs ]
+  ++ [ "", "pass-rate: " <> tshow pr <> "  mean: " <> tshow ms ]
+  where
+    tshow :: Show x => x -> Text
+    tshow = T.pack . show
+    body s = case s.votes of
+      Just _  -> "majority-side rationale: " <> s.rationale
+      Nothing -> s.rationale
+    annot s = tally s <> uncertain s <> jerr s <> jabs s
+    tally s = case s.votes of
+      Just (y, f) -> "  [votes " <> tshow y <> "-" <> tshow f <> "]"
+      Nothing     -> ""
+    uncertain s = case s.votes of
+      Just (y, f) | y > 0 && f > 0 ->
+        "  [judge uncertain: review by hand"
+          <> maybe "" ("; dissent: " <>) s.dissent
+          <> "]"
+      _ -> ""
+    jerr s = if "judge error: " `T.isInfixOf` s.rationale then "  [judge error]" else ""
+    jabs s = if "judge abstained: " `T.isInfixOf` s.rationale then "  [judge abstained]" else ""

@@ -1,0 +1,18 @@
+[package]
+name = "crucible-manifest"
+version = "0.1.0"
+
+[build.lib]
+source-dirs = ["src"]
+ghc-options = ["-Wall", "-Wno-orphans", "-lpq"]
+depends = ["base", "text", "bytestring", "crucible", "manifest", "manifest-core", "effectful", "effectful-core", "aeson", "autodocodec", "base64-bytestring"]
+
+[build.test.spec]
+source-dirs = ["test"]
+main = "Spec.hs"
+other-modules = ["Conformance"]
+ghc-options = ["-lpq", "-threaded"]
+depends = ["base", "text", "bytestring", "crucible", "crucible-manifest", "manifest", "manifest-core", "directory", "filepath"]
+
+[dependencies.crucible]
+path = ".."

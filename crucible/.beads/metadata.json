@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "crucible",
+  "project_id": "6ecc25ad-866c-4e46-a1f2-fd58f6219af4"
+}

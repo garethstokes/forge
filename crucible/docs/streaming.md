@@ -1,0 +1,186 @@
+---
+title: Streaming
+nav_order: 6
+---
+
+# Streaming
+
+The standard `Anthropic.run` and `Anthropic.runChat` interpreters wait for the
+complete response before returning. Streaming interpreters instead surface each
+token chunk as it arrives, so your application can print or forward partial
+output without waiting for the full generation. The assembled result and token
+`Usage` are still returned at the end; nothing is lost, output just arrives
+sooner.
+
+## The Emit effect
+
+Streaming is wired through the `Emit` effect. Each arriving token chunk is
+handed to:
+
+```haskell
+emit :: (Emit :> es) => Text -> Eff es ()
+```
+
+The streaming interpreters call `emit` for every server-sent delta. You choose
+what happens to those deltas by picking an `Emit` interpreter at the program
+edge:
+
+| Interpreter    | Behaviour |
+|----------------|-----------|
+| `runEmitIO`    | Pass each delta to an `IO` sink: `(Text -> IO ()) -> Eff (Emit:es) a -> Eff es a`. The standard choice for live applications: print each chunk as it arrives. |
+| `ignoreEmit`   | Discard all deltas: `Eff (Emit:es) a -> Eff es a`. Useful when you want the streaming interpreter's efficiency but do not need incremental output. |
+| `runEmitList`  | Collect deltas in arrival order alongside the result: `Eff (Emit:es) a -> Eff es (a, [Text])`. The natural choice for tests: inspect the exact chunks the model produced. |
+
+`Emit` is orthogonal to `LLM` and `Chat`. Swapping between the three `Emit`
+interpreters does not touch the rest of your effect stack.
+
+## The streaming interpreters
+
+Two streaming interpreters live in `Crucible.LLM.Anthropic.Stream`, used
+qualified under the same `Anthropic` alias:
+
+```haskell
+import qualified Crucible.LLM.Anthropic.Stream as Anthropic
+
+Anthropic.stream
+  :: (IOE :> es, Emit :> es)
+  => AnthropicConfig
+  -> Eff (LLM : es) a
+  -> Eff es (a, Usage)
+
+Anthropic.streamChat
+  :: (IOE :> es, Emit :> es)
+  => AnthropicConfig
+  -> Eff (Chat : es) a
+  -> Eff es (a, Usage)
+```
+
+Both behave like their non-streaming counterparts (`Anthropic.run`,
+`Anthropic.runChat`) but emit token deltas via `Emit` as each chunk arrives from
+the server. The assembled `Text` (or `Either ChatError Text` for the Chat path)
+is returned together with cumulative `Usage` once the stream closes.
+
+`Crucible.LLM.OpenAI.Stream` provides the OpenAI pair with identical
+signatures (`OpenAI.stream`, `OpenAI.streamChat`, taking an `OpenAIConfig`);
+import it under the same `OpenAI` alias as the parent module.
+
+## Worked example
+
+The `app/Main.hs` smoke test demonstrates the text path:
+
+```haskell
+import qualified Data.Text.IO as TIO
+import System.IO (hFlush, stdout)
+import Effectful (runEff)
+import Crucible.Emit (runEmitIO)
+import qualified Crucible.LLM.Anthropic.Stream as Anthropic
+import Crucible.LLM (complete)
+
+-- deltas are printed as they arrive; the assembled Text is in `streamed`
+(streamed, sUsage) <- runEff
+  ( runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
+      (Anthropic.stream cfg (complete prompt)) )
+```
+
+The tool-agent path is the same shape, substituting `Anthropic.streamChat` and
+`runToolAgent`:
+
+```haskell
+import qualified Crucible.LLM.Anthropic.Stream as Anthropic
+import Crucible.Chat (runToolAgent)
+import Crucible.Tool.Generic (tools)
+
+(toolStream, tUsage) <- runEff
+  ( runEmitIO (\t -> TIO.putStr t >> hFlush stdout)
+      (Anthropic.streamChat cfg
+        (runToolAgent (tools weatherBox)
+          "Use the tool to get the weather in Brisbane, then tell me.")) )
+```
+
+During each tool-loop round the model's text reply is streamed live; tool-call
+execution itself is synchronous (the handler runs between rounds). The final
+result is returned exactly as it would be from `Anthropic.runChat`.
+
+## Streaming and typed skills
+
+Typed skills (`call`) run under the `LLM` effect, so they compose with the
+streaming path without changes: pass `call classify input` where you would pass
+`complete prompt`. The token chunks are emitted as they arrive; the assembled
+text is decoded through the output codec at the end. For incremental typed
+decoding of a single JSON object as chunks arrive, see "Partial typed values"
+below. For row-based data see "Row-based data (JSONL)" below.
+
+## Row-based data (JSONL)
+
+For datasets, ask the model for JSONL (one JSON object per line, no markdown
+fences) and consume typed rows as each line completes. `Crucible.Rows`
+reinterprets `Emit`: deltas are buffered, and the moment a newline lands the
+finished line is decoded through a codec and handed to your sink. You do not
+wait for the full response to act on the first row.
+
+```haskell
+import Crucible.Rows (runRowsWith)
+
+data City = City { cityName :: Text, population :: Int }
+  deriving (Show, Generic)
+instance HasCodec City where codec = genericCodec
+
+(text, usage) <- runEff
+  ( runRowsWith (codec @City) (either logBadRow insertRow)
+      (Anthropic.stream cfg
+        (complete [Message User "List the 20 largest cities as JSONL, one object per line, fields cityName and population. No fences."])) )
+```
+
+Each row arrives as `Either DecodeError City`: a line that does not parse
+(a stray fence, prose) is a `Left` carrying the raw line, and later rows still
+decode. A non-blank trailing line without a final newline is flushed as the
+last row. `runRows` is the collecting variant (rows returned alongside the
+result), useful in tests and batch jobs.
+
+## Partial typed values
+
+For a single JSON object that grows across many deltas, `Crucible.Partial`
+decodes a partial buffer after each arriving chunk. The caller writes an
+all-`Maybe` version of the target type and its codec; `genericCodec` works
+directly because missing fields decode as `Nothing`.
+
+```haskell
+import Crucible.Partial (runPartialWith)
+
+data Weather = Weather { wCity :: Maybe Text, wTempC :: Maybe Int }
+  deriving (Show, Generic)
+instance HasCodec Weather where codec = genericCodec
+
+ref <- newIORef (0 :: Int, Nothing :: Maybe Weather)
+_ <- runEff
+  ( runPartialWith (codec @Weather)
+      (\case
+        Right w -> liftIO (modifyIORef' ref (\(n, _) -> (n + 1, Just w)))
+        Left _  -> pure ())
+      (Anthropic.stream cfg
+        (complete [Message User "Reply with ONLY a JSON object: {\"wCity\": <city>, \"wTempC\": <int>}. No markdown."])) )
+(n, mw) <- readIORef ref
+-- n partials decoded, mw is the last Right partial
+```
+
+`runPartialWith codec sink stream` reinterprets `Emit`: each delta is
+appended to a buffer, the buffer is closed to valid JSON by `closeJson` (the
+pure kernel), and the result is decoded and handed to the sink immediately. A
+blank buffer produces no callback. One partial arrives per delta; fields fill
+in as the object grows.
+
+`closeJson` is the pure function that makes an incomplete JSON buffer valid:
+it closes open strings, drops dangling keys, trims trailing commas, and closes
+open brackets.
+
+This covers one top-level object. For a stream of many complete objects use
+`runRows` (JSONL). `runPartial` is the collecting variant (partials returned
+alongside the result), useful in tests and batch jobs.
+
+## Further reading
+
+Token totals returned by the streaming interpreters are the same `Usage` type
+described in [Usage & cassettes](usage-and-cassettes.md). The `Emit` effect
+table and the non-streaming interpreters are in [Effects](effects.md). For
+mid-stream idle timeout and other connection-level settings see [The live
+interpreter](live-interpreter.md).

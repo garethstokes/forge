@@ -1,0 +1,276 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+
+-- | A typed, persistent knowledge base the agent maintains: typed 'Page's with
+-- typed 'Link's, read/written/listed/searched through the 'Research' effect.
+-- 'runResearchState' is the pure test interpreter; 'runResearchDir' stores one
+-- markdown file per page in a directory (git-diffable, outlives sessions).
+-- Sibling of 'Crucible.Memory' and 'Crucible.Ledger'. (The research notes call
+-- this a "Wiki"; it ships as "Research".)
+module Crucible.Research
+  ( Slug (..)
+  , mkSlug
+  , unSlug
+  , LinkType (..)
+  , Link (..)
+  , Page (..)
+  , Research (..)
+  , readPage, writePage, index, search, appendLog
+  , runResearchState
+  , ResearchStore (..)
+  , runResearchWith
+  , researchStoreDir
+  , researchStoreState
+  , runResearchDir
+  , slugCodec, linkTypeCodec, linkCodec, pageCodec
+  , matchesQuery
+  ) where
+
+import Control.Exception (IOException, try)
+import Data.IORef (IORef, readIORef, modifyIORef')
+import Data.List (find, sort, sortOn)
+import Data.Proxy (Proxy (..))
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
+
+import Effectful
+import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
+import Effectful.State.Static.Local (runState, get, modify)
+
+import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory)
+import System.FilePath ((</>), (<.>), takeBaseName, takeExtension)
+
+import Crucible.Codec (JSONCodec, object, field, list', enum, str, dimapCodec, encodeText)
+import Crucible.Decode (decodeLLM)
+
+newtype Slug = Slug Text deriving (Eq, Ord, Show)
+
+unSlug :: Slug -> Text
+unSlug (Slug s) = s
+
+-- | A slug is safe as a filename when it is non-empty, is not a parent
+-- reference, and has no path separator, so the directory interpreter cannot
+-- read or write outside its directory.
+safeSlug :: Slug -> Bool
+safeSlug (Slug s) =
+  not (T.null s) && s /= ".." && s /= "." && not (T.any (\c -> c == '/' || c == '\\') s)
+
+-- | A validated 'Slug': 'Nothing' if it is empty, a parent reference, or
+-- contains a path separator. Use this for agent-chosen slugs so a directory
+-- store cannot be escaped. The 'Slug' constructor stays available for the pure
+-- interpreter (a slug is just a key there); the directory interpreter ignores
+-- reads and writes for path-unsafe slugs regardless.
+mkSlug :: Text -> Maybe Slug
+mkSlug s = let sl = Slug s in if safeSlug sl then Just sl else Nothing
+
+data LinkType = Relates | Contradicts | Extends | Supersedes
+  deriving (Eq, Show)
+
+data Link = Link { target :: Slug, linkType :: LinkType }
+  deriving (Eq, Show)
+
+data Page meta = Page
+  { slug  :: Slug
+  , title :: Text
+  , links :: [Link]
+  , body  :: Text
+  , meta  :: meta
+  }
+  deriving (Eq, Show)
+
+data Research meta :: Effect where
+  ReadPage  :: Slug -> Research meta m (Maybe (Page meta))
+  WritePage :: Page meta -> Research meta m ()
+  Index     :: Research meta m [Slug]
+  Search    :: Text -> Research meta m [Slug]
+  AppendLog :: Text -> Research meta m ()
+type instance DispatchOf (Research meta) = Dynamic
+
+readPage :: (Research meta :> es) => Slug -> Eff es (Maybe (Page meta))
+readPage = send . ReadPage
+
+writePage :: (Research meta :> es) => Page meta -> Eff es ()
+writePage = send . WritePage
+
+index :: forall meta es. (Research meta :> es) => Eff es [Slug]
+index = send (Index :: Research meta (Eff es) [Slug])
+
+search :: forall meta es. (Research meta :> es) => Text -> Eff es [Slug]
+search q = send (Search q :: Research meta (Eff es) [Slug])
+
+appendLog :: forall meta es. (Research meta :> es) => Text -> Eff es ()
+appendLog t = send (AppendLog t :: Research meta (Eff es) ())
+
+-- | Does a page match a query (case-insensitive substring in title or body)?
+matchesQuery :: Text -> Page meta -> Bool
+matchesQuery q p =
+  let q' = T.toCaseFold q
+  in T.isInfixOf q' (T.toCaseFold p.title) || T.isInfixOf q' (T.toCaseFold p.body)
+
+-- | Pure interpreter (tests): seed pages, return the result, the final pages in
+-- slug order, and the appended log lines in order.
+runResearchState :: forall meta es a. [Page meta]
+                 -> Eff (Research meta : es) a -> Eff es (a, [Page meta], [Text])
+runResearchState seed action = do
+  (a, (pages, logRev)) <- reinterpret (runState (seed, [] :: [Text])) (\_ -> \case
+    ReadPage s   -> do (ps, _) <- get @([Page meta], [Text]); pure (find (\p -> p.slug == s) ps)
+    WritePage p  -> modify @([Page meta], [Text]) (\(ps, l) -> (p : filter (\q -> q.slug /= p.slug) ps, l))
+    Index        -> do (ps, _) <- get @([Page meta], [Text]); pure (sort (map ((.slug) :: Page meta -> Slug) ps))
+    Search q     -> do (ps, _) <- get @([Page meta], [Text]); pure (sort [((.slug) :: Page meta -> Slug) p | p <- ps, matchesQuery q p])
+    AppendLog ln -> modify @([Page meta], [Text]) (\(ps, l) -> (ps, ln : l))) action
+  pure (a, sortOn ((.slug) :: Page meta -> Slug) pages, reverse logRev)
+
+slugCodec :: JSONCodec Slug
+slugCodec = dimapCodec Slug unSlug str
+
+linkTypeCodec :: JSONCodec LinkType
+linkTypeCodec = enum
+  [ ("relates", Relates), ("contradicts", Contradicts)
+  , ("extends", Extends), ("supersedes", Supersedes) ]
+
+linkCodec :: JSONCodec Link
+linkCodec = object (Link <$> field "target" ((.target) :: Link -> Slug) slugCodec
+                         <*> field "linkType" ((.linkType) :: Link -> LinkType) linkTypeCodec)
+
+-- | A full page codec (slug, title, links, body, meta); used by the Research
+-- tools and by callers serializing a page for a model.
+pageCodec :: JSONCodec meta -> JSONCodec (Page meta)
+pageCodec mc = object (Page
+  <$> field "slug"  ((.slug)  :: Page meta -> Slug)   slugCodec
+  <*> field "title" ((.title) :: Page meta -> Text)   str
+  <*> field "links" ((.links) :: Page meta -> [Link]) (list' linkCodec)
+  <*> field "body"  ((.body)  :: Page meta -> Text)   str
+  <*> field "meta"  ((.meta)  :: Page meta -> meta)   mc)
+
+-- The serialized page head (everything but the slug, which is the filename).
+data PageHead meta = PageHead { title :: Text, links :: [Link], meta :: meta }
+
+pageHeadCodec :: JSONCodec meta -> JSONCodec (PageHead meta)
+pageHeadCodec mc = object (PageHead <$> field "title" ((.title) :: PageHead meta -> Text) str
+                                    <*> field "links" ((.links) :: PageHead meta -> [Link]) (list' linkCodec)
+                                    <*> field "meta"  ((.meta)  :: PageHead meta -> meta)  mc)
+
+pagePath :: FilePath -> Slug -> FilePath
+pagePath dir s = dir </> T.unpack (unSlug s) <.> "md"
+
+-- The head is a single line (compact 'encodeText' has no embedded newlines), so
+-- the page is @---\\n<json>\\n---\\n<body>@. Parsing splits on the first
+-- @\\n---\\n@ and keeps the body verbatim (trailing newlines and any later
+-- @---@ lines survive); never reconstruct the body from 'T.lines', which drops
+-- the trailing newline.
+renderPage :: JSONCodec meta -> Page meta -> Text
+renderPage mc p =
+  "---\n" <> encodeText (pageHeadCodec mc) (PageHead p.title p.links p.meta)
+    <> "\n---\n" <> p.body
+
+parsePage :: JSONCodec meta -> Slug -> Text -> Maybe (Page meta)
+parsePage mc s contents = case T.stripPrefix "---\n" contents of
+  Just afterOpen ->
+    let (headJson, rest) = T.breakOn "\n---\n" afterOpen
+    in if T.null rest
+         then Nothing
+         else let bodyText = T.drop (T.length "\n---\n") rest
+              in case decodeLLM (pageHeadCodec mc) headJson of
+                   Right h -> Just (Page s h.title h.links bodyText h.meta)
+                   Left _  -> Nothing
+  Nothing -> Nothing
+
+readPageFile :: JSONCodec meta -> FilePath -> Slug -> IO (Maybe (Page meta))
+readPageFile mc dir s
+  | not (safeSlug s) = pure Nothing
+  | otherwise = do
+      let path = pagePath dir s
+      exists <- doesFileExist path
+      if not exists then pure Nothing
+      else do
+        r <- try (TIO.readFile path) :: IO (Either IOException Text)
+        pure (either (const Nothing) (parsePage mc s) r)
+
+writePageFile :: JSONCodec meta -> FilePath -> Page meta -> IO ()
+writePageFile mc dir p
+  | not (safeSlug p.slug) = pure ()   -- refuse path-unsafe slugs (cannot escape dir)
+  | otherwise = do
+      createDirectoryIfMissing True dir
+      TIO.writeFile (pagePath dir p.slug) (renderPage mc p)
+
+-- | The activity log file. Not a @.md@ file, so no page slug can collide with it
+-- and 'indexDir' (which lists @.md@) excludes it.
+logFile :: FilePath -> FilePath
+logFile dir = dir </> "activity.log"
+
+indexDir :: FilePath -> IO [Slug]
+indexDir dir = do
+  createDirectoryIfMissing True dir
+  fs <- listDirectory dir
+  pure (sort [ Slug (T.pack (takeBaseName f)) | f <- fs, takeExtension f == ".md" ])
+
+searchDir :: JSONCodec meta -> FilePath -> Text -> IO [Slug]
+searchDir mc dir q = do
+  slugs <- indexDir dir
+  matched <- mapM (\s -> maybe False (matchesQuery q) <$> readPageFile mc dir s) slugs
+  pure [ s | (s, True) <- zip slugs matched ]
+
+-- | A thick backend handle: one 'IO' action per 'Research' operation. The seam
+-- that lets a backend (directory, in-memory, or a future Postgres satellite) be
+-- a parameter of the interpreter rather than a fresh interpreter per backend.
+data ResearchStore meta = ResearchStore
+  { doRead   :: Slug -> IO (Maybe (Page meta))
+  , doWrite  :: Page meta -> IO ()
+  , doIndex  :: IO [Slug]
+  , doSearch :: Text -> IO [Slug]
+  , doLog    :: Text -> IO ()
+  }
+
+-- | Run 'Research' against a thick handle (near-passthrough).
+runResearchWith :: (IOE :> es) => ResearchStore meta -> Eff (Research meta : es) a -> Eff es a
+runResearchWith s = interpret $ \_ -> \case
+  ReadPage sl  -> liftIO (s.doRead sl)
+  WritePage p  -> liftIO (s.doWrite p)
+  Index        -> liftIO s.doIndex
+  Search q     -> liftIO (s.doSearch q)
+  AppendLog ln -> liftIO (s.doLog ln)
+
+-- | Directory backend as a handle: one @\<slug\>.md@ per page, AppendLog to
+-- @activity.log@. Path-unsafe slugs are refused (read 'Nothing', write no-op).
+researchStoreDir :: JSONCodec meta -> FilePath -> ResearchStore meta
+researchStoreDir mc dir = ResearchStore
+  { doRead   = readPageFile mc dir
+  , doWrite  = writePageFile mc dir
+  , doIndex  = indexDir dir
+  , doSearch = searchDir mc dir
+  , doLog    = \ln -> createDirectoryIfMissing True dir >> TIO.appendFile (logFile dir) (ln <> "\n")
+  }
+
+-- | In-memory backend as a handle, over two 'IORef's (pages; log lines newest
+-- first). The IO analogue of 'runResearchState'; use when a program needs the
+-- 'Research' effect in 'IO' without touching disk.
+researchStoreState :: forall meta. IORef [Page meta] -> IORef [Text] -> ResearchStore meta
+researchStoreState pagesRef logRef = ResearchStore
+  { doRead   = \s -> find (\p -> p.slug == s) <$> readIORef pagesRef
+  , doWrite  = \p -> modifyIORef' pagesRef (\ps -> p : filter (\q -> q.slug /= p.slug) ps)
+  , doIndex  = sort . map ((.slug) :: Page meta -> Slug) <$> readIORef pagesRef
+  , doSearch = \q -> sort . map ((.slug) :: Page meta -> Slug) . filter (matchesQuery q) <$> readIORef pagesRef
+  , doLog    = \ln -> modifyIORef' logRef (ln :)
+  }
+
+-- | Directory interpreter: one @\<slug\>.md@ per page (--- JSON head --- +
+-- body), AppendLog appends to @activity.log@. Outlives sessions; git-diffable.
+-- Tolerant: a page file whose head does not decode reads as absent. Path-unsafe
+-- slugs (see 'mkSlug') are refused (read returns Nothing, write is a no-op), so
+-- a model-chosen slug cannot escape the directory. 'index' lists the @.md@ files
+-- on disk, which may include a file whose head no longer decodes.
+runResearchDir :: (IOE :> es) => JSONCodec meta -> FilePath -> Eff (Research meta : es) a -> Eff es a
+runResearchDir mc dir = runResearchWith (researchStoreDir mc dir)
