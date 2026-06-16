@@ -1,6 +1,8 @@
-[workspace]
-members = [".", "evals-api", "evals-ui"]
-ghc = "9.12.2"
+# zinc.toml — manifest-evals member of the forge root workspace. Workspace
+# config and shared external deps live in the forge root zinc.toml; evals-api /
+# evals-ui are sibling members, and manifest / crucible are now in-tree
+# workspace members (resolved by name, no git pin). Member deps below reference
+# siblings/external deps by name.
 
 [package]
 name = "manifest-evals"
@@ -28,116 +30,3 @@ source-dirs = ["app-dashboard"]
 main = "Main.hs"
 ghc-options = ["-Wall", "-XOverloadedStrings", "-threaded", "-lpq"]
 depends = ["base", "text", "bytestring", "wai", "warp", "http-types", "filepath", "directory", "manifest", "manifest-evals", "evals-api", "aeson"]
-
-[dependencies]
-
-[dependencies.manifest]
-repo = "https://github.com/garethstokes/manifest.git"
-# Includes recursive cascade deletes (manifest-va2) and the
-# HasRelation.Target -> Related family rename (manifest-jkq) + the change feed (z8h slice 1).
-# Now manifest main + castText :: Expr a -> Expr Text (RLS int-column predicate cast).
-rev = "fb31e961e0b2f0486f668c3b2954c49f28d70260"
-
-[dependencies.crucible]
-repo = "https://github.com/garethstokes/crucible.git"
-# Pushed remote master. Catches up ~60 commits (multimodal image/PDF inputs, Memory
-# effect + memoryLift, latency assertions, cross-model judge panels, partial typed
-# streaming, typed Spawn orchestrator-worker + spawnGated judge gates) and adds
-# passF1/failF1/balancedF1 to CalibrationReport (HealthBench pairwise balanced F1).
-rev = "f2a8ff20bd61536568828364d1207604d93f8069"
-
-# --- crucible's transitive dependency stanzas (copied verbatim) ---
-
-[dependencies.effectful]
-tag = "*"
-repo = "https://github.com/haskell-effectful/effectful.git"
-
-[dependencies.effectful-core]
-tag = "*"
-repo = "https://github.com/haskell-effectful/effectful.git#effectful-core"
-
-[dependencies.monad-control]
-rev = "378524047ba8f879133bd94e3586bac821187e9e"
-repo = "https://github.com/basvandijk/monad-control.git"
-
-[dependencies.strict-mutable-base]
-rev = "beea8212f10c9b003e86b208a78de43de8f0442c"
-repo = "https://github.com/arybczak/strict-mutable.git#strict-mutable-base"
-
-[dependencies.hpke]
-vendored = "0.1.0"
-
-[dependencies.mlkem]
-vendored = "0.2.1.0"
-
-[dependencies.http-client-tls]
-repo = "https://github.com/snoyberg/http-client"
-
-[dependencies.ram]
-vendored = "0.22.0"
-
-[dependencies.retry]
-repo = "https://github.com/Soostone/retry.git"
-
-# aeson + autodocodec for the domain codec layer (autodocodec = codec + JSON
-# Schema, as used by sibling project manifest for shared-types jsonb persistence).
-# Resolved from git by `zinc add`; the closure (aeson 2.3.0.0, autodocodec
-# 0.5.0.0, ~27 deps) is shared with manifest in the zinc store on GHC 9.10.1.
-
-[dependencies.autodocodec]
-repo = "https://github.com/NorfairKing/autodocodec"
-
-[dependencies.aeson]
-repo = "https://github.com/haskell/aeson.git"
-
-[dependencies.autodocodec-schema]
-repo = "https://github.com/NorfairKing/autodocodec"
-
-[dependencies.neat-interpolation]
-repo = "https://github.com/nikita-volkov/neat-interpolation.git"
-
-# --- manifest's unique transitive dependency stanzas ---
-
-[dependencies.postgresql-libpq]
-rev = "240147a5225b4e19e20abb9d1103e66b1b55b5a2"  # v0.11.0.0
-repo = "https://github.com/haskellari/postgresql-libpq"
-flags = { use-pkg-config = true }  # Simple pkgconfig provider (avoids build-type Configure)
-
-[dependencies.profunctors]
-repo = "https://github.com/ekmett/profunctors.git"
-
-# --- evals-dashboard (warp static stub server) transitive stanzas ---
-
-[dependencies.network-control]
-repo = "https://github.com/kazu-yamamoto/network-control.git"
-
-[dependencies.bsb-http-chunked]
-# Newest release tag (v0.0.0.4, 2018) pins base <4.13; HEAD relaxes to base <5.
-# The repo is dormant (last commit 2022); its `_x` wildcard sig needs
-# -XPartialTypeSignatures on modern GHC (Hackage revisions fixed bounds only).
-rev = "c0ecd72fe2beb1cf7de9340cc8b4a31045460532"
-repo = "https://github.com/sjakobi/bsb-http-chunked.git"
-ghc-options = ["-XPartialTypeSignatures", "-Wno-partial-type-signatures"]
-
-# --- evals-ui (miso wasm32-wasi browser reactor, gating spike) ---
-
-[dependencies.miso]
-repo = "https://github.com/dmjio/miso.git"
-# master (1.11.0.0): GHC wasm backend support (ffi/wasm, -DWASM, TH-embedded
-# js/miso.js) and the hs_start reactor export pattern from sample-app.
-rev = "a0778e080a427a891acef81e660c99a2062fa5ba"
-
-[dependencies.warp]
-repo = "https://github.com/yesodweb/wai.git#warp"
-# allow-sendfilefd=false: warp's portable file-serving path. zinc's hsc-macro
-# synthesis can't see zinc-built deps' versions (network reads as 0.0.0), so
-# simple-sendfile's Linux.hsc preprocesses its network<3 branch and fails;
-# with this flag warp never calls simple-sendfile.
-flags = { allow-sendfilefd = false }
-
-[dependencies.simple-sendfile]
-tag = "*"
-repo = "https://github.com/kazu-yamamoto/simple-sendfile"
-# fallback=true swaps the Linux .hsc module for the pure-Haskell conduit
-# fallback, sidestepping the MIN_VERSION_network hsc gap described above.
-flags = { fallback = true }

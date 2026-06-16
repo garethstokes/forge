@@ -1,6 +1,6 @@
-[workspace]
-members = [".", "manifest-core"]
-ghc = "9.10.1"
+# zinc.toml — manifest member of the forge root workspace. Workspace config and
+# shared external deps live in the forge root zinc.toml; manifest-core is a
+# sibling member. Member deps below reference siblings/external deps by name.
 
 [package]
 name = "manifest"
@@ -67,16 +67,3 @@ source-dirs = ["app"]
 main = "Main.hs"
 ghc-options = ["-Wall", "-lpq"]
 depends = ["base", "bytestring", "text", "manifest"]
-
-[dependencies]
-
-[dependencies.postgresql-libpq]
-rev = "240147a5225b4e19e20abb9d1103e66b1b55b5a2"  # v0.11.0.0
-repo = "https://github.com/haskellari/postgresql-libpq"
-flags = { use-pkg-config = true }  # Simple pkgconfig provider (avoids build-type Configure)
-
-[dependencies.profunctors]
-repo = "https://github.com/ekmett/profunctors.git"
-
-[dependencies.autodocodec]
-repo = "https://github.com/NorfairKing/autodocodec"

@@ -1,10 +1,7 @@
-# zinc.toml — crucible workspace + package in one file (single member, the repo
-# root). [workspace], [package], [build.*], and [dependencies]/[registry]
-# coexist here (member ".") — a flat single-package layout: src/, app/, test/.
-
-[workspace]
-members = [".", "crucible-manifest", "crucible-worker"]
-ghc = "9.12.2"
+# zinc.toml — crucible member of the forge root workspace. Flat single-package
+# layout: src/, app/, test/. Workspace config and shared external deps live in
+# the forge root zinc.toml; crucible-manifest / crucible-worker are sibling
+# members. Member deps below reference siblings/external deps by name.
 
 [package]
 name = "crucible"
@@ -23,69 +20,3 @@ depends = ["base", "text", "crucible", "effectful", "effectful-core", "aeson", "
 source-dirs = ["test"]
 main = "Spec.hs"
 depends = ["base", "text", "bytestring", "mtl", "crucible", "effectful", "effectful-core", "aeson", "autodocodec", "autodocodec-schema", "vector", "scientific", "directory", "base64-bytestring"]
-
-[dependencies]
-
-[dependencies.effectful]
-tag = "*"
-repo = "https://github.com/haskell-effectful/effectful.git"
-
-[dependencies.effectful-core]
-tag = "*"
-repo = "https://github.com/haskell-effectful/effectful.git#effectful-core"
-
-[dependencies.monad-control]
-rev = "378524047ba8f879133bd94e3586bac821187e9e"
-repo = "https://github.com/basvandijk/monad-control.git"
-
-[dependencies.strict-mutable-base]
-rev = "beea8212f10c9b003e86b208a78de43de8f0442c"
-repo = "https://github.com/arybczak/strict-mutable.git#strict-mutable-base"
-
-[dependencies.hpke]
-vendored = "0.1.0"
-
-[dependencies.mlkem]
-vendored = "0.2.1.0"
-
-[dependencies.http-client-tls]
-repo = "https://github.com/snoyberg/http-client"
-
-[dependencies.ram]
-vendored = "0.22.0"
-
-[dependencies.retry]
-repo = "https://github.com/Soostone/retry.git"
-
-# aeson + autodocodec for the domain codec layer (autodocodec = codec + JSON
-# Schema, as used by sibling project manifest for shared-types jsonb persistence).
-# Resolved from git by `zinc add`; the closure (aeson 2.3.0.0, autodocodec
-# 0.5.0.0, ~27 deps) is shared with manifest in the zinc store.
-
-[dependencies.autodocodec]
-repo = "https://github.com/NorfairKing/autodocodec"
-
-[dependencies.aeson]
-repo = "https://github.com/haskell/aeson.git"
-
-[dependencies.autodocodec-schema]
-repo = "https://github.com/NorfairKing/autodocodec"
-
-[dependencies.neat-interpolation]
-repo = "https://github.com/nikita-volkov/neat-interpolation.git"
-
-[dependencies.manifest]
-repo = "https://github.com/garethstokes/manifest.git"
-rev = "62f097c9dbb68a385aeb8551df68990e1da2bba2"
-
-[dependencies.manifest-core]
-repo = "https://github.com/garethstokes/manifest.git#manifest-core"
-rev = "62f097c9dbb68a385aeb8551df68990e1da2bba2"
-
-[dependencies.postgresql-libpq]
-rev = "240147a5225b4e19e20abb9d1103e66b1b55b5a2"
-repo = "https://github.com/haskellari/postgresql-libpq"
-flags = { use-pkg-config = true }
-
-[dependencies.profunctors]
-repo = "https://github.com/ekmett/profunctors.git"
