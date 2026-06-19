@@ -18,8 +18,8 @@ an **Update** value is a partial patch. The projection is computed by the existi
 **Direction** (default = readwrite):
 - **readwrite** — app reads and writes (the default; no annotation).
 - **read** — app reads, never writes; the DB owns it. Usually *implied* by a
-  marker (`Pk`/`Serial`/`Generated`); explicit `Read` is the escape hatch for a
-  plain column the app does not write.
+  marker (`PrimaryKey`/`Serial`/`Generated`); explicit `ReadOnly` is the escape
+  hatch for a plain column the app does not write.
 
 **Markers** (compose on the payload, orthogonal to direction, stripped by
 `Base`/reflected by `FieldMeta` — same grammar as today's `Pk`/`Serial`/`Nullable`):
@@ -30,6 +30,7 @@ an **Update** value is a partial patch. The projection is computed by the existi
 | `Serial a` | DB auto-increment ⇒ generated-on-insert (exists) |
 | `Generated a` | DB-filled (serial / DEFAULT / flush-stamp); read-only; value back via RETURNING |
 | `Default a` | DB default but app *may* supply ⇒ **optional** on Create |
+| `ReadOnly a` | app never writes it (read-only escape hatch for a plain column) |
 | `Nullable a` = `Maybe a` | nullable (exists) |
 | `Secret a` | **serialization-only**: masked in JSON/`Show`/logs. NOT a DB-presence policy |
 | `References T` | FK relationship — **parked to a follow-up bead**, listed for completeness |
@@ -70,38 +71,41 @@ Chosen over fork (b) (genuinely distinct types): fork (b) needs codegen (a `Fiel
 worth the `Omitted` fillers — which, with generic neutral-skeleton constructors
 (§4), barely surface.
 
+The read/loaded value reuses the **existing `Identity` context** (it is already
+the full row, and nothing is write-only anymore), so only `Create` and `Update`
+are new contexts. The read-only escape-hatch marker is named **`ReadOnly`** (the
+bare name `Read` would collide with the `Identity` read context and with
+Prelude's `Read`).
+
 ```haskell
 data Omitted = Omitted   -- "this field doesn't apply in this context"
 
 type family Field (f :: Type -> Type) (a :: Type) :: Type where
-  -- Read: full row, nothing pruned (no field is write-only anymore)
-  Field Read   a             = ReadVal a
+  Field Identity a = Base a        -- loaded/read value, full row (existing; unchanged)
+  Field Exposed  a = Exposed a     -- metadata: sees ALL columns incl. Secret (existing)
   -- Create: DB-assigned keys/cols absent; Default optional; app-supplied present
   Field Create (PrimaryKey (Serial a))    = Omitted   -- serial PK: DB assigns
   Field Create (PrimaryKey (Generated a)) = Omitted   -- DB-generated PK
   Field Create (Generated a)              = Omitted
-  Field Create (Read a)                   = Omitted
+  Field Create (ReadOnly a)               = Omitted
   Field Create (Default a)                = Maybe (Base a)
   Field Create (PrimaryKey a)             = Base a     -- app-supplied PK: required
   Field Create a                          = Base a
   -- Update: PK is the key (WHERE, never SET); DB-owned absent; rest → Patch
   Field Update (PrimaryKey a) = Omitted
   Field Update (Generated a)  = Omitted
-  Field Update (Read a)       = Omitted
+  Field Update (ReadOnly a)   = Omitted
   Field Update a              = Patch (Base a)
-  -- existing contexts
-  Field Exposed  a = Exposed a     -- metadata: sees ALL columns (incl. Secret)
-  Field Identity a = Base a
 
-type User       = UserT Read       -- all columns present
+type User       = UserT Identity   -- read/loaded value, all columns present
 type UserCreate = UserT Create
 type UserUpdate = UserT Update
 ```
 
-`Omitted` appears **only** in Create/Update, never Read. `Read ≈ Identity` (the
-current full-row decode fold barely changes). Metadata stays on `Exposed`, which
-sees every column including `Secret` ones (the password column is real in the
-schema).
+`Omitted` appears **only** in Create/Update, never the Read value. The existing
+full-row decode fold for `UserT Identity` is unchanged. Metadata stays on
+`Exposed`, which sees every column including `Secret` ones (the password column is
+real in the schema).
 
 ## 3. Patch + the two update paths converge on one executor
 
