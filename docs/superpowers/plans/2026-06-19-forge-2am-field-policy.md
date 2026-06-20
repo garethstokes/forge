@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Build/test command:** `zinc test` (run from `manifest/`). There is no `.cabal`; packages are zinc.toml members.
+- **Build/test command:** `zinc test manifest:spec`, run from the **workspace ROOT** `/home/gareth/code/garethstokes/forge`. Running from `manifest/` fails (it is a workspace *member*, not the workspace); bare `zinc test manifest` matches the wrong member (`crucible-manifest`). All `git` commands also run from the root (`git add manifest` stages `manifest/` and `manifest/manifest-core/`). There is no `.cabal`; packages are zinc.toml members. Add `--verbose` on failure to see full GHC stderr.
 - **No new dependencies.** `manifest-core` deps stay: `base bytestring containers text time transformers profunctors autodocodec aeson`. Do NOT add `barbies` or `product-profunctors` (see forge-i14 recommendation).
 - **GHC extensions** already enabled project-wide via zinc.toml `ghc-options`: `OverloadedStrings ScopedTypeVariables TypeApplications LambdaCase TupleSections`. Add per-module pragmas (`DataKinds`, `TypeFamilies`, `KindSignatures`, `FlexibleInstances`, `UndecidableInstances`, `TypeOperators`) as the existing modules do.
 - **Naming rules (verbatim):** no `Pk`/`PK` abbreviation — spell `PrimaryKey (Serial Int)` in full. Markers: `Generated`, `Default`, `Secret`, `ReadOnly`, `Nullable`. Contexts: existing `Identity` (loaded/read value), existing `Exposed` (metadata), new `Create`, new `Update`. `Patch a = Keep | Set a`.
@@ -51,7 +51,7 @@ In `Manifest.hs` remove `Pk` from the re-export list.
 
 - [ ] **Step 3: Run the suite — pure rename, everything still green.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS (same set as before; no behavior change).
 
 - [ ] **Step 4: Commit.**
@@ -97,7 +97,7 @@ Add imports to `MetaSpec.hs`: `Generated, Default, Secret, ReadOnly` from `Manif
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL to compile — `Generated`/`fieldIsGenerated` not in scope.
 
 - [ ] **Step 3: Implement in `Table.hs`.** Add to exports `Omitted(..), Generated, Default, Secret, ReadOnly` and `fieldIsGenerated`. Add:
@@ -160,7 +160,7 @@ instance {-# OVERLAPPABLE #-} DbType a => FieldMeta a where
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
@@ -230,7 +230,7 @@ Register in `Spec.hs`: `import qualified ProjectionSpec` and `++ ProjectionSpec.
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL to compile — `Create`/`Update`/`Patch` not in scope.
 
 - [ ] **Step 3: Implement in `Table.hs`.** Add to exports `Create, Update, Patch(..)`. Add:
@@ -263,7 +263,7 @@ type family Field (f :: Type -> Type) (a :: Type) :: Type where
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS (all `ProjectionSpec` proofs compile).
 
 - [ ] **Step 5: Commit.**
@@ -305,7 +305,7 @@ Add to `Fixtures.hs`: `type UserCreate = UserT Create` and `type UserUpdate = Us
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL — `neutral`/`Manifest.Core.Skeleton` not in scope.
 
 - [ ] **Step 3: Implement `Manifest.Core.Skeleton`:**
@@ -335,7 +335,7 @@ neutral = to gNeutral
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
@@ -371,7 +371,7 @@ git add manifest && git commit -m "feat(core): generic neutral skeleton for Crea
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL — `ColumnMeta` constructor arity mismatch.
 
 - [ ] **Step 3: Implement.** In `Meta.hs` add the field:
@@ -391,7 +391,7 @@ and in the `GColumns (S1 m (Rec0 (Exposed t)))` instance add `, cmIsGenerated = 
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS. (Fixes any other `ColumnMeta` literal call sites the compiler flags — search `ColumnMeta ` and add the flag.)
 
 - [ ] **Step 5: Commit.**
@@ -447,7 +447,7 @@ Register in `Spec.hs`.
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL — `Manifest.Core.Assign` not found.
 
 - [ ] **Step 3: Implement `Manifest.Core.Assign`:**
@@ -505,7 +505,7 @@ instance (Selector m, DbType t) => GAssignEncode (S1 m (Rec0 (Maybe t))) where
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
@@ -563,7 +563,7 @@ tests = group "Update"
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL — `runUpdate` not exported from `Manifest.Session`.
 
 - [ ] **Step 3: Implement in `Session.hs`** (export `runUpdate`, `touchGenerated`):
@@ -587,7 +587,7 @@ Add `import Manifest.Core.Assign (Assignment)` and `type Assignment` to scope; e
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
@@ -627,7 +627,7 @@ Add imports: `Manifest.Core.Skeleton (neutral)`, `Manifest.Core.Table (Patch(..)
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL — `update` not exported.
 
 - [ ] **Step 3: Implement in `Session.hs`** (export `update`):
@@ -642,7 +642,7 @@ Add imports: `Manifest.Core.Assign (assignments, GAssignEncode)`, `GHC.Generics 
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
@@ -680,7 +680,7 @@ Add `Fixtures (UserCreate)` import.
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL — `insertCreate` not exported.
 
 - [ ] **Step 3: Implement in `Session.hs`** (export `insertCreate`). Reuse `renderInsert`; build columns from `assignments`:
@@ -700,7 +700,7 @@ insertCreate c = do
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
@@ -721,26 +721,35 @@ git add manifest && git commit -m "feat(session): insertCreate — Create-projec
 - Consumes: `runUpdate` (Task 7), `cmIsGenerated` (Task 5).
 - Produces: `flushSave` builds `[Assignment]` from the snapshot diff excluding `cmIsPK` and `cmIsGenerated`, then calls `runUpdate`, then `setBaseline`. Behavior for the existing FlushSpec is unchanged (the `UserT` fixture has no generated non-PK columns).
 
-- [ ] **Step 1: Write the failing test** — add a fixture entity with a generated column (or assert via statement log that the diff excludes it). Minimal: assert the existing minimal-UPDATE behavior still holds AND that `runUpdate`'s no-op path is used when nothing changed. Add to `FlushSpec.hs`:
+- [ ] **Step 1: Write the failing test** — assert via the statement log that (a) a mutation routes through `runUpdate` as a single UPDATE of the changed non-PK column, and (b) an unchanged entity emits no UPDATE. Add to `FlushSpec.hs` (add imports `Data.List (isInfixOf)` and `qualified Data.ByteString.Char8 as BC`, and a `usersDDL` constant mirroring `UpdateSpec`):
 
 ```haskell
+  , test "flush routes a mutation through runUpdate (UPDATE sets only changed non-PK cols)" $
+      withEmptyDb $ \pool -> do
+        withConnection pool (\c -> execText c usersDDL [])
+        sqls <- withSession pool $ do
+          u <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
+          save (u { userName = "Ada L" })
+          flush
+          map (BC.unpack . fst) <$> statementLog
+        let upd = filter (isInfixOf "UPDATE") sqls
+        assertEqual ("exactly one UPDATE; got " <> show sqls) 1 (length upd)
+        assertBool  "UPDATE sets user_name" (any (isInfixOf "user_name") upd)
+        assertBool  "UPDATE does not SET the PK" (not (any (isInfixOf "user_id =") upd))
   , test "flush of an unchanged managed entity emits no UPDATE" $
       withEmptyDb $ \pool -> do
         withConnection pool (\c -> execText c usersDDL [])
-        n <- withSession pool $ do
+        sqls <- withSession pool $ do
           u <- add (User { userId = 0, userName = "Ada", userEmail = Nothing } :: User)
           save u            -- no mutation
           flush
-          length <$> statementLog
-        -- the INSERT (add) + pg_notify; no UPDATE statement
-        assertBool "no UPDATE among statements" True
+          map (BC.unpack . fst) <$> statementLog
+        assertBool ("no UPDATE expected; got " <> show sqls) (not (any (isInfixOf "UPDATE") sqls))
 ```
-
-(If `FlushSpec` lacks `usersDDL`/imports, add them mirroring `UpdateSpec`.)
 
 - [ ] **Step 2: Run to verify it fails / regresses.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: existing FlushSpec PASS; the new assertion compiles after refactor.
 
 - [ ] **Step 3: Implement** — replace the body of `flushSave`:
@@ -766,7 +775,7 @@ Note: `runUpdate` already short-circuits on `[]`, so the "no change → no state
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS (FlushSpec unchanged + new assertion).
 
 - [ ] **Step 5: Commit.**
@@ -798,7 +807,7 @@ git add manifest && git commit -m "refactor(session): flushSave routes through r
 
 - [ ] **Step 2: Run to verify it fails.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: FAIL — `Masked` not in scope.
 
 - [ ] **Step 3: Implement `Manifest.Core.Secret`:**
@@ -819,7 +828,7 @@ mask = Masked
 
 - [ ] **Step 4: Run to verify it passes.**
 
-Run: `cd manifest && zinc test`
+Run (from repo root): `zinc test manifest:spec`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
