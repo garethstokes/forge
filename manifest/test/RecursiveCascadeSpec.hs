@@ -27,7 +27,7 @@ import Manifest.Core.Cascade (OnDelete (..))
 import Manifest.Core.Meta (genericTableMeta)
 import Manifest.Core.Query (Cond, (==.))
 import Manifest.Core.Relation (cascade)
-import Manifest.Core.Table (Field, Nullable, Pk)
+import Manifest.Core.Table (Field, Nullable, PrimaryKey, Serial)
 import Manifest.Derive ()
 import Manifest.Entity (Entity (..), Table (..))
 import Manifest.Postgres (Pool, execText, withConnection)
@@ -38,7 +38,7 @@ import Harness
 -- Fixtures ------------------------------------------------------------------
 
 data OrgT f = Org
-  { orgId   :: Field f (Pk Int)
+  { orgId   :: Field f (PrimaryKey (Serial Int))
   , orgName :: Field f Text
   } deriving Generic
 type Org = OrgT Identity
@@ -48,7 +48,7 @@ instance Entity Org where
   cascadeRules = [ cascade (Proxy @Team) (Proxy @"teamOrg") Cascade ]
 
 data TeamT f = Team
-  { teamId   :: Field f (Pk Int)
+  { teamId   :: Field f (PrimaryKey (Serial Int))
   , teamOrg  :: Field f Int
   , teamName :: Field f Text
   } deriving Generic
@@ -64,7 +64,7 @@ instance Entity Team where
     ]
 
 data MemberT f = Member
-  { memberId   :: Field f (Pk Int)
+  { memberId   :: Field f (PrimaryKey (Serial Int))
   , memberTeam :: Field f Int
   , memberName :: Field f Text
   } deriving Generic
@@ -75,7 +75,7 @@ instance Entity Member where
   cascadeRules = [ cascade (Proxy @Gear) (Proxy @"gearMember") Cascade ]
 
 data BadgeT f = Badge
-  { badgeId    :: Field f (Pk Int)
+  { badgeId    :: Field f (PrimaryKey (Serial Int))
   , badgeTeam  :: Field f Int
   , badgeLabel :: Field f Text
   } deriving Generic
@@ -83,7 +83,7 @@ type Badge = BadgeT Identity
 deriving via (Table "badges" BadgeT) instance Entity Badge
 
 data LockerT f = Locker
-  { lockerId   :: Field f (Pk Int)
+  { lockerId   :: Field f (PrimaryKey (Serial Int))
   , lockerTeam :: Field f (Nullable Int)
   , lockerCode :: Field f Text
   } deriving Generic
@@ -94,7 +94,7 @@ deriving via (Table "lockers" LockerT) instance Entity Locker
 -- and Team -> Member -> Gear), converging on the same table at different
 -- depths. Locks the descend-before-delete invariant: neither edge may orphan.
 data GearT f = Gear
-  { gearId     :: Field f (Pk Int)
+  { gearId     :: Field f (PrimaryKey (Serial Int))
   , gearTeam   :: Field f (Nullable Int)
   , gearMember :: Field f (Nullable Int)
   , gearTag    :: Field f Text
@@ -104,7 +104,7 @@ deriving via (Table "gears" GearT) instance Entity Gear
 
 -- Self-referential: a node cascades onto its own table (cycle guard target).
 data NodeT f = Node
-  { nodeId     :: Field f (Pk Int)
+  { nodeId     :: Field f (PrimaryKey (Serial Int))
   , nodeParent :: Field f (Nullable Int)
   , nodeName   :: Field f Text
   } deriving Generic

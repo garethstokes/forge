@@ -11,7 +11,6 @@ module Manifest.Core.Table
   , Exposed
   , Base
   , Field
-  , Pk
   , Nullable
   , FieldMeta(..)
   ) where
@@ -42,9 +41,6 @@ type family Base (a :: Type) :: Type where
 type family Field (f :: Type -> Type) (a :: Type) :: Type where
   Field Identity a = Base a
   Field Exposed  a = Exposed a
-
--- | Marker alias: a primary-key column over an auto-incrementing serial @a@.
-type Pk a       = PrimaryKey (Serial a)
 
 -- | Marker alias for a nullable column.
 type Nullable a = Maybe a

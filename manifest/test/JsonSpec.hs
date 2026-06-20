@@ -39,7 +39,7 @@ instance HasCodec Prefs where
           <*> requiredField "tags"  "tags"     .= prefTags
 
 data SettingT f = Setting
-  { settingId    :: Field f (Pk Int)
+  { settingId    :: Field f (PrimaryKey (Serial Int))
   , settingPrefs :: Field f (Json Prefs)
   , settingNote  :: Field f (Maybe (Json Prefs))
   } deriving Generic
@@ -170,7 +170,7 @@ typoSource = unlines
   , "import GHC.Generics (Generic)"
   , "import Manifest"
   , "data SettingT f = Setting"
-  , "  { settingId    :: Field f (Pk Int)"
+  , "  { settingId    :: Field f (PrimaryKey (Serial Int))"
   , "  , settingPrefs :: Field f (Json Prefs)"
   , "  } deriving Generic"
   , "type Setting = SettingT Identity"

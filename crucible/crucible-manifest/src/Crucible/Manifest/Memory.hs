@@ -35,7 +35,7 @@ import Manifest
   , add, selectWhere
   , managed, migrateUp
   )
-import Manifest.Core.Table (Field, Pk)
+import Manifest.Core.Table (Field, PrimaryKey, Serial)
 import Manifest.Postgres (Pool)
 
 import qualified Data.Text as T
@@ -98,7 +98,7 @@ instance DbType [Text] where
 deriving via (Table "memory" MemoryItemT) instance Entity MemoryItem
 
 data MemoryTombstoneT f = MemoryTombstone
-  { tombId :: Field f (Pk Int)
+  { tombId :: Field f (PrimaryKey (Serial Int))
   , memRef :: Field f MemoryId
   } deriving Generic
 

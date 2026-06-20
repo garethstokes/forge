@@ -29,7 +29,7 @@ import Evals.Ids
 -- Orgs (tenant registry) -------------------------------------------------------
 
 data OrgT f = Org
-  { id        :: Field f (Pk OrgId)
+  { id        :: Field f (PrimaryKey (Serial OrgId))
   , slug      :: Field f Text
   , name      :: Field f Text
   , createdAt :: Field f UTCTime
@@ -45,7 +45,7 @@ instance Entity Org where
 -- Datasets (inputs) -------------------------------------------------------------
 
 data DatasetT f = Dataset
-  { id        :: Field f (Pk DatasetId)
+  { id        :: Field f (PrimaryKey (Serial DatasetId))
   , org       :: Field f OrgId
   , name      :: Field f Text
   , slug      :: Field f Text
@@ -54,7 +54,7 @@ data DatasetT f = Dataset
 type Dataset = DatasetT Identity
 
 data DatasetVersionT f = DatasetVersion
-  { id          :: Field f (Pk DatasetVersionId)
+  { id          :: Field f (PrimaryKey (Serial DatasetVersionId))
   , org         :: Field f OrgId
   , dataset     :: Field f DatasetId
   , version     :: Field f Int
@@ -65,7 +65,7 @@ data DatasetVersionT f = DatasetVersion
 type DatasetVersion = DatasetVersionT Identity
 
 data ExampleT f = Example
-  { id             :: Field f (Pk ExampleId)
+  { id             :: Field f (PrimaryKey (Serial ExampleId))
   , org            :: Field f OrgId
   , datasetVersion :: Field f DatasetVersionId
   , key            :: Field f Text
@@ -78,7 +78,7 @@ type Example = ExampleT Identity
 -- Targets (system under test) ---------------------------------------------------
 
 data TargetT f = Target
-  { id        :: Field f (Pk TargetId)
+  { id        :: Field f (PrimaryKey (Serial TargetId))
   , org       :: Field f OrgId
   , name      :: Field f Text
   , createdAt :: Field f UTCTime
@@ -86,7 +86,7 @@ data TargetT f = Target
 type Target = TargetT Identity
 
 data TargetVersionT f = TargetVersion
-  { id        :: Field f (Pk TargetVersionId)
+  { id        :: Field f (PrimaryKey (Serial TargetVersionId))
   , org       :: Field f OrgId
   , target    :: Field f TargetId
   , version   :: Field f Int
@@ -100,7 +100,7 @@ type TargetVersion = TargetVersionT Identity
 -- Graders (reusable judges) -----------------------------------------------------
 
 data GraderT f = Grader
-  { id        :: Field f (Pk GraderId)
+  { id        :: Field f (PrimaryKey (Serial GraderId))
   , org       :: Field f OrgId
   , name      :: Field f Text
   , kind      :: Field f Text
@@ -109,7 +109,7 @@ data GraderT f = Grader
 type Grader = GraderT Identity
 
 data GraderVersionT f = GraderVersion
-  { id        :: Field f (Pk GraderVersionId)
+  { id        :: Field f (PrimaryKey (Serial GraderVersionId))
   , org       :: Field f OrgId
   , grader    :: Field f GraderId
   , version   :: Field f Int
@@ -121,7 +121,7 @@ type GraderVersion = GraderVersionT Identity
 -- Run / Output / Score ------------------------------------------------------------
 
 data RunT f = Run
-  { id             :: Field f (Pk RunId)
+  { id             :: Field f (PrimaryKey (Serial RunId))
   , org            :: Field f OrgId
   , datasetVersion :: Field f DatasetVersionId
   , targetVersion  :: Field f TargetVersionId
@@ -134,7 +134,7 @@ data RunT f = Run
 type Run = RunT Identity
 
 data OutputT f = Output
-  { id        :: Field f (Pk OutputId)
+  { id        :: Field f (PrimaryKey (Serial OutputId))
   , org       :: Field f OrgId
   , run       :: Field f RunId
   , example   :: Field f ExampleId
@@ -147,7 +147,7 @@ data OutputT f = Output
 type Output = OutputT Identity
 
 data ScoreT f = Score
-  { id            :: Field f (Pk ScoreId)
+  { id            :: Field f (PrimaryKey (Serial ScoreId))
   , org           :: Field f OrgId
   , output        :: Field f OutputId
   , graderVersion :: Field f GraderVersionId
@@ -160,7 +160,7 @@ data ScoreT f = Score
 type Score = ScoreT Identity
 
 data RunMetricT f = RunMetric
-  { id            :: Field f (Pk RunMetricId)
+  { id            :: Field f (PrimaryKey (Serial RunMetricId))
   , org           :: Field f OrgId
   , run           :: Field f RunId
   , graderVersion :: Field f GraderVersionId
@@ -174,7 +174,7 @@ data RunMetricT f = RunMetric
 type RunMetric = RunMetricT Identity
 
 data CriterionLabelT f = CriterionLabel
-  { id        :: Field f (Pk CriterionLabelId)
+  { id        :: Field f (PrimaryKey (Serial CriterionLabelId))
   , org       :: Field f OrgId
   , output    :: Field f OutputId       -- the candidate response this labels
   , criterion :: Field f Text           -- rubric criterion text (matches Score.detail's criterion)
@@ -185,7 +185,7 @@ data CriterionLabelT f = CriterionLabel
 type CriterionLabel = CriterionLabelT Identity
 
 data MetaEvalT f = MetaEval
-  { id            :: Field f (Pk MetaEvalId)
+  { id            :: Field f (PrimaryKey (Serial MetaEvalId))
   , org           :: Field f OrgId
   , run           :: Field f RunId
   , graderVersion :: Field f GraderVersionId

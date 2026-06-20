@@ -44,7 +44,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
-import Manifest.Core.Table (Field, Pk)
+import Manifest.Core.Table (Field, PrimaryKey, Serial)
 
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
@@ -62,7 +62,7 @@ data WorkState = Ready | Claimed | Done
   deriving (Eq, Show)
 
 data WorkItemT f = WorkItem
-  { wid      :: Field f (Pk WorkId)
+  { wid      :: Field f (PrimaryKey (Serial WorkId))
   , payload  :: Field f Text
   , state    :: Field f WorkState
   , claimant :: Field f (Maybe Text)

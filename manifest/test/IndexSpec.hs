@@ -34,7 +34,7 @@ instance HasCodec Prefs where
           <*> requiredField "tags"  "tags"     .= prefTags
 
 data DocT f = Doc
-  { docId    :: Field f (Pk Int)
+  { docId    :: Field f (PrimaryKey (Serial Int))
   , docName  :: Field f Text
   , docPrefs :: Field f (Json Prefs)
   } deriving GHC.Generics.Generic
@@ -121,7 +121,7 @@ tests = group "Index"
 
 -- A small 2-column entity that declares a UNIQUE composite index on (a, b).
 data PairT f = Pair
-  { pairId :: Field f (Pk Int)
+  { pairId :: Field f (PrimaryKey (Serial Int))
   , pairA  :: Field f Text
   , pairB  :: Field f Text
   } deriving GHC.Generics.Generic

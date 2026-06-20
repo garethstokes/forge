@@ -19,7 +19,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-(cd evals-ui && nix develop .. -c zinc build --target wasm32-wasi)
+# Dev shell comes from the forge monorepo root flake (../.. from evals-ui).
+# (Pre-monorepo this was `..` = the standalone manifest-evals repo's own flake,
+# removed when the per-repo flakes were consolidated into the root.)
+(cd evals-ui && nix develop ../.. -c zinc build --target wasm32-wasi)
 
 cp -v evals-ui/.zinc/build/evals-ui.wasm static/
 cp -v evals-ui/.zinc/build/ghc_wasm_jsffi.js static/

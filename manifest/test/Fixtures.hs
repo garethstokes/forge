@@ -34,7 +34,7 @@ import Data.Functor.Identity (Identity)
 import Data.Proxy (Proxy(..))
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Manifest.Core.Table (Field, Pk, Nullable)
+import Manifest.Core.Table (Field, PrimaryKey, Serial, Nullable)
 import Manifest.Core.Meta (genericTableMeta)
 import Manifest.Core.Cascade (OnDelete(..))
 import Manifest.Core.Relation (Card(..), HasRelation(..), belongsTo, belongsToMaybe, cascade, hasMany, hasOpt)
@@ -46,7 +46,7 @@ import Manifest.Testing (withEphemeralDb)
 -- | The example higher-kinded table. One declaration; @UserT Identity@ is the
 -- clean runtime value, @UserT Exposed@ carries markers for the deriver.
 data UserT f = User
-  { userId    :: Field f (Pk Int)
+  { userId    :: Field f (PrimaryKey (Serial Int))
   , userName  :: Field f Text
   , userEmail :: Field f (Nullable Text)
   } deriving Generic
@@ -64,7 +64,7 @@ instance Entity User where
 
 -- Posts: each belongs to a user via post_author = users.user_id (to-many from User).
 data PostT f = Post
-  { postId     :: Field f (Pk Int)
+  { postId     :: Field f (PrimaryKey (Serial Int))
   , postAuthor :: Field f Int
   , postTitle  :: Field f Text
   } deriving Generic
@@ -75,7 +75,7 @@ deriving via (Table "posts" PostT) instance Entity Post
 -- Profiles: optional one-per-user via profile_user = users.user_id. The FK is
 -- nullable (so SetNull can null it; the row then survives, parentless).
 data ProfileT f = Profile
-  { profileId   :: Field f (Pk Int)
+  { profileId   :: Field f (PrimaryKey (Serial Int))
   , profileUser :: Field f (Nullable Int)
   , profileBio  :: Field f Text
   } deriving Generic
@@ -85,7 +85,7 @@ deriving via (Table "profiles" ProfileT) instance Entity Profile
 
 -- Tags: each belongs to a user via tag_user = users.user_id (Restrict on delete).
 data TagT f = Tag
-  { tagId    :: Field f (Pk Int)
+  { tagId    :: Field f (PrimaryKey (Serial Int))
   , tagUser  :: Field f Int
   , tagLabel :: Field f Text
   } deriving Generic
@@ -97,7 +97,7 @@ deriving via (Table "tags" TagT) instance Entity Tag
 -- referencing employee_id, so an employee can have a manager (forward FK) and
 -- reports (reverse FK), both targeting the same table — needs aliased joins.
 data EmployeeT f = Employee
-  { employeeId      :: Field f (Pk Int)
+  { employeeId      :: Field f (PrimaryKey (Serial Int))
   , employeeManager :: Field f (Nullable Int)   -- nullable self-FK → employee_id
   , employeeName    :: Field f Text
   } deriving Generic
@@ -120,7 +120,7 @@ instance HasRelation Employee "reports" where
 
 -- Comments: each belongs to a post via comment_post = posts.post_id (to-many from Post).
 data CommentT f = Comment
-  { commentId   :: Field f (Pk Int)
+  { commentId   :: Field f (PrimaryKey (Serial Int))
   , commentPost :: Field f Int          -- FK → post_id
   , commentBody :: Field f Text
   } deriving Generic

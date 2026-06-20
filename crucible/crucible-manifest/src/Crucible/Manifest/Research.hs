@@ -32,7 +32,7 @@ import Manifest
   , withSession
   , add, save, flush, get, selectWhere
   , managed, migrateUp
-  , Field, Pk, PrimaryKey
+  , Field, PrimaryKey, Serial
   )
 import Manifest.Postgres (Pool)
 
@@ -65,7 +65,7 @@ type PageRow = PageRowT Identity
 deriving via (Table "pages" PageRowT) instance Entity PageRow
 
 data ActivityRowT f = ActivityRow
-  { actId :: Field f (Pk Int)
+  { actId :: Field f (PrimaryKey (Serial Int))
   , line  :: Field f Text
   } deriving Generic
 

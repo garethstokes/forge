@@ -126,7 +126,6 @@ module Manifest
   , Serial
   , PrimaryKey
   , Field
-  , Pk
   , Nullable
   , TableMeta(..)
   , ColumnMeta(..)
@@ -259,7 +258,6 @@ import Manifest.Core.Table
   ( Serial
   , PrimaryKey
   , Field
-  , Pk
   , Nullable
   )
 import Manifest.Core.Meta

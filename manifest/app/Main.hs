@@ -20,7 +20,7 @@ import Manifest
 
 -- An example managed schema (the exe migrates this).
 data NoteT f = Note
-  { noteId    :: Field f (Pk Int)
+  { noteId    :: Field f (PrimaryKey (Serial Int))
   , noteTitle :: Field f Text
   , noteBody  :: Field f (Nullable Text)
   } deriving Generic

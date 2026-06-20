@@ -56,7 +56,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
-import Manifest.Core.Table (Field, Pk)
+import Manifest.Core.Table (Field, PrimaryKey, Serial)
 
 import Effectful
 import Effectful.Dispatch.Dynamic (interpret, reinterpret, send)
@@ -91,7 +91,7 @@ data MemoryDraft = MemoryDraft
   deriving (Eq, Show)
 
 data MemoryItemT f = MemoryItem
-  { memId     :: Field f (Pk MemoryId)
+  { memId     :: Field f (PrimaryKey (Serial MemoryId))
   , kind      :: Field f MemoryKind
   , content   :: Field f Text
   , tags      :: Field f [Text]

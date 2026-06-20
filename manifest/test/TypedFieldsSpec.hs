@@ -49,7 +49,7 @@ instance DbType Cents where
   dbType = dimap (\(Cents n) -> n) Cents (dbType @Int)
 
 data ItemT f = Item
-  { itemId    :: Field f (Pk Int)
+  { itemId    :: Field f (PrimaryKey (Serial Int))
   , itemPrice :: Field f Cents
   } deriving Generic
 type Item = ItemT Identity
@@ -57,7 +57,7 @@ type Item = ItemT Identity
 deriving via (Table "items" ItemT) instance Entity Item
 
 data AccountT f = Account
-  { accountId   :: Field f (Pk AccountId)   -- runtime AccountId; column BIGSERIAL
+  { accountId   :: Field f (PrimaryKey (Serial AccountId))   -- runtime AccountId; column BIGSERIAL
   , accountName :: Field f Text
   } deriving Generic
 type Account = AccountT Identity
@@ -65,7 +65,7 @@ type Account = AccountT Identity
 deriving via (Table "accounts" AccountT) instance Entity Account
 
 data NoteT f = Note
-  { noteId      :: Field f (Pk NoteId)
+  { noteId      :: Field f (PrimaryKey (Serial NoteId))
   , noteAccount :: Field f AccountId          -- typed FK to accounts.account_id
   , noteBody    :: Field f Text
   } deriving Generic
@@ -76,7 +76,7 @@ deriving via (Table "notes" NoteT) instance Entity Note
 -- A brand-new plain entity declared ONLY via the deriving-via one-liner (no
 -- explicit Entity instance body): proves a fresh entity round-trips end to end.
 data GadgetT f = Gadget
-  { gadgetId   :: Field f (Pk Int)
+  { gadgetId   :: Field f (PrimaryKey (Serial Int))
   , gadgetName :: Field f Text
   } deriving Generic
 type Gadget = GadgetT Identity
@@ -88,7 +88,7 @@ deriving via (Table "gadgets" GadgetT) instance Entity Gadget
 -- the left branch to reach it; this guards that core type-family invariant inside
 -- the library's own suite (all other test entities are <= 3 fields).
 data WideT f = Wide
-  { wideId :: Field f (Pk Int)
+  { wideId :: Field f (PrimaryKey (Serial Int))
   , wideA  :: Field f Text
   , wideB  :: Field f Int
   , wideC  :: Field f Bool

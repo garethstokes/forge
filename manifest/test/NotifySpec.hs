@@ -20,7 +20,7 @@ import GHC.Generics (Generic)
 import Harness
 import Manifest.Core.Meta (genericTableMeta)
 import Manifest.Core.Query (Cond, (=.), (==.))
-import Manifest.Core.Table (Field, Pk)
+import Manifest.Core.Table (Field, PrimaryKey, Serial)
 import Manifest.Derive ()
 import Manifest.Entity (Entity (..), Key (..), Table (..))
 import Manifest.Notify (Change (..), listenChanges)
@@ -34,7 +34,7 @@ import Manifest.Testing (withEphemeralDb')
 -- ---------------------------------------------------------------------------
 
 data PingT f = Ping
-  { pingId  :: Field f (Pk Int)
+  { pingId  :: Field f (PrimaryKey (Serial Int))
   , pingMsg :: Field f String
   } deriving Generic
 
@@ -46,7 +46,7 @@ instance Entity Ping where
 
 -- Pong: same shape, also opted in, used for dispatch test.
 data PongT f = Pong
-  { pongId  :: Field f (Pk Int)
+  { pongId  :: Field f (PrimaryKey (Serial Int))
   , pongMsg :: Field f String
   } deriving Generic
 
@@ -58,7 +58,7 @@ instance Entity Pong where
 
 -- Quiet: opted OUT (default notifyChanges = False).
 data QuietT f = Quiet
-  { quietId  :: Field f (Pk Int)
+  { quietId  :: Field f (PrimaryKey (Serial Int))
   , quietMsg :: Field f String
   } deriving Generic
 

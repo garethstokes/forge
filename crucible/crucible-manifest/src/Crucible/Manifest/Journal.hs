@@ -61,7 +61,7 @@ import Manifest
   , managed, migrateUp
   , encode
   , (==.)
-  , Field, Pk, PrimaryKey
+  , Field, PrimaryKey, Serial
   , Db
   )
 import Manifest.Session (execDb)
@@ -93,7 +93,7 @@ unb64 = either (const "") id . B64.decode . TE.encodeUtf8
 -- ---------------------------------------------------------------------------
 
 data ExecutionRowT f = ExecutionRow
-  { exId          :: Field f (Pk Int)
+  { exId          :: Field f (PrimaryKey (Serial Int))
   , exType        :: Field f Text
   , exInput       :: Field f Text      -- base64-encoded jiInput
   , exAppVersion  :: Field f Text
@@ -108,7 +108,7 @@ type ExecutionRow = ExecutionRowT Identity
 deriving via (Table "workflow_execution" ExecutionRowT) instance Entity ExecutionRow
 
 data JournalEntryRowT f = JournalEntryRow
-  { jeId     :: Field f (Pk Int)
+  { jeId     :: Field f (PrimaryKey (Serial Int))
   , jeExec   :: Field f Int
   , jeSeq    :: Field f Int
   , jeKey    :: Field f Text    -- base64-encoded CassetteKey bytes
