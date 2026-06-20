@@ -31,6 +31,7 @@ import qualified JsonSpec
 import qualified IndexSpec
 import qualified NotifySpec
 import qualified ProjectionSpec
+import qualified AssignSpec
 
 main :: IO ()
-main = runTests (CodecSpec.tests ++ PostgresSpec.tests ++ MetaSpec.tests ++ MigrateMetaSpec.tests ++ MigrateSqlSpec.tests ++ MigrateSpec.tests ++ SqlSpec.tests ++ SessionSpec.tests ++ FlushSpec.tests ++ CommandSpec.tests ++ EndToEndSpec.tests ++ RelationSpec.tests ++ EntSpec.tests ++ RelationErrorSpec.tests ++ RelE2ESpec.tests ++ JoinedSpec.tests ++ CascadeSpec.tests ++ RecursiveCascadeSpec.tests ++ SelfRefSpec.tests ++ NestedSpec.tests ++ QueryBuilderSpec.tests ++ Tutorial.UnitOfWork.tests ++ Tutorial.Relationships.tests ++ Tutorial.Cascades.tests ++ RlsSpec.tests ++ TypedFieldsSpec.tests ++ JsonSpec.tests ++ IndexSpec.tests ++ NotifySpec.tests ++ ProjectionSpec.tests)
+main = runTests (CodecSpec.tests ++ PostgresSpec.tests ++ MetaSpec.tests ++ MigrateMetaSpec.tests ++ MigrateSqlSpec.tests ++ MigrateSpec.tests ++ SqlSpec.tests ++ SessionSpec.tests ++ FlushSpec.tests ++ CommandSpec.tests ++ EndToEndSpec.tests ++ RelationSpec.tests ++ EntSpec.tests ++ RelationErrorSpec.tests ++ RelE2ESpec.tests ++ JoinedSpec.tests ++ CascadeSpec.tests ++ RecursiveCascadeSpec.tests ++ SelfRefSpec.tests ++ NestedSpec.tests ++ QueryBuilderSpec.tests ++ Tutorial.UnitOfWork.tests ++ Tutorial.Relationships.tests ++ Tutorial.Cascades.tests ++ RlsSpec.tests ++ TypedFieldsSpec.tests ++ JsonSpec.tests ++ IndexSpec.tests ++ NotifySpec.tests ++ ProjectionSpec.tests ++ AssignSpec.tests)
