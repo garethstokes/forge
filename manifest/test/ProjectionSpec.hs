@@ -6,8 +6,10 @@ module ProjectionSpec (tests) where
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Manifest.Core.Table
-  (Field, Create, Update, Omitted, Patch,
+  (Field, Create, Update, Omitted, Patch(..),
    PrimaryKey, Serial, Generated, Default, Secret, ReadOnly)
+import Manifest.Core.Skeleton (neutral)
+import Fixtures (UserT(..), UserUpdate)
 import Harness
 
 -- Create projection
@@ -38,4 +40,9 @@ _updatePatchesSecret = id
 
 tests :: [Test]
 tests = group "Projection"
-  [ test "type-family projections compile" $ assertBool "ok" True ]
+  [ test "type-family projections compile" $ assertBool "ok" True
+  , test "neutral Update skeleton is all-Keep; record-update overrides one field" $ do
+      let u = (neutral :: UserUpdate) { userEmail = Set (Just "n@x.io") } :: UserUpdate
+      assertEqual "untouched name stays Keep"  Keep                  (userName u)
+      assertEqual "email is the Set override"  (Set (Just "n@x.io")) (userEmail u)
+  ]

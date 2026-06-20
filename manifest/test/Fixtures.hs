@@ -17,6 +17,8 @@ module Fixtures
   , commentsDDL
   , UserT(..)
   , User
+  , UserCreate
+  , UserUpdate
   , PostT(..)
   , Post
   , ProfileT(..)
@@ -34,7 +36,7 @@ import Data.Functor.Identity (Identity)
 import Data.Proxy (Proxy(..))
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Manifest.Core.Table (Field, PrimaryKey, Serial, Nullable)
+import Manifest.Core.Table (Field, PrimaryKey, Serial, Nullable, Create, Update)
 import Manifest.Core.Meta (genericTableMeta)
 import Manifest.Core.Cascade (OnDelete(..))
 import Manifest.Core.Relation (Card(..), HasRelation(..), belongsTo, belongsToMaybe, cascade, hasMany, hasOpt)
@@ -53,6 +55,12 @@ data UserT f = User
 
 -- | The runtime row type: @userId :: Int, userName :: Text, userEmail :: Maybe Text@.
 type User = UserT Identity
+
+-- | Create projection: omits DB-assigned PK; plain fields present.
+type UserCreate = UserT Create
+
+-- | Update projection: all-Patch fields; PK omitted.
+type UserUpdate = UserT Update
 
 instance Entity User where
   tableMeta  = genericTableMeta @UserT "users"
