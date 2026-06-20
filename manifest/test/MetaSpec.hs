@@ -5,7 +5,8 @@ module MetaSpec (tests) where
 
 import Data.Functor.Identity (Identity)
 import Data.Text (Text)
-import Manifest.Core.Table (Base, Field, FieldMeta (..), PrimaryKey, Serial)
+import Data.Time (UTCTime)
+import Manifest.Core.Table (Base, Field, FieldMeta (..), PrimaryKey, Serial, Generated, Default, Secret, ReadOnly)
 import Manifest.Core.Meta (ColumnMeta (..), SqlType (..), TableMeta (..), genericTableMeta)
 import Fixtures (User, UserT (..))
 import Manifest.Entity (Entity (..), pkParam)
@@ -22,6 +23,12 @@ _fieldIdentityReduces = id
 
 _textPassesThrough :: Base Text -> Text
 _textPassesThrough = id
+
+_genStrips :: Base (Generated UTCTime) -> UTCTime
+_genStrips = id
+
+_secStrips :: Base (Secret Text) -> Text
+_secStrips = id
 
 tests :: [Test]
 tests = group "Table"
@@ -58,4 +65,10 @@ tests = group "Table"
   , test "pkParam extracts the PK bytes" $ do
       let u = User { userId = 7, userName = "Bob", userEmail = Nothing } :: User
       assertEqual "pk" (Just (BC.pack "7")) (pkParam u)
+  , test "new markers reflect generated/sqltype/nullable" $ do
+      assertBool "Generated is generated"      (fieldIsGenerated @(Generated UTCTime))
+      assertBool "serial PK is generated"      (fieldIsGenerated @(PrimaryKey (Serial Int)))
+      assertBool "plain Text is not generated" (not (fieldIsGenerated @Text))
+      assertBool "Default delegates sqltype"   (fieldSqlType @(Default Text) == SqlText)
+      assertBool "Secret delegates sqltype"    (fieldSqlType @(Secret Text)  == SqlText)
   ]
