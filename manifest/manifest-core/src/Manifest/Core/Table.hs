@@ -18,6 +18,9 @@ module Manifest.Core.Table
   , Default
   , Secret
   , ReadOnly
+  , Create
+  , Update
+  , Patch(..)
   ) where
 
 import Data.Functor.Identity (Identity)
@@ -50,6 +53,15 @@ data ReadOnly a
 -- to the deriver, where @Field Identity a@ erases it.
 data Exposed a
 
+-- | HKD context tag: the payload used when creating a new row.
+data Create a
+
+-- | HKD context tag: the payload used when updating an existing row.
+data Update a
+
+-- | Represents an optional field update: keep the current value or set a new one.
+data Patch a = Keep | Set a deriving (Eq, Show)
+
 -- | Strip markers down to the runtime base type.
 type family Base (a :: Type) :: Type where
   Base (PrimaryKey a) = Base a
@@ -60,11 +72,23 @@ type family Base (a :: Type) :: Type where
   Base (ReadOnly a)   = Base a
   Base a              = a
 
--- | Per-context column type. SP1 instantiates only Identity (runtime value) and
--- Exposed (metadata). The query-expression context is added in SP4.
+-- | Per-context column type. Closed family: specific clauses before catch-alls.
 type family Field (f :: Type -> Type) (a :: Type) :: Type where
   Field Identity a = Base a
   Field Exposed  a = Exposed a
+  -- Create: DB-assigned keys/cols absent; Default optional; app-supplied present
+  Field Create (PrimaryKey (Serial a))    = Omitted
+  Field Create (PrimaryKey (Generated a)) = Omitted
+  Field Create (Generated a)              = Omitted
+  Field Create (ReadOnly a)               = Omitted
+  Field Create (Default a)                = Maybe (Base a)
+  Field Create (PrimaryKey a)             = Base a
+  Field Create a                          = Base a
+  -- Update: PK is the key (never SET); DB-owned absent; rest -> Patch
+  Field Update (PrimaryKey a) = Omitted
+  Field Update (Generated a)  = Omitted
+  Field Update (ReadOnly a)   = Omitted
+  Field Update a              = Patch (Base a)
 
 -- | Marker alias for a nullable column.
 type Nullable a = Maybe a
