@@ -1,4 +1,9 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 
 module FlushSpec (tests) where
@@ -6,12 +11,34 @@ module FlushSpec (tests) where
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString.Char8 as BC
-import Data.List (isPrefixOf)
-import Fixtures (User, UserT (..), withTestDb)
+import Data.Functor.Identity (Identity)
+import Data.List (isInfixOf, isPrefixOf)
+import Data.Text (Text)
+import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import GHC.Generics (Generic)
+import Fixtures (User, UserT (..), withEmptyDb, withTestDb)
+import Manifest
+import Manifest.Core.Table (Field, Generated, PrimaryKey, Serial)
 import Manifest.Core.Query (Cond)
 import Manifest.Entity (Key (..))
+import Manifest.Postgres (execText, withConnection)
 import Manifest.Session
 import Harness
+
+data EventT f = Event
+  { eventId   :: Field f (PrimaryKey (Serial Int))
+  , eventName :: Field f Text
+  , eventAt   :: Field f (Generated UTCTime)
+  } deriving Generic
+type Event = EventT Identity
+deriving via (Table "events" EventT) instance Entity Event
+
+eventsDDL :: BC.ByteString
+eventsDDL = "CREATE TABLE events ( event_id BIGSERIAL PRIMARY KEY, event_name TEXT NOT NULL, event_at TIMESTAMPTZ NOT NULL DEFAULT now() )"
+
+t1, t2 :: UTCTime
+t1 = UTCTime (fromGregorian 2020 1 1) (secondsToDiffTime 0)
+t2 = UTCTime (fromGregorian 2021 1 1) (secondsToDiffTime 0)
 
 dataStmts :: [(BC.ByteString, [Maybe BC.ByteString])] -> [String]
 dataStmts = map (BC.unpack . fst)
@@ -69,4 +96,25 @@ tests = group "Flush"
                  pure ()
         names <- withSession pool (selectWhere ([] :: [Cond User]))
         assertEqual "rolled back" ["Ada"] (map userName names)
+  , test "flushSave skips generated columns even when mutated in memory" $
+      withEmptyDb $ \pool -> do
+        withConnection pool (\c -> execText c eventsDDL [])
+        sqls <- withSession pool $ do
+          e <- add (Event { eventId = 0, eventName = "boot", eventAt = t1 } :: Event)
+          save ((e { eventName = "boot2", eventAt = t2 }) :: Event)   -- mutate a normal AND the generated col
+          flush
+          map (BC.unpack . fst) <$> statementLog
+        let upd = filter (isInfixOf "UPDATE") sqls
+        assertBool ("one UPDATE expected; got " <> show sqls) (length upd == 1)
+        assertBool "UPDATE sets event_name"                   (any (isInfixOf "event_name") upd)
+        assertBool "UPDATE does NOT set event_at (generated)" (not (any (isInfixOf "event_at") upd))
+  , test "flush of an unchanged managed entity emits no UPDATE" $
+      withEmptyDb $ \pool -> do
+        withConnection pool (\c -> execText c eventsDDL [])
+        sqls <- withSession pool $ do
+          e <- add (Event { eventId = 0, eventName = "boot", eventAt = t1 } :: Event)
+          save e
+          flush
+          map (BC.unpack . fst) <$> statementLog
+        assertBool ("no UPDATE expected; got " <> show sqls) (not (any (isInfixOf "UPDATE") sqls))
   ]

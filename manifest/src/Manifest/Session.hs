@@ -47,7 +47,7 @@ import Type.Reflection (SomeTypeRep)
 import Manifest.Core.Assign (assignments, GAssignEncode)
 import Manifest.Core.Cascade (OnDelete(..), CascadeRule(..))
 import Manifest.Core.Codec (SqlParam, DbType, encode, decodeRow)
-import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), pkColumn, cmName, cmIsSerial, cmIsPK)
+import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), pkColumn, cmName, cmIsSerial, cmIsPK, cmIsGenerated)
 import Manifest.Core.Query (Cond(..), Op(..), Assign(..))
 import Manifest.Core.Sql (renderSelect, renderInsert, renderUpdate, renderDelete)
 import Manifest.Entity
@@ -245,6 +245,7 @@ flushSave a = do
       let changed = [ (cmName c, v)
                     | (c, v, b) <- zip3 (tmColumns tm) (rowEncode a) baseline
                     , not (cmIsPK c)
+                    , not (cmIsGenerated c)
                     , v /= b ]
       if null changed
         then pure ()
