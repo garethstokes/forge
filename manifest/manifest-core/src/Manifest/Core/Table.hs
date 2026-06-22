@@ -43,7 +43,9 @@ data Generated a
 -- | Marker: a column with a server-side DEFAULT that may be omitted on insert.
 data Default a
 
--- | Marker: a column that should not be included in query results by default.
+-- | Marker: a column whose value is masked at serialization (JSON/Show/logs) via
+-- 'Manifest.Core.Secret.Masked'. NOT a DB-presence policy — a Secret column is read
+-- and written to the database normally.
 data Secret a
 
 -- | Marker: a column that is read-only (never written by the application).

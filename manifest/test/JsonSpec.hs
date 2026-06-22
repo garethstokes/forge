@@ -19,6 +19,9 @@ import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO (hClose, openTempFile)
 import System.Process (readProcessWithExitCode)
 import Manifest
+import qualified Data.Aeson as A
+import qualified Data.ByteString.Lazy.Char8 as BLC
+import Manifest.Core.Secret (Masked(..))
 import Manifest.Core.SqlType (SqlType (..))
 import Manifest.Postgres (execText, withConnection)
 import Fixtures (withEmptyDb)
@@ -128,6 +131,9 @@ tests = group "Json"
             where_ (s ?. #settingId .== val (settingId s1 :: Int))
             pure s
         assertEqual "?. on settingId finds exactly the requested row" [Prefs "dark" ["x"]] (map (unJson . settingPrefs) (rows :: [Setting]))
+  , test "Masked hides its value in Show and JSON" $ do
+      assertEqual "show is redacted" "<redacted>" (show (Masked ("hunter2" :: String)))
+      assertEqual "json is the masked string" "\"***\"" (BLC.unpack (A.encode (Masked ("hunter2" :: String))))
   , test "?. wrong field name is a compile error naming the missing field" $ do
       tmp <- getTemporaryDirectory
       (path, h) <- openTempFile tmp "TypedProjGolden.hs"
