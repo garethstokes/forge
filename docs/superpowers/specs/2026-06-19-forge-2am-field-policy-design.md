@@ -224,3 +224,38 @@ The all-`Keep` skeleton is the natural partial-patch starting point.
   `Omitted`; new `GPatchEncode`.
 - **Unit-of-Work:** Patch (API) + diff (pipeline) converge on `runUpdate`;
   `updated_at` flush-stamped; `Generated` excluded from the diff.
+
+---
+
+## As-built notes (implementation deltas, 2026-06-23)
+
+The implementation (branch `forge-2am-field-policy`, plan
+`docs/superpowers/plans/2026-06-19-forge-2am-field-policy.md`) diverged from §3–§5
+above in these ways — this section is authoritative where it conflicts with the
+sketches above:
+
+- **No `runUpdate`/`Assignment` primitive.** The update path was integrated with
+  pre-existing machinery instead of duplicating it: `Manifest.Session.Command.update
+  :: Key a -> [Assign a] -> Db ()` and `Manifest.Core.Query.Assign`
+  (`data Assign a = Assign ByteString SqlParam`). The §3 `runUpdate` sketch was not built.
+- **API front-end is `patch`, not `update`.** `Manifest.Session.Command.patch key p =
+  update key (assignments p)` — a thin wrapper over the existing `update` (renamed to
+  avoid the name clash with it).
+- **Encoder is `GAssignEncode`** (`Manifest.Core.Assign`), producing `[Assign a]` (not
+  the `GPatchEncode`/`Assignment`-tuple of §5). Leaves: `Set`/`Just`/plain emit;
+  `Keep`/`Nothing`/`Omitted` skip.
+- **Read value reuses the existing `Identity` context** (only `Create`/`Update` are new);
+  the read-only marker is **`ReadOnly`** (the bare `Read` would collide with `Identity`
+  and `Prelude.Read`).
+- **One generic skeleton `neutral`** (`Manifest.Core.Skeleton`), not separate
+  `blankCreate`/`noChange`. It fills `Omitted`→`Omitted`, `Maybe`→`Nothing`, `Patch`→`Keep`.
+  It is the all-`Keep` starting point for **Update** patches; it does **not** support a
+  Create projection that has a **required plain field** (no neutral exists for it), so such
+  Create records are built directly with record syntax. (§4's `blankCreate { … }` only
+  applies to all-optional Create records.)
+- **Create-path INSERT is `insertCreate`** (`Manifest.Session`), building the column/value
+  set from `assignments` and decoding `RETURNING`.
+- **Deferred (as in §7):** generated-on-update stamping (`touchGenerated`/`updated_at`),
+  `RETURNING` refresh of generated values into the in-memory entity, full wiring of
+  `Secret`/`Masked` into entity JSON derivation (only the standalone `Masked` primitive +
+  the `Secret` marker exist), and `References`/FK markers (bead forge-u0w).
