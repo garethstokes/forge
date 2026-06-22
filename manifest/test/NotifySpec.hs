@@ -25,7 +25,7 @@ import Manifest.Derive ()
 import Manifest.Entity (Entity (..), Key (..), Table (..))
 import Manifest.Notify (Change (..), listenChanges)
 import Manifest.Postgres (Pool, execText, withConnection)
-import Manifest.Session
+import Manifest.Session hiding (update)
 import Manifest.Session.Command
 import Manifest.Testing (withEphemeralDb')
 

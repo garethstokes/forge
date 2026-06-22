@@ -6,7 +6,7 @@ module CommandSpec (tests) where
 import Fixtures (User, UserT (..), withTestDb)
 import Manifest.Core.Query
 import Manifest.Entity (Key (..))
-import Manifest.Session
+import Manifest.Session hiding (update)
 import Manifest.Session.Command
 import Harness
 
