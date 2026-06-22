@@ -4,12 +4,12 @@ module UpdateSpec (tests) where
 
 import qualified Data.ByteString.Char8 as BC
 import Manifest
-import Manifest.Session (withSession)
+import Manifest.Session (withSession, insertCreate)
 import Manifest.Session.Command (patch)
 import Manifest.Core.Skeleton (neutral)
-import Manifest.Core.Table (Patch(..))
+import Manifest.Core.Table (Patch(..), Omitted(..))
 import Manifest.Postgres (execText, withConnection)
-import Fixtures (User, UserT(..), UserUpdate, withEmptyDb)
+import Fixtures (User, UserT(..), UserCreate, UserUpdate, withEmptyDb)
 import Harness
 
 usersDDL :: BC.ByteString
@@ -26,4 +26,12 @@ tests = group "Update"
           got <- get @User (Key (userId u))
           pure (fmap userName got)
         assertEqual "name updated by the patch" (Just "Ada Lovelace") name
+  , test "insertCreate omits the serial PK and persists supplied columns" $
+      withEmptyDb $ \pool -> do
+        withConnection pool (\c -> execText c usersDDL [])
+        out <- withSession pool $ do
+          u <- insertCreate (User { userId = Omitted, userName = "Grace", userEmail = Just "g@x.io" } :: UserCreate)
+          pure (userName (u :: User), userEmail u)
+        assertEqual "name persisted"  "Grace"           (fst out)
+        assertEqual "email persisted" (Just "g@x.io")   (snd out)
   ]

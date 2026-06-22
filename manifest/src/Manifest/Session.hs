@@ -24,6 +24,7 @@ module Manifest.Session
   , withRlsContext
   , flush
   , add
+  , insertCreate
   , save
   , delete
   , emitChange
@@ -41,11 +42,13 @@ import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
+import GHC.Generics (Generic, Rep)
 import Type.Reflection (SomeTypeRep)
+import Manifest.Core.Assign (assignments, GAssignEncode)
 import Manifest.Core.Cascade (OnDelete(..), CascadeRule(..))
 import Manifest.Core.Codec (SqlParam, DbType, encode, decodeRow)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), pkColumn, cmName, cmIsSerial, cmIsPK)
-import Manifest.Core.Query (Cond(..), Op(..))
+import Manifest.Core.Query (Cond(..), Op(..), Assign(..))
 import Manifest.Core.Sql (renderSelect, renderInsert, renderUpdate, renderDelete)
 import Manifest.Entity
 import Manifest.Error (DbError(..), DbException(..))
@@ -198,6 +201,28 @@ add a = do
       emitChange @a (pkParam a')
       pure a'
     [] -> Db (liftIO (throwIO (DbException (OtherError "add: INSERT returned no row"))))
+
+-- | Insert a new row from a Create-projection record (omitting DB-assigned serial
+-- PK columns, which contribute nothing to 'assignments'). Decodes the RETURNING
+-- row into the persistent entity (PK filled by the DB), records its baseline,
+-- and returns it.
+insertCreate :: forall a c. (Entity a, Generic c, GAssignEncode (Rep c)) => c -> Db a
+insertCreate c = do
+  let tm    = tableMeta @a
+      asgs  = assignments c :: [Assign a]
+      names = [ n | Assign n _ <- asgs ]
+      vals  = [ v | Assign _ v <- asgs ]
+      -- ColumnMeta for each assigned column, in the SAME order as names/vals:
+      cols  = [ m | n <- names, m <- tmColumns tm, cmName m == n ]
+      sql   = renderInsert tm cols
+  rows <- execDb sql vals
+  case rows of
+    (row : _) -> do
+      a' <- decodeRowDb @a row
+      setBaseline a'
+      emitChange @a (pkParam a')
+      pure a'
+    [] -> Db (liftIO (throwIO (DbException (OtherError "insertCreate: INSERT returned no row"))))
 
 -- | Flush all pending writes: take & clear the queue, run all saves then deletes.
 flush :: Db ()
