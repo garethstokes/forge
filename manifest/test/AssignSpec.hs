@@ -6,6 +6,7 @@ module AssignSpec (tests) where
 import qualified Data.ByteString.Char8 as BC
 import GHC.Generics (Generic)
 import Manifest.Core.Assign (assignments)
+import Manifest.Core.Query (Assign(..))
 import Manifest.Core.Table (Patch(..), Omitted(..))
 import Harness
 
@@ -25,6 +26,6 @@ tests = group "Assign"
         , (BC.pack "d_nick",  Just (BC.pack "ada"))
         , (BC.pack "d_plain", Just (BC.pack "x"))
         ]
-        (assignments (Demo { dName = Set "Ada", dAge = Keep, dNick = Just "ada"
-                           , dPlain = "x", dSkip = Omitted }))
+        [ (c, v) | Assign c v <- assignments (Demo { dName = Set "Ada", dAge = Keep
+                                                   , dNick = Just "ada", dPlain = "x", dSkip = Omitted }) ]
   ]

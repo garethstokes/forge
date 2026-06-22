@@ -9,8 +9,11 @@
 module Manifest.Session.Command
   ( update
   , deleteWhere
+  , patch
   ) where
 
+import GHC.Generics (Generic, Rep)
+import Manifest.Core.Assign (assignments, GAssignEncode)
 import Manifest.Core.Codec (DbType, encode)
 import Manifest.Core.Meta (TableMeta(..), pkColumn, cmName)
 import Manifest.Core.Query (Assign(..), Cond(..))
@@ -45,3 +48,10 @@ deleteWhere conds = do
       ps                = [ v | Cond _ _ v <- conds ]
   _ <- execDb sql ps
   emitChange @a Nothing
+
+-- | Typed-Patch front-end: apply a projection record (Update context) to a row by
+-- key. Builds the assignment list from the record's Set/Just/plain fields and runs
+-- one blind UPDATE via 'update'.
+patch :: forall a u. (Entity a, DbType (PrimKey a), Generic u, GAssignEncode (Rep u))
+      => Key a -> u -> Db ()
+patch key p = update key (assignments p)

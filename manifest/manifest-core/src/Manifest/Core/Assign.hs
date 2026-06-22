@@ -3,19 +3,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-module Manifest.Core.Assign (Assignment, GAssignEncode(..), assignments) where
+module Manifest.Core.Assign (GAssignEncode(..), assignments) where
 
-import Data.ByteString (ByteString)
 import Data.Kind (Type)
 import GHC.Generics
-import Manifest.Core.Codec (SqlParam, DbType, encode)
+import Manifest.Core.Codec (DbType, encode)
 import Manifest.Core.Meta (camelToSnake)
+import Manifest.Core.Query (Assign(..))
 import Manifest.Core.Table (Omitted, Patch(..))
 
-type Assignment = (ByteString, SqlParam)
-
 class GAssignEncode (rep :: Type -> Type) where
-  gAssignEncode :: rep p -> [Assignment]
+  gAssignEncode :: rep p -> [Assign a]
 
 instance GAssignEncode f => GAssignEncode (D1 m f) where gAssignEncode (M1 x) = gAssignEncode x
 instance GAssignEncode f => GAssignEncode (C1 m f) where gAssignEncode (M1 x) = gAssignEncode x
@@ -28,15 +26,15 @@ instance GAssignEncode (S1 m (Rec0 Omitted)) where
 instance (Selector m, DbType t) => GAssignEncode (S1 m (Rec0 (Patch t))) where
   gAssignEncode s@(M1 (K1 p)) = case p of
     Keep  -> []
-    Set x -> [(camelToSnake (selName s), encode x)]
+    Set x -> [Assign (camelToSnake (selName s)) (encode x)]
 
 instance (Selector m, DbType t) => GAssignEncode (S1 m (Rec0 (Maybe t))) where
   gAssignEncode s@(M1 (K1 m')) = case m' of
     Nothing -> []
-    Just x  -> [(camelToSnake (selName s), encode (Just x))]
+    Just x  -> [Assign (camelToSnake (selName s)) (encode (Just x))]
 
 instance {-# OVERLAPPABLE #-} (Selector m, DbType t) => GAssignEncode (S1 m (Rec0 t)) where
-  gAssignEncode s@(M1 (K1 x)) = [(camelToSnake (selName s), encode x)]
+  gAssignEncode s@(M1 (K1 x)) = [Assign (camelToSnake (selName s)) (encode x)]
 
-assignments :: (Generic a, GAssignEncode (Rep a)) => a -> [Assignment]
+assignments :: (Generic u, GAssignEncode (Rep u)) => u -> [Assign a]
 assignments = gAssignEncode . from

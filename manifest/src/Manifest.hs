@@ -19,6 +19,7 @@ module Manifest
   , delete
     -- * Command path
   , update
+  , patch
   , deleteWhere
     -- * Entities & keys
   , Entity(..)
@@ -315,6 +316,7 @@ import Manifest.Session
   )
 import Manifest.Session.Command
   ( update
+  , patch
   , deleteWhere
   )
 import Manifest.Testing
