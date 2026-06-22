@@ -27,6 +27,8 @@ module Manifest.Session
   , save
   , delete
   , emitChange
+  , runUpdate
+  , touchGenerated
   ) where
 
 import Control.Monad (void, unless, when)
@@ -42,6 +44,7 @@ import Data.Map.Strict (Map)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import Type.Reflection (SomeTypeRep)
+import Manifest.Core.Assign (Assignment)
 import Manifest.Core.Cascade (OnDelete(..), CascadeRule(..))
 import Manifest.Core.Codec (SqlParam, DbType, encode, decodeRow)
 import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), pkColumn, cmName, cmIsSerial, cmIsPK)
@@ -228,6 +231,23 @@ flushSave a = do
                       (map snd changed ++ [pkParam a])
           setBaseline a
           emitChange @a (pkParam a)
+
+-- | Execute a single UPDATE for the given primary-key value and assignment list.
+-- No-op (no statement logged) when the assignment list is empty.
+runUpdate :: forall a. Entity a => SqlParam -> [Assignment] -> Db ()
+runUpdate _   []   = pure ()
+runUpdate key cols = do
+  let tm = tableMeta @a
+  extra <- touchGenerated tm
+  let cols' = cols ++ extra
+  _ <- execDb (renderUpdate tm (map fst cols') (cmName (pkColumn tm)))
+              (map snd cols' ++ [key])
+  emitChange @a key
+
+-- | Flush-stamps for generated-on-update columns.
+-- SP1: no such columns yet — returns empty.
+touchGenerated :: TableMeta a -> Db [Assignment]
+touchGenerated _ = pure []
 
 -- | Emit a DELETE for the record, applying onDelete cascades first, and drop it
 -- from the identity map. Cascades run in two passes over the WHOLE rule tree:
