@@ -19,6 +19,7 @@
               pkgs.pkg-config
               pkgs.postgresql      # libpq headers + initdb/postgres/pg_ctl
               pkgs.zlib
+              pkgs.cacert          # CA bundle for outbound HTTPS (crucible -> Anthropic API)
             ];
             shellHook = ''
               # libpq lib dir on both paths so the test exe's `-lpq` links
@@ -26,6 +27,9 @@
               # zinc bd issue on external system-lib linking).
               export LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.postgresql ]}''${LIBRARY_PATH:+:$LIBRARY_PATH}
               export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.zlib pkgs.postgresql ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+              # CA bundle for TLS verification on outbound HTTPS from within the dev shell
+              # (manifest-evals runs that hit live endpoints, e.g. the Anthropic API).
+              export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             '';
           };
         });
