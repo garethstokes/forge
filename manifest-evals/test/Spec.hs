@@ -8,6 +8,7 @@ import qualified ExecuteSpec
 import qualified GradeSpec
 import qualified HealthBenchSpec
 import qualified IngestSpec
+import qualified LockSyncSpec
 import qualified MetaEvalSpec
 import qualified SchemaSpec
 import qualified TenantSpec
@@ -20,4 +21,4 @@ main = do
   -- <member>/.zinc/build/spec) before running.
   exe <- getExecutablePath
   setCurrentDirectory (takeDirectory (takeDirectory (takeDirectory exe)))
-  CalibrationSpec.main >> HealthBenchSpec.main >> ApiSpec.main >> SchemaSpec.main >> ExecuteSpec.main >> GradeSpec.main >> IngestSpec.main >> MetaEvalSpec.main >> TenantSpec.main
+  LockSyncSpec.main >> CalibrationSpec.main >> HealthBenchSpec.main >> ApiSpec.main >> SchemaSpec.main >> ExecuteSpec.main >> GradeSpec.main >> IngestSpec.main >> MetaEvalSpec.main >> TenantSpec.main
