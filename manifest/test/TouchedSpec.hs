@@ -19,7 +19,7 @@ import Manifest.Core.Sql (renderUpdate)
 import Manifest.Core.Query ((=.))
 import Manifest.Derive (Table (..))
 import Manifest.Entity (Entity (..), Key (..))
-import Manifest.Session (add, save, withSession, withTransaction, statementLog)
+import Manifest.Session (add, get, save, withSession, withTransaction, statementLog)
 import Manifest.Session.Command (update)
 import Manifest.Postgres (execText, withConnection)
 import Fixtures (withEmptyDb)
@@ -82,4 +82,22 @@ tests = group "Touched"
         assertBool ("one UPDATE expected; got " <> show sqls) (length upd == 1)
         assertBool "UPDATE stamps doc_updated = now()"  (any (isInfixOf "doc_updated = now()") upd)
         assertBool "UPDATE does NOT touch doc_created"  (not (any (isInfixOf "doc_created")    upd))
+  , test "get after update: docCreated unchanged, docUpdated advanced beyond t2020" $
+      withEmptyDb $ \pool -> do
+        withConnection pool (\c -> execText c docsDDL [])
+        (orig, mb) <- withSession pool $ do
+          d <- add (Doc { docId = 0, docTitle = "draft"
+                        , docCreated = t2020, docUpdated = t2020 } :: Doc)
+          withTransaction $ save (d { docTitle = "final" } :: Doc)
+          mb <- get @Doc (Key (docId d))
+          pure (d, mb)
+        case mb of
+          Nothing  -> assertBool "row should exist after insert+update" False
+          Just row -> do
+            assertEqual "docCreated unchanged" (docCreated orig) (docCreated row)
+            assertBool  "docUpdated advanced"  (docUpdated row /= t2020)
+  , test "renderUpdate with no set columns still stamps touched (PK at $1)" $
+      assertEqual "empty-set"
+        "UPDATE docs SET doc_updated = now() WHERE doc_id = $1"
+        (renderUpdate (tableMeta @Doc) [] "doc_id")
   ]
