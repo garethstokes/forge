@@ -7,7 +7,7 @@ import Data.Text (Text)
 import Data.Time (UTCTime)
 import Manifest.Core.Table
   (Field, Create, Update, Omitted, Patch(..),
-   PrimaryKey, Serial, Generated, Default, Secret, ReadOnly)
+   PrimaryKey, Serial, Generated, Default, Secret, ReadOnly, Touched)
 import Manifest.Core.Skeleton (neutral)
 import Fixtures (UserT(..), UserUpdate)
 import Harness
@@ -33,6 +33,13 @@ _updateOmitsPk      :: Field Update (PrimaryKey (Serial Int)) -> Omitted
 _updateOmitsPk      = id
 _updateOmitsGen     :: Field Update (Generated UTCTime) -> Omitted
 _updateOmitsGen     = id
+
+-- Touched projection (identical to Generated: omitted on Create AND Update)
+_createOmitsTouched :: Field Create (Touched UTCTime) -> Omitted
+_createOmitsTouched = id
+_updateOmitsTouched :: Field Update (Touched UTCTime) -> Omitted
+_updateOmitsTouched = id
+
 _updatePatchesPlain  :: Field Update Text -> Patch Text
 _updatePatchesPlain  = id
 _updatePatchesSecret :: Field Update (Secret Text) -> Patch Text
