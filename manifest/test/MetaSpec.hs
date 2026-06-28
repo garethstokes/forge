@@ -43,9 +43,9 @@ tests = group "Table"
       let tm = genericTableMeta @UserT "users"
       assertEqual "table name" "users" (tmTable tm)
       assertEqual "columns"
-        [ ColumnMeta "user_id"    True  True  True  SqlBigSerial False
-        , ColumnMeta "user_name"  False False False SqlText      False
-        , ColumnMeta "user_email" False False False SqlText      True
+        [ ColumnMeta "user_id"    True  True  True  False SqlBigSerial False
+        , ColumnMeta "user_name"  False False False False SqlText      False
+        , ColumnMeta "user_email" False False False False SqlText      True
         ]
         (tmColumns tm)
   , test "rowEncode encodes a User to its column vector in table order" $ do

@@ -15,6 +15,7 @@ module Manifest.Core.Table
   , FieldMeta(..)
   , Omitted(..)
   , Generated
+  , Touched
   , Default
   , Secret
   , ReadOnly
@@ -39,6 +40,12 @@ data Omitted = Omitted deriving (Eq, Show)
 
 -- | Marker: a server-generated column (e.g. @DEFAULT gen_random_uuid()@).
 data Generated a
+
+-- | Marker: a server-generated column that is also re-stamped on every UPDATE
+-- (e.g. @updated_at TIMESTAMPTZ NOT NULL DEFAULT now()@). Like 'Generated' for
+-- Create/Read/Update projections; additionally the deriver flags it so
+-- 'Manifest.Core.Sql.renderUpdate' appends @<col> = now()@ to every UPDATE.
+data Touched a
 
 -- | Marker: a column with a server-side DEFAULT that may be omitted on insert.
 data Default a
@@ -69,6 +76,7 @@ type family Base (a :: Type) :: Type where
   Base (PrimaryKey a) = Base a
   Base (Serial a)     = a
   Base (Generated a)  = Base a
+  Base (Touched a)    = Base a
   Base (Default a)    = Base a
   Base (Secret a)     = Base a
   Base (ReadOnly a)   = Base a
@@ -82,6 +90,7 @@ type family Field (f :: Type -> Type) (a :: Type) :: Type where
   Field Create (PrimaryKey (Serial a))    = Omitted
   Field Create (PrimaryKey (Generated a)) = Omitted
   Field Create (Generated a)              = Omitted
+  Field Create (Touched a)                = Omitted
   Field Create (ReadOnly a)               = Omitted
   Field Create (Default a)                = Maybe (Base a)
   Field Create (PrimaryKey a)             = Base a
@@ -89,6 +98,7 @@ type family Field (f :: Type -> Type) (a :: Type) :: Type where
   -- Update: PK is the key (never SET); DB-owned absent; rest -> Patch
   Field Update (PrimaryKey a) = Omitted
   Field Update (Generated a)  = Omitted
+  Field Update (Touched a)    = Omitted
   Field Update (ReadOnly a)   = Omitted
   Field Update a              = Patch (Base a)
 
@@ -103,6 +113,9 @@ class FieldMeta a where
   fieldIsGenerated :: Bool
   fieldSqlType     :: SqlType
   fieldNullable    :: Bool
+  -- | True only for 'Touched': the column is re-stamped @= now()@ on every UPDATE.
+  fieldTouchedOnUpdate :: Bool
+  fieldTouchedOnUpdate = False
 
 instance FieldMeta a => FieldMeta (PrimaryKey a) where
   fieldIsPK = True; fieldIsSerial = fieldIsSerial @a; fieldIsGenerated = fieldIsGenerated @a
@@ -115,6 +128,11 @@ instance FieldMeta (Serial a) where
 instance FieldMeta a => FieldMeta (Generated a) where
   fieldIsPK = False; fieldIsSerial = fieldIsSerial @a; fieldIsGenerated = True
   fieldSqlType = fieldSqlType @a; fieldNullable = fieldNullable @a
+
+instance FieldMeta a => FieldMeta (Touched a) where
+  fieldIsPK = False; fieldIsSerial = fieldIsSerial @a; fieldIsGenerated = True
+  fieldSqlType = fieldSqlType @a; fieldNullable = fieldNullable @a
+  fieldTouchedOnUpdate = True
 
 instance FieldMeta a => FieldMeta (Default a) where
   fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False

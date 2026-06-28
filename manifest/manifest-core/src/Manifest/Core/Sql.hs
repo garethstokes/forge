@@ -53,13 +53,18 @@ renderInsert tm insCols =
        <> " VALUES (" <> bcIntercalate ", " vals <> ")"
        <> " RETURNING " <> ret
 
--- | @UPDATE t SET c1 = $1, ... WHERE pk = $n@
+-- | @UPDATE t SET c1 = $1, ..., <touched> = now() WHERE pk = $n@.
+-- Touched columns (re-stamped on every update) are appended as literal
+-- @= now()@ assignments read from the table meta. They consume no parameter,
+-- so the PK placeholder stays at @length setCols + 1@; and they never appear in
+-- @setCols@ (the Update projection omits them and the flush diff skips them).
 renderUpdate :: TableMeta a -> [ByteString] -> ByteString -> ByteString
 renderUpdate tm setCols pkCol =
-  let sets = [ c <> " = " <> placeholder i | (c, i) <- zip setCols [1 ..] ]
-      pkPh = placeholder (length setCols + 1)
+  let sets    = [ c <> " = " <> placeholder i | (c, i) <- zip setCols [1 ..] ]
+      touched = [ cmName c <> " = now()" | c <- tmColumns tm, cmTouchedOnUpdate c ]
+      pkPh    = placeholder (length setCols + 1)
   in "UPDATE " <> tmTable tm
-       <> " SET " <> bcIntercalate ", " sets
+       <> " SET " <> bcIntercalate ", " (sets ++ touched)
        <> " WHERE " <> pkCol <> " = " <> pkPh
 
 -- | @DELETE FROM t WHERE pk = $1@
