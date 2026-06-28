@@ -31,12 +31,13 @@ import Manifest.Core.Table (Exposed, FieldMeta(..))
 
 -- | One column's persistence metadata.
 data ColumnMeta = ColumnMeta
-  { cmName        :: ByteString
-  , cmIsPK        :: Bool
-  , cmIsSerial    :: Bool
-  , cmIsGenerated :: Bool
-  , cmSqlType     :: SqlType
-  , cmNullable    :: Bool
+  { cmName            :: ByteString
+  , cmIsPK            :: Bool
+  , cmIsSerial        :: Bool
+  , cmIsGenerated     :: Bool
+  , cmTouchedOnUpdate :: Bool
+  , cmSqlType         :: SqlType
+  , cmNullable        :: Bool
   } deriving (Eq, Show)
 
 -- | A table's metadata. Phantom @a@ ties it to the runtime row type.
@@ -72,12 +73,13 @@ instance (GColumns a, GColumns b) => GColumns (a :*: b) where
 instance (Selector m, FieldMeta t) => GColumns (S1 m (Rec0 (Exposed t))) where
   gColumns =
     [ ColumnMeta
-        { cmName        = camelToSnake (selName (undefined :: S1 m (Rec0 (Exposed t)) p))
-        , cmIsPK        = fieldIsPK @t
-        , cmIsSerial    = fieldIsSerial @t
-        , cmIsGenerated = fieldIsGenerated @t
-        , cmSqlType     = fieldSqlType  @t
-        , cmNullable    = fieldNullable @t
+        { cmName            = camelToSnake (selName (undefined :: S1 m (Rec0 (Exposed t)) p))
+        , cmIsPK            = fieldIsPK @t
+        , cmIsSerial        = fieldIsSerial @t
+        , cmIsGenerated     = fieldIsGenerated @t
+        , cmTouchedOnUpdate = fieldTouchedOnUpdate @t
+        , cmSqlType         = fieldSqlType  @t
+        , cmNullable        = fieldNullable @t
         }
     ]
 
