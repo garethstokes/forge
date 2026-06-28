@@ -349,29 +349,36 @@ git commit -m "feat(manifest-core): renderUpdate auto-stamps touched columns wit
 
 ### Task 4: Integration — UPDATE stamps `updated_at`, leaves `created_at`
 
-Prove end-to-end (against ephemeral Postgres) that both UPDATE paths — the snapshot-diff `save`/`flush` and the explicit `patch` (`Command.update`) — emit `updated_at = now()` and never touch the `Generated` `created_at` column.
+Prove end-to-end (against ephemeral Postgres) that both UPDATE paths — the snapshot-diff `save`/`flush` and the explicit-command `update` (`Command.update`, which `patch` also wraps) — emit `updated_at = now()` and never touch the `Generated` `created_at` column.
 
 **Files:**
 - Modify: `manifest/test/TouchedSpec.hs` (add the `Doc` DDL + integration tests)
 
 **Interfaces:**
-- Consumes: the `DocT`/`Doc` fixture and `tableMeta @Doc` from Task 3; the `Manifest`/`Manifest.Session` API (`withSession`, `add`, `save`, `flush`, `withTransaction`, `statementLog`, `patch`), `Manifest.Entity (Key(..))`, `Fixtures (withEmptyDb)`, `Manifest.Postgres (execText, withConnection)`.
+- Consumes: the `DocT`/`Doc` fixture and `tableMeta @Doc` from Task 3; the `Manifest.Session` API (`withSession`, `add`, `save`, `withTransaction`, `statementLog`), `Manifest.Session.Command (update)`, `Manifest.Core.Query ((=.))`, `Manifest.Entity (Key(..))`, `Fixtures (withEmptyDb)`, `Manifest.Postgres (execText, withConnection)`.
 - Produces: nothing consumed downstream.
 
 - [ ] **Step 1: Write the failing integration tests** — extend `manifest/test/TouchedSpec.hs`.
 
-Add imports at the top of the module:
+Add `{-# LANGUAGE OverloadedLabels #-}` to the file's pragma block (the `#docTitle` label syntax needs it). Extend the existing imports — the file already imports `Data.Time (UTCTime)`, widen it, and add the session/command/query/db imports:
 
 ```haskell
 import qualified Data.ByteString.Char8 as BC
 import Data.List (isInfixOf, isPrefixOf)
-import Manifest
-import Manifest.Session
-import Manifest.Session.Command (patch)
+import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import Manifest.Core.Query ((=.))
+import Manifest.Session (add, save, get, withSession, withTransaction, statementLog)
+import Manifest.Session.Command (update)
 import Manifest.Entity (Key (..))
 import Manifest.Postgres (execText, withConnection)
 import Fixtures (withEmptyDb)
 ```
+
+(The module already has `import Manifest.Entity (Entity (..))` for `tableMeta`; merge `Key (..)` into it rather than importing `Manifest.Entity` twice. `Data.Time (UTCTime)` is already imported for the fixture — replace that line with the widened one above.)
+
+Two notes on API shape, verified against the codebase:
+- The explicit-command path uses **`update`**, NOT `patch`. `Manifest.Session.Command.update :: Key a -> [Assign a] -> Db ()` takes an assignment list (see `manifest/test/CommandSpec.hs`). `patch` takes a `Patch`-projection *record* (`DocT Update`), not an `[Assign a]`, so it cannot take `[ #docTitle =. ... ]`. Both `update` and `patch` route through the same `Command.update` → `renderUpdate`, so testing `update` proves the stamping on the explicit-command path.
+- Build `UTCTime` with the explicit constructor (matching `FlushSpec.hs`), not `read`.
 
 Add the DDL and two tests. The `Doc` table mirrors the fixture: a serial PK, a plain title, a `Generated` `created_at` and a `Touched` `updated_at`, both `DEFAULT now()`:
 
@@ -383,6 +390,9 @@ docsDDL =
   \, doc_title   TEXT NOT NULL \
   \, doc_created TIMESTAMPTZ NOT NULL DEFAULT now() \
   \, doc_updated TIMESTAMPTZ NOT NULL DEFAULT now() )"
+
+t2020 :: UTCTime
+t2020 = UTCTime (fromGregorian 2020 1 1) (secondsToDiffTime 0)
 ```
 
 Append these to the `tests` list (after the render tests):
@@ -393,8 +403,7 @@ Append these to the `tests` list (after the render tests):
         withConnection pool (\c -> execText c docsDDL [])
         sqls <- withSession pool $ do
           d <- add (Doc { docId = 0, docTitle = "draft"
-                        , docCreated = read "2020-01-01 00:00:00 UTC"
-                        , docUpdated = read "2020-01-01 00:00:00 UTC" } :: Doc)
+                        , docCreated = t2020, docUpdated = t2020 } :: Doc)
           withTransaction $ save (d { docTitle = "final" } :: Doc)
           map (BC.unpack . fst) <$> statementLog
         let upd = filter ("UPDATE" `isPrefixOf`) sqls
@@ -402,14 +411,13 @@ Append these to the `tests` list (after the render tests):
         assertBool "UPDATE sets doc_title"                 (any (isInfixOf "doc_title = $1")     upd)
         assertBool "UPDATE stamps doc_updated = now()"     (any (isInfixOf "doc_updated = now()") upd)
         assertBool "UPDATE does NOT touch doc_created"     (not (any (isInfixOf "doc_created")    upd))
-  , test "patch (Command.update) stamps updated_at and leaves created_at" $
+  , test "update (explicit command) stamps updated_at and leaves created_at" $
       withEmptyDb $ \pool -> do
         withConnection pool (\c -> execText c docsDDL [])
         sqls <- withSession pool $ do
           d <- add (Doc { docId = 0, docTitle = "draft"
-                        , docCreated = read "2020-01-01 00:00:00 UTC"
-                        , docUpdated = read "2020-01-01 00:00:00 UTC" } :: Doc)
-          withTransaction $ patch (Key (docId d) :: Key Doc) [ #docTitle =. ("renamed" :: Text) ]
+                        , docCreated = t2020, docUpdated = t2020 } :: Doc)
+          withTransaction $ update @Doc (Key (docId d)) [ #docTitle =. ("renamed" :: Text) ]
           map (BC.unpack . fst) <$> statementLog
         let upd = filter ("UPDATE" `isPrefixOf`) sqls
         assertBool ("one UPDATE expected; got " <> show sqls) (length upd == 1)
@@ -417,10 +425,6 @@ Append these to the `tests` list (after the render tests):
         assertBool "UPDATE does NOT touch doc_created"  (not (any (isInfixOf "doc_created")    upd))
   ]
 ```
-
-Add `{-# LANGUAGE OverloadedLabels #-}` and `{-# LANGUAGE FlexibleContexts #-}` to the file's pragma block (the `#docTitle =. ...` label syntax needs `OverloadedLabels`).
-
-NOTE for the implementer: verify the `patch` import path and the assignment-label operator name against the codebase before running — `patch` lives in `manifest/src/Manifest/Session/Command.hs` and the `=.` operator builds an `Assign` (see `manifest/test/SqlSpec.hs` and `manifest/test/CommandSpec.hs` for exact usage). If `patch` is re-exported from `Manifest` or `Manifest.Session`, prefer that import and drop the explicit `Manifest.Session.Command` import.
 
 - [ ] **Step 2: Run the suite to verify behaviour**
 
