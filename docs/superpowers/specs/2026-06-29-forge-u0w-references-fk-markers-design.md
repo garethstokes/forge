@@ -294,13 +294,29 @@ the migration-layer walk identifies FK fields structurally by marker head.
 - Tests: a new `ReferencesSpec` (type proofs + DDL render + integration), plus a
   fixture entity carrying the required and nullable FK shapes.
 
+## Known limitation — FK table-creation ordering
+
+Because the FK constraint is emitted **inline** in `CREATE TABLE`, the migrate
+`[ManagedTable]` list order becomes load-bearing: a table whose `References` FK
+targets another must appear **after** its target in the list, or `migrate up` fails
+at run time with `relation "…" does not exist`. (Self-referential FKs are fine.)
+Documented in `migrateUp`'s haddock. The clean fix — emitting FKs as an
+`ALTER TABLE … ADD CONSTRAINT` post-pass after all `CREATE TABLE`s (which also handles
+circular references) — is tracked as a follow-up bead.
+
 ## Out of scope / follow-up
 
 - **`ReferencesOnDelete p T`** — a column-level DB-enforced `ON DELETE` policy
   (promote `OnDelete` to a kind, `KnownOnDelete` reflection, emit `ON DELETE …` in the
-  FK clause). An optimisation over the app-level cascades; **file as a follow-up
+  FK clause). An optimisation over the app-level cascades. **Filed as a follow-up
+  bead.**
+- **FK emission via `ALTER TABLE … ADD CONSTRAINT` post-pass** — removes the
+  table-ordering requirement above and supports circular FKs. **Filed as a follow-up
   bead.**
 - Navigation derivation (`HasRelation` from the marker) — needs TH; separate bead.
 - Retrofitting FK constraints onto existing columns/tables — needs constraint
   diffing the additive engine does not do.
 - Composite/multi-column foreign keys.
+- A manual `Entity` instance (not via the `deriving via Table` carrier) with a
+  `References` column must set `foreignKeys = genericForeignKeys @t` to emit the
+  constraint — the carrier does this automatically; manual instances opt in.
