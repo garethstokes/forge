@@ -10,6 +10,7 @@
 module Manifest.Core.Meta
   ( ColumnMeta(..)
   , TableMeta(..)
+  , ForeignKey(..)
   , SqlType(..)
   , sqlTypeDDL
   , sqlTypeLive
@@ -28,6 +29,14 @@ import Data.List (find)
 import GHC.Generics
 import Manifest.Core.SqlType (SqlType(..), sqlTypeDDL, sqlTypeLive)
 import Manifest.Core.Table (Exposed, FieldMeta(..))
+
+-- | A resolved foreign key: the local FK column, and the target table + PK column
+-- it references. Drives the @REFERENCES@ DDL clause.
+data ForeignKey = ForeignKey
+  { fkColumn      :: ByteString
+  , fkRefTable    :: ByteString
+  , fkRefPkColumn :: ByteString
+  } deriving (Eq, Show)
 
 -- | One column's persistence metadata.
 data ColumnMeta = ColumnMeta

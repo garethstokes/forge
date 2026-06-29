@@ -33,38 +33,12 @@ import Data.Maybe (fromMaybe)
 import Type.Reflection (Typeable, SomeTypeRep, someTypeRep)
 import Data.Proxy (Proxy(..))
 import GHC.Generics
-import GHC.TypeLits (Symbol, TypeError, ErrorMessage(..))
 import Manifest.Core.Cascade (CascadeRule)
 import Manifest.Core.Index (Index)
 import Manifest.Core.Rls (Policy)
 import Manifest.Core.Codec (DbType(..), Codec(..), RowDecoder, SqlParam, encode, decodeCol)
-import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..))
-import Manifest.Core.Table (Exposed, Base)
-
--- | The @deriving via@ carrier. @Table name t@ wraps @t Identity@ with the
--- table name carried at the type level, so an entity becomes a one-liner:
--- @deriving via (Table "posts" PostT) instance Entity Post@.
-newtype Table (name :: Symbol) (t :: (Type -> Type) -> Type) = Table (t Identity)
-
--- | The primary-key runtime type of an entity. By convention the PK is the
--- FIRST field; we walk the @t Exposed@ rep to it and take the 'Base' of its
--- marker.
-type family PrimKey a where
-  PrimKey (Table name t) = GPrimKeyType (Rep (t Exposed))
-  PrimKey (t Identity)   = GPrimKeyType (Rep (t Exposed))
-
--- | The PK is, by convention, the FIRST field. Walk to it and take the Base of
--- its marker.
-type family GPrimKeyType (rep :: Type -> Type) :: Type where
-  GPrimKeyType (D1 m f) = GPrimKeyType f
-  GPrimKeyType (C1 m f) = GPrimKeyType f
-  -- 4+ fields produce a balanced product tree, so the first field sits at the
-  -- left spine of a nested @:*:@; recurse left to reach it.
-  GPrimKeyType ((l :*: r) :*: rest) = GPrimKeyType (l :*: r)
-  GPrimKeyType ((S1 m (Rec0 (Exposed inner))) :*: rest) = Base inner
-  GPrimKeyType (S1 m (Rec0 (Exposed inner)))            = Base inner
-  GPrimKeyType other =
-    TypeError ('Text "Manifest: an entity must be a single-constructor record with its primary key as the first field")
+import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), ForeignKey(..))
+import Manifest.Core.Table (Exposed, Base, Table(..), PrimKey, GPrimKeyType)
 
 -- | The class the Unit-of-Work operates over. Every method has a Generics-based
 -- default except 'tableMeta' (which needs the table name).
@@ -101,6 +75,11 @@ class Typeable a => Entity a where
   -- created (create-if-absent, never dropped) by the migration engine.
   indexes :: [Index a]
   indexes = []
+  -- | Foreign-key constraints for this entity's columns, for DDL. Default: none.
+  -- The deriving-via carrier ('Manifest.Derive') fills this with
+  -- 'genericForeignKeys'; manual instances with FK columns opt in the same way.
+  foreignKeys :: [ForeignKey]
+  foreignKeys = []
 
 -- | A row's identity: a newtype over its primary-key value.
 newtype Key a = Key { unKey :: PrimKey a }

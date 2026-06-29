@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
@@ -16,16 +17,22 @@ module Manifest.Core.Table
   , Omitted(..)
   , Generated
   , Touched
+  , References
   , Default
   , Secret
   , ReadOnly
   , Create
   , Update
   , Patch(..)
+  , Table(..)
+  , PrimKey
+  , GPrimKeyType
   ) where
 
 import Data.Functor.Identity (Identity)
 import Data.Kind (Type)
+import GHC.Generics (Rep, D1, C1, S1, Rec0, (:*:))
+import GHC.TypeLits (Symbol, TypeError, ErrorMessage(..))
 import Manifest.Core.SqlType (SqlType(..))
 import Manifest.Core.Codec (DbType(..), Codec(..))
 
@@ -58,6 +65,17 @@ data Secret a
 -- | Marker: a column that is read-only (never written by the application).
 data ReadOnly a
 
+-- | Marker: a foreign-key column referencing entity @t@. The column's runtime
+-- value is @t@'s primary key (@Base (References t) = PrimKey t@); the migration
+-- engine emits a @REFERENCES t(pk)@ constraint. Nullable (optional) FKs compose
+-- with 'Nullable': @Nullable (References t)@.
+--
+-- __Manual @Entity@ instances__: a hand-written @Entity@ instance (rather than
+-- one derived via the @Table@ carrier) that contains a @References@ column must
+-- set @foreignKeys = genericForeignKeys \@t@ to emit the FK constraint; the
+-- @deriving via (Table …)@ carrier does this automatically.
+data References (t :: Type)
+
 -- | The metadata context. @Field Exposed a = Exposed a@ keeps the marker visible
 -- to the deriver, where @Field Identity a@ erases it.
 data Exposed a
@@ -80,6 +98,8 @@ type family Base (a :: Type) :: Type where
   Base (Default a)    = Base a
   Base (Secret a)     = Base a
   Base (ReadOnly a)   = Base a
+  Base (References t) = PrimKey t
+  Base (Maybe a)      = Maybe (Base a)
   Base a              = a
 
 -- | Per-context column type. Closed family: specific clauses before catch-alls.
@@ -146,6 +166,41 @@ instance FieldMeta a => FieldMeta (ReadOnly a) where
   fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
   fieldSqlType = fieldSqlType @a; fieldNullable = fieldNullable @a
 
+instance DbType (PrimKey t) => FieldMeta (References t) where
+  fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
+  fieldNullable = False
+  fieldSqlType = cSqlType (dbType @(PrimKey t))
+
+instance DbType (PrimKey t) => FieldMeta (Maybe (References t)) where
+  fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
+  fieldNullable = True
+  fieldSqlType = cSqlType (dbType @(PrimKey t))
+
 instance {-# OVERLAPPABLE #-} DbType a => FieldMeta a where
   fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
   fieldSqlType = cSqlType  (dbType @a); fieldNullable = cNullable (dbType @a)
+
+-- | The @deriving via@ carrier. @Table name t@ wraps @t Identity@ with the
+-- table name carried at the type level, so an entity becomes a one-liner:
+-- @deriving via (Table "posts" PostT) instance Entity Post@.
+newtype Table (name :: Symbol) (t :: (Type -> Type) -> Type) = Table (t Identity)
+
+-- | The primary-key runtime type of an entity. By convention the PK is the
+-- FIRST field; we walk the @t Exposed@ rep to it and take the 'Base' of its
+-- marker.
+type family PrimKey a where
+  PrimKey (Table name t) = GPrimKeyType (Rep (t Exposed))
+  PrimKey (t Identity)   = GPrimKeyType (Rep (t Exposed))
+
+-- | The PK is, by convention, the FIRST field. Walk to it and take the Base of
+-- its marker.
+type family GPrimKeyType (rep :: Type -> Type) :: Type where
+  GPrimKeyType (D1 m f) = GPrimKeyType f
+  GPrimKeyType (C1 m f) = GPrimKeyType f
+  -- 4+ fields produce a balanced product tree, so the first field sits at the
+  -- left spine of a nested @:*:@; recurse left to reach it.
+  GPrimKeyType ((l :*: r) :*: rest) = GPrimKeyType (l :*: r)
+  GPrimKeyType ((S1 m (Rec0 (Exposed inner))) :*: rest) = Base inner
+  GPrimKeyType (S1 m (Rec0 (Exposed inner)))            = Base inner
+  GPrimKeyType other =
+    TypeError ('Text "Manifest: an entity must be a single-constructor record with its primary key as the first field")
