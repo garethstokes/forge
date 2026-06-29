@@ -7,10 +7,12 @@
 module ReferencesSpec (tests) where
 
 import Data.Functor.Identity (Identity)
+import Data.Proxy (Proxy(..))
 import GHC.Generics (Generic)
 import Manifest.Core.Table (Field, Create, Update, Patch(..), Nullable, References, PrimaryKey, Serial)
-import Manifest.Core.Meta (ForeignKey(..))
+import Manifest.Core.Meta (ColumnMeta(..), ForeignKey(..), SqlType(..))
 import Manifest.Entity (Entity(..), Table(..))
+import Manifest.Migrate (ManagedTable(..), managed, renderCreateTable, renderAddColumn)
 import Fixtures (User)
 import Harness
 
@@ -42,4 +44,15 @@ tests = group "References"
         [ ForeignKey "doc_author" "users" "user_id"
         , ForeignKey "doc_editor" "users" "user_id" ]
         (foreignKeys @Doc)
+  , test "renderCreateTable appends FK constraints (required + nullable)" $
+      assertEqual "create"
+        "CREATE TABLE docs (doc_id BIGSERIAL PRIMARY KEY, doc_author BIGINT NOT NULL, \
+        \doc_editor BIGINT, FOREIGN KEY (doc_author) REFERENCES users(user_id), \
+        \FOREIGN KEY (doc_editor) REFERENCES users(user_id))"
+        (renderCreateTable (managed (Proxy @Doc)))
+  , test "renderAddColumn emits the FK inline for a marked column" $
+      assertEqual "add"
+        "ALTER TABLE docs ADD COLUMN doc_author BIGINT NOT NULL REFERENCES users(user_id)"
+        (renderAddColumn "docs" (mtForeignKeys (managed (Proxy @Doc)))
+           (ColumnMeta "doc_author" False False False False SqlBigInt False))
   ]

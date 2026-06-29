@@ -31,10 +31,10 @@ import Data.Maybe (mapMaybe)
 import Data.Proxy (Proxy)
 import qualified Data.ByteString.Char8 as BC
 import Manifest.Core.Codec (SqlParam)
-import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), sqlTypeDDL, sqlTypeLive)
+import Manifest.Core.Meta (ColumnMeta(..), ForeignKey(..), TableMeta(..), sqlTypeDDL, sqlTypeLive)
 import Manifest.Core.Index (Index (..), IndexDef (..), IndexMethod (..), methodSql)
 import Manifest.Core.Rls (PolicyDef (..), PolicyCmd (..), policyDef)
-import Manifest.Entity (Entity, tableMeta, rlsPolicies, indexes)
+import Manifest.Entity (Entity, tableMeta, rlsPolicies, indexes, foreignKeys)
 import Manifest.Error (DbError(OtherError), DbException(..))
 import Manifest.Postgres (Pool)
 import Manifest.Session (Db, execDb, withSession, withTransaction)
@@ -43,10 +43,11 @@ import System.IO (hPutStrLn, stderr)
 -- | A table the migration engine manages: its name, its columns (with SQL
 -- types), and its declared RLS policies.
 data ManagedTable = ManagedTable
-  { mtName     :: ByteString
-  , mtColumns  :: [ColumnMeta]
-  , mtPolicies :: [PolicyDef]
-  , mtIndexes  :: [IndexDef]
+  { mtName        :: ByteString
+  , mtColumns     :: [ColumnMeta]
+  , mtPolicies    :: [PolicyDef]
+  , mtIndexes     :: [IndexDef]
+  , mtForeignKeys :: [ForeignKey]
   } deriving (Eq, Show)
 
 -- | Reflect an entity's managed schema. @managed (Proxy @User)@.
@@ -54,6 +55,7 @@ managed :: forall a. Entity a => Proxy a -> ManagedTable
 managed _ = ManagedTable (tmTable tm) (tmColumns tm)
                          (map policyDef (rlsPolicies @a))
                          (mkIndexes (tmTable tm) (indexes @a))
+                         (foreignKeys @a)
   where tm = tableMeta @a
 
 -- | Name each declared index from the table it lives on, so the name is
@@ -71,16 +73,31 @@ columnDDL c =
   cmName c <> " " <> sqlTypeDDL (cmSqlType c)
     <> (if cmIsPK c then " PRIMARY KEY" else if cmNullable c then "" else " NOT NULL")
 
+-- | One FK's table-level constraint clause.
+fkDDL :: ForeignKey -> ByteString
+fkDDL fk =
+  "FOREIGN KEY (" <> fkColumn fk <> ") REFERENCES "
+    <> fkRefTable fk <> "(" <> fkRefPkColumn fk <> ")"
+
 -- | @CREATE TABLE name (col1 …, col2 …, …)@ from the managed schema.
 renderCreateTable :: ManagedTable -> ByteString
-renderCreateTable (ManagedTable name cols _ _) =
-  "CREATE TABLE " <> name <> " (" <> BC.intercalate ", " (map columnDDL cols) <> ")"
+renderCreateTable (ManagedTable name cols _ _ fks) =
+  "CREATE TABLE " <> name <> " ("
+    <> BC.intercalate ", " (map columnDDL cols ++ map fkDDL fks)
+    <> ")"
 
 -- | @ALTER TABLE name ADD COLUMN col …@ (additive). Added columns are never PK.
-renderAddColumn :: ByteString -> ColumnMeta -> ByteString
-renderAddColumn table c =
+-- The FK list is consulted to append an inline @REFERENCES@ clause if the column
+-- is marked as a foreign key.
+renderAddColumn :: ByteString -> [ForeignKey] -> ColumnMeta -> ByteString
+renderAddColumn table fks c =
   "ALTER TABLE " <> table <> " ADD COLUMN " <> cmName c <> " " <> sqlTypeDDL (cmSqlType c)
     <> (if cmNullable c then "" else " NOT NULL")
+    <> maybe "" (\fk -> " REFERENCES " <> fkRefTable fk <> "(" <> fkRefPkColumn fk <> ")")
+             (lookupFk (cmName c) fks)
+  where
+    lookupFk :: ByteString -> [ForeignKey] -> Maybe ForeignKey
+    lookupFk col = foldr (\fk acc -> if fkColumn fk == col then Just fk else acc) Nothing
 
 -- | A live column as Postgres reports it: (name, data_type, is_nullable).
 liveColumns :: ByteString -> Db [(ByteString, ByteString, Bool)]
@@ -109,7 +126,7 @@ data TableDiff
   deriving (Eq, Show)
 
 diffTable :: ManagedTable -> Db TableDiff
-diffTable mt@(ManagedTable name cols _ _) = do
+diffTable mt@(ManagedTable name cols _ _ _) = do
   exists <- tableExists name
   if not exists
     then pure (CreateTable mt)
@@ -167,7 +184,7 @@ liveRlsFlags table = do
 -- | DDL to make one table's live RLS match its declarations. Empty if the table
 -- has no policies or does not exist yet (it will be reconciled after creation).
 rlsForTable :: ManagedTable -> Db [ByteString]
-rlsForTable (ManagedTable name _ pols _)
+rlsForTable (ManagedTable name _ pols _ _)
   | null pols = pure []
   | otherwise = do
       exists <- tableExists name
@@ -239,7 +256,7 @@ migrate tables = do
   pure (MigrationPlan additive destr rls idxs)
   where
     toAdditive (mt, CreateTable _)       = [renderCreateTable mt]
-    toAdditive (_,  AlterTable t adds _) = [renderAddColumn t c | c <- adds]
+    toAdditive (mt, AlterTable t adds _) = [renderAddColumn t (mtForeignKeys mt) c | c <- adds]
     toAdditive (_,  UpToDate)            = []
     toDestr (AlterTable _ _ d) = d
     toDestr _                  = []

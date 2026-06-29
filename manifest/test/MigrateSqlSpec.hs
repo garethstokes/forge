@@ -18,9 +18,9 @@ tests = group "MigrateSql"
   , test "renderAddColumn for a nullable text column" $
       assertEqual "add"
         "ALTER TABLE users ADD COLUMN nickname TEXT"
-        (renderAddColumn "users" (ColumnMeta "nickname" False False False False SqlText True))
+        (renderAddColumn "users" [] (ColumnMeta "nickname" False False False False SqlText True))
   , test "renderAddColumn for a NOT NULL bigint column" $
       assertEqual "add"
         "ALTER TABLE users ADD COLUMN age BIGINT NOT NULL"
-        (renderAddColumn "users" (ColumnMeta "age" False False False False SqlBigInt False))
+        (renderAddColumn "users" [] (ColumnMeta "age" False False False False SqlBigInt False))
   ]
