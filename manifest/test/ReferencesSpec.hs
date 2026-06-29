@@ -6,14 +6,20 @@
 {-# LANGUAGE TypeFamilies #-}
 module ReferencesSpec (tests) where
 
+import Control.Exception (try, SomeException)
 import Data.Functor.Identity (Identity)
 import Data.Proxy (Proxy(..))
 import GHC.Generics (Generic)
+import Manifest.Core.Cascade (OnDelete(..))
+import Manifest.Core.Meta (ColumnMeta(..), ForeignKey(..), SqlType(..), genericTableMeta)
+import Manifest.Core.Query (Cond)
+import Manifest.Core.Relation (cascade)
 import Manifest.Core.Table (Field, Create, Update, Patch(..), Nullable, References, PrimaryKey, Serial)
-import Manifest.Core.Meta (ColumnMeta(..), ForeignKey(..), SqlType(..))
 import Manifest.Entity (Entity(..), Table(..))
 import Manifest.Migrate (ManagedTable(..), managed, renderCreateTable, renderAddColumn)
-import Fixtures (User)
+import Manifest.Postgres (execText, withConnection)
+import Manifest.Session (withSession, withTransaction, add, delete, selectWhere)
+import Fixtures (User, withEmptyDb, usersDDL)
 import Harness
 
 -- Projection proofs: an FK column is a readwrite scalar of the target's PK type.
@@ -36,6 +42,23 @@ data DocT f = Doc
 type Doc = DocT Identity
 deriving via (Table "docs" DocT) instance Entity Doc
 
+-- Fixtures for cascade-compatibility test: mutually referencing Owner/Item pair.
+-- Owner declares a Cascade rule pointing at Item; Item has a References FK to Owner.
+-- ownerSeq is a required dummy field: renderInsert needs at least one non-serial column.
+data OwnerT f = Owner
+  { ownerId  :: Field f (PrimaryKey (Serial Int))
+  , ownerSeq :: Field f Int } deriving Generic
+type Owner = OwnerT Identity
+instance Entity Owner where
+  tableMeta    = genericTableMeta @OwnerT "owners"
+  cascadeRules = [ cascade (Proxy @Item) (Proxy @"itemOwner") Cascade ]
+
+data ItemT f = Item
+  { itemId    :: Field f (PrimaryKey (Serial Int))
+  , itemOwner :: Field f (References Owner) } deriving Generic
+type Item = ItemT Identity
+deriving via (Table "items" ItemT) instance Entity Item
+
 tests :: [Test]
 tests = group "References"
   [ test "FK projection proofs compile" $ assertBool "ok" True
@@ -55,4 +78,26 @@ tests = group "References"
         "ALTER TABLE docs ADD COLUMN doc_author BIGINT NOT NULL REFERENCES users(user_id)"
         (renderAddColumn "docs" (mtForeignKeys (managed (Proxy @Doc)))
            (ColumnMeta "doc_author" False False False False SqlBigInt False))
+  , test "DB rejects an FK-violating insert" $
+      withEmptyDb $ \pool -> do
+        withConnection pool $ \c -> do
+          execText c usersDDL []
+          execText c (renderCreateTable (managed (Proxy @Doc))) []
+        r <- try $ withSession pool $
+               add (Doc { docId = 0, docAuthor = 999, docEditor = Nothing } :: Doc)
+        case (r :: Either SomeException Doc) of
+          Left _  -> assertBool "insert rejected" True
+          Right _ -> assertBool "expected FK violation for author=999" False
+  , test "app cascade composes with a NO ACTION FK (parent delete succeeds, child cascaded)" $
+      withEmptyDb $ \pool -> do
+        withConnection pool $ \c -> do
+          execText c (renderCreateTable (managed (Proxy @Owner))) []
+          execText c (renderCreateTable (managed (Proxy @Item)))  []
+        childGone <- withSession pool $ do
+          o <- add (Owner { ownerId = 0, ownerSeq = 1 } :: Owner)
+          _ <- add (Item { itemId = 0, itemOwner = ownerId o } :: Item)
+          withTransaction $ delete o     -- app cascade deletes items first, then the owner
+          items <- selectWhere ([] :: [Cond Item])
+          pure (null items)
+        assertBool "child cascaded and parent delete succeeded despite NO ACTION FK" childGone
   ]
