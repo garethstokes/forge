@@ -17,6 +17,7 @@ module Manifest.Core.Table
   , Omitted(..)
   , Generated
   , Touched
+  , References
   , Default
   , Secret
   , ReadOnly
@@ -64,6 +65,12 @@ data Secret a
 -- | Marker: a column that is read-only (never written by the application).
 data ReadOnly a
 
+-- | Marker: a foreign-key column referencing entity @t@. The column's runtime
+-- value is @t@'s primary key (@Base (References t) = PrimKey t@); the migration
+-- engine emits a @REFERENCES t(pk)@ constraint. Nullable (optional) FKs compose
+-- with 'Nullable': @Nullable (References t)@.
+data References (t :: Type)
+
 -- | The metadata context. @Field Exposed a = Exposed a@ keeps the marker visible
 -- to the deriver, where @Field Identity a@ erases it.
 data Exposed a
@@ -86,6 +93,8 @@ type family Base (a :: Type) :: Type where
   Base (Default a)    = Base a
   Base (Secret a)     = Base a
   Base (ReadOnly a)   = Base a
+  Base (References t) = PrimKey t
+  Base (Maybe a)      = Maybe (Base a)
   Base a              = a
 
 -- | Per-context column type. Closed family: specific clauses before catch-alls.
@@ -151,6 +160,16 @@ instance FieldMeta a => FieldMeta (Secret a) where
 instance FieldMeta a => FieldMeta (ReadOnly a) where
   fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
   fieldSqlType = fieldSqlType @a; fieldNullable = fieldNullable @a
+
+instance DbType (PrimKey t) => FieldMeta (References t) where
+  fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
+  fieldNullable = False
+  fieldSqlType = cSqlType (dbType @(PrimKey t))
+
+instance DbType (PrimKey t) => FieldMeta (Maybe (References t)) where
+  fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
+  fieldNullable = True
+  fieldSqlType = cSqlType (dbType @(PrimKey t))
 
 instance {-# OVERLAPPABLE #-} DbType a => FieldMeta a where
   fieldIsPK = False; fieldIsSerial = False; fieldIsGenerated = False
