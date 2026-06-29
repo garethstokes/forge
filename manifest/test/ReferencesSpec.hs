@@ -8,6 +8,7 @@ module ReferencesSpec (tests) where
 
 import Control.Exception (try, SomeException)
 import Data.Functor.Identity (Identity)
+import Data.List (isInfixOf)
 import Data.Proxy (Proxy(..))
 import GHC.Generics (Generic)
 import Manifest.Core.Cascade (OnDelete(..))
@@ -19,7 +20,7 @@ import Manifest.Entity (Entity(..), Table(..))
 import Manifest.Migrate (ManagedTable(..), managed, renderCreateTable, renderAddColumn)
 import Manifest.Postgres (execText, withConnection)
 import Manifest.Session (withSession, withTransaction, add, delete, selectWhere)
-import Fixtures (User, withEmptyDb, usersDDL)
+import Fixtures (User, UserT(..), withEmptyDb, usersDDL)
 import Harness
 
 -- Projection proofs: an FK column is a readwrite scalar of the target's PK type.
@@ -86,8 +87,18 @@ tests = group "References"
         r <- try $ withSession pool $
                add (Doc { docId = 0, docAuthor = 999, docEditor = Nothing } :: Doc)
         case (r :: Either SomeException Doc) of
-          Left _  -> assertBool "insert rejected" True
+          Left e  -> assertBool ("expected FK violation, got: " <> show e)
+                                ("foreign key" `isInfixOf` show e)
           Right _ -> assertBool "expected FK violation for author=999" False
+  , test "nullable FK insert with a valid editor succeeds and round-trips" $
+      withEmptyDb $ \pool -> do
+        withConnection pool $ \c -> do
+          execText c usersDDL []
+          execText c (renderCreateTable (managed (Proxy @Doc))) []
+        doc <- withSession pool $ do
+          u <- add (User { userId = 0, userName = "u", userEmail = Nothing } :: User)
+          add (Doc { docId = 0, docAuthor = userId u, docEditor = Just (userId u) } :: Doc)
+        assertEqual "docEditor round-trips" (Just (docAuthor doc)) (docEditor doc)
   , test "app cascade composes with a NO ACTION FK (parent delete succeeds, child cascaded)" $
       withEmptyDb $ \pool -> do
         withConnection pool $ \c -> do

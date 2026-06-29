@@ -69,6 +69,11 @@ data ReadOnly a
 -- value is @t@'s primary key (@Base (References t) = PrimKey t@); the migration
 -- engine emits a @REFERENCES t(pk)@ constraint. Nullable (optional) FKs compose
 -- with 'Nullable': @Nullable (References t)@.
+--
+-- __Manual @Entity@ instances__: a hand-written @Entity@ instance (rather than
+-- one derived via the @Table@ carrier) that contains a @References@ column must
+-- set @foreignKeys = genericForeignKeys \@t@ to emit the FK constraint; the
+-- @deriving via (Table …)@ carrier does this automatically.
 data References (t :: Type)
 
 -- | The metadata context. @Field Exposed a = Exposed a@ keeps the marker visible

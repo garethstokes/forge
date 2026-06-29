@@ -270,6 +270,12 @@ ensureSchemaMigrations = void $ execDb
 -- | Apply the additive plan in a transaction; record a row in schema_migrations.
 -- Destructive diffs ABORT (never silently applied) — fix them by hand / a future
 -- destructive migration. Returns the plan that was (attempted to be) applied.
+--
+-- __Table ordering is load-bearing__: tables are created in the order supplied.
+-- A table whose @References@ FK targets another must appear /after/ its target
+-- in the @[ManagedTable]@ list, or Postgres will fail at migrate time with
+-- @relation "…" does not exist@. A future follow-up will move FK emission to an
+-- @ALTER TABLE … ADD CONSTRAINT@ post-pass to remove this ordering requirement.
 migrateUp :: [ManagedTable] -> Db MigrationPlan
 migrateUp tables = do
   ensureSchemaMigrations
