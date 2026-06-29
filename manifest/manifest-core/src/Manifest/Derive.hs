@@ -21,6 +21,7 @@ import GHC.Generics (Generic, Rep)
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import Type.Reflection (Typeable)
 import Manifest.Core.Codec (DbType)
+import Manifest.Core.ForeignKey (GForeignKeys, genericForeignKeys)
 import Manifest.Core.Meta (GColumns, genericTableMeta)
 import Manifest.Core.Table (Exposed)
 import Manifest.Entity
@@ -30,13 +31,14 @@ import Manifest.Entity
 instance
   ( KnownSymbol name
   , Typeable (Table name t)
-  , Generic (t Exposed), GColumns (Rep (t Exposed))
+  , Generic (t Exposed), GColumns (Rep (t Exposed)), GForeignKeys (Rep (t Exposed))
   , Generic (t Identity), GRowDecode (Rep (t Identity)), GRowEncode (Rep (t Identity))
   , DbType (PrimKey (Table name t))
   ) => Entity (Table name t) where
   -- coerce is sound: Table name t is a newtype over t Identity; TableMeta's param
   -- is phantom and RowDecoder's is representational.
-  tableMeta  = coerce (genericTableMeta @t (BC.pack (symbolVal (Proxy @name))))
-  rowDecoder = coerce (genericRowDecoder @(t Identity))
-  rowEncode  (Table x) = genericRowEncode x
-  primKey    = genericPrimKey
+  tableMeta   = coerce (genericTableMeta @t (BC.pack (symbolVal (Proxy @name))))
+  rowDecoder  = coerce (genericRowDecoder @(t Identity))
+  rowEncode   (Table x) = genericRowEncode x
+  primKey     = genericPrimKey
+  foreignKeys = genericForeignKeys @t

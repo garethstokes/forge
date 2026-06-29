@@ -37,7 +37,7 @@ import Manifest.Core.Cascade (CascadeRule)
 import Manifest.Core.Index (Index)
 import Manifest.Core.Rls (Policy)
 import Manifest.Core.Codec (DbType(..), Codec(..), RowDecoder, SqlParam, encode, decodeCol)
-import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..))
+import Manifest.Core.Meta (ColumnMeta(..), TableMeta(..), ForeignKey(..))
 import Manifest.Core.Table (Exposed, Base, Table(..), PrimKey, GPrimKeyType)
 
 -- | The class the Unit-of-Work operates over. Every method has a Generics-based
@@ -75,6 +75,11 @@ class Typeable a => Entity a where
   -- created (create-if-absent, never dropped) by the migration engine.
   indexes :: [Index a]
   indexes = []
+  -- | Foreign-key constraints for this entity's columns, for DDL. Default: none.
+  -- The deriving-via carrier ('Manifest.Derive') fills this with
+  -- 'genericForeignKeys'; manual instances with FK columns opt in the same way.
+  foreignKeys :: [ForeignKey]
+  foreignKeys = []
 
 -- | A row's identity: a newtype over its primary-key value.
 newtype Key a = Key { unKey :: PrimKey a }
