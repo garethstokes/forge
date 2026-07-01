@@ -17,7 +17,7 @@ import Manifest.Core.Query (Cond)
 import Manifest.Core.Relation (cascade)
 import Manifest.Core.Table (Field, Create, Update, Patch(..), Nullable, References, PrimaryKey, Serial)
 import Manifest.Entity (Entity(..), Table(..))
-import Manifest.Migrate (ManagedTable(..), managed, renderCreateTable, renderAddColumn, renderAddForeignKey, migrateUp)
+import Manifest.Migrate (ManagedTable(..), managed, renderCreateTable, renderAddColumn, renderAddForeignKey, migrateUp, foreignKeyPlan)
 import Manifest.Session (withSession, withTransaction, add, delete, selectWhere)
 import Fixtures (User, UserT(..), withEmptyDb)
 import Harness
@@ -105,4 +105,25 @@ tests = group "References"
           items <- selectWhere ([] :: [Cond Item])
           pure (null items)
         assertBool "child cascaded and parent delete succeeded despite NO ACTION FK" childGone
+  , test "migrateUp succeeds with child listed before parent (ordering-independent)" $
+      withEmptyDb $ \pool -> do
+        -- migrate with child (Doc) listed before parent (User) — must not throw
+        migrateResult <- try $ withSession pool $ do
+               _ <- migrateUp [managed (Proxy @Doc), managed (Proxy @User)]   -- child first
+               pure ()
+        case (migrateResult :: Either SomeException ()) of
+          Left e -> assertBool ("migrateUp failed with child-first order: " <> show e) False
+          Right () -> do
+            -- FK must be enforced: insert a Doc with a non-existent author
+            r <- try $ withSession pool $
+                   add (Doc { docId = 0, docAuthor = 999, docEditor = Nothing } :: Doc)
+            case (r :: Either SomeException Doc) of
+              Left e  -> assertBool ("FK enforced: " <> show e) ("foreign key" `isInfixOf` show e)
+              Right _ -> assertBool "FK constraint was not enforced" False
+  , test "FK post-pass is idempotent (second migrate adds no constraint)" $
+      withEmptyDb $ \pool -> do
+        pending <- withSession pool $ do
+          _ <- migrateUp [managed (Proxy @User), managed (Proxy @Doc)]
+          foreignKeyPlan [managed (Proxy @User), managed (Proxy @Doc)]   -- after: should be empty
+        assertEqual "no pending FK statements after first migrate" [] pending
   ]
