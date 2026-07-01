@@ -21,6 +21,10 @@ module Manifest.Migrate
   , liveIndexes
   , indexesForTable
   , indexPlan
+  , renderAddForeignKey
+  , liveForeignKeys
+  , foreignKeysForTable
+  , foreignKeyPlan
   ) where
 
 import Control.Exception (throwIO)
@@ -73,31 +77,19 @@ columnDDL c =
   cmName c <> " " <> sqlTypeDDL (cmSqlType c)
     <> (if cmIsPK c then " PRIMARY KEY" else if cmNullable c then "" else " NOT NULL")
 
--- | One FK's table-level constraint clause.
-fkDDL :: ForeignKey -> ByteString
-fkDDL fk =
-  "FOREIGN KEY (" <> fkColumn fk <> ") REFERENCES "
-    <> fkRefTable fk <> "(" <> fkRefPkColumn fk <> ")"
-
--- | @CREATE TABLE name (col1 …, col2 …, …)@ from the managed schema.
+-- | @CREATE TABLE name (col1 …, col2 …, …)@ from the managed schema. Foreign-key
+-- constraints are NOT emitted here — they are added by the post-pass
+-- ('foreignKeyPlan') after all tables exist, so table order is irrelevant.
 renderCreateTable :: ManagedTable -> ByteString
-renderCreateTable (ManagedTable name cols _ _ fks) =
-  "CREATE TABLE " <> name <> " ("
-    <> BC.intercalate ", " (map columnDDL cols ++ map fkDDL fks)
-    <> ")"
+renderCreateTable (ManagedTable name cols _ _ _) =
+  "CREATE TABLE " <> name <> " (" <> BC.intercalate ", " (map columnDDL cols) <> ")"
 
 -- | @ALTER TABLE name ADD COLUMN col …@ (additive). Added columns are never PK.
--- The FK list is consulted to append an inline @REFERENCES@ clause if the column
--- is marked as a foreign key.
-renderAddColumn :: ByteString -> [ForeignKey] -> ColumnMeta -> ByteString
-renderAddColumn table fks c =
+-- FK constraints for added columns are handled by the post-pass, not inline.
+renderAddColumn :: ByteString -> ColumnMeta -> ByteString
+renderAddColumn table c =
   "ALTER TABLE " <> table <> " ADD COLUMN " <> cmName c <> " " <> sqlTypeDDL (cmSqlType c)
     <> (if cmNullable c then "" else " NOT NULL")
-    <> maybe "" (\fk -> " REFERENCES " <> fkRefTable fk <> "(" <> fkRefPkColumn fk <> ")")
-             (lookupFk (cmName c) fks)
-  where
-    lookupFk :: ByteString -> [ForeignKey] -> Maybe ForeignKey
-    lookupFk col = foldr (\fk acc -> if fkColumn fk == col then Just fk else acc) Nothing
 
 -- | A live column as Postgres reports it: (name, data_type, is_nullable).
 liveColumns :: ByteString -> Db [(ByteString, ByteString, Bool)]
@@ -235,6 +227,42 @@ indexesForTable mt
 indexPlan :: [ManagedTable] -> Db [ByteString]
 indexPlan = fmap concat . mapM indexesForTable
 
+-- Foreign-key DDL -------------------------------------------------------------
+
+-- | @ALTER TABLE child ADD CONSTRAINT child_col_fkey FOREIGN KEY (col) REFERENCES tgt(pk)@.
+renderAddForeignKey :: ByteString -> ForeignKey -> ByteString
+renderAddForeignKey table fk =
+  "ALTER TABLE " <> table <> " ADD CONSTRAINT "
+    <> table <> "_" <> fkColumn fk <> "_fkey"
+    <> " FOREIGN KEY (" <> fkColumn fk <> ") REFERENCES "
+    <> fkRefTable fk <> "(" <> fkRefPkColumn fk <> ")"
+
+-- | The FK constraint names live on a table (in the @public@ schema).
+liveForeignKeys :: ByteString -> Db [ByteString]
+liveForeignKeys table = do
+  rows <- execDb "SELECT constraint_name FROM information_schema.table_constraints \
+                 \WHERE table_schema='public' AND table_name=$1 AND constraint_type='FOREIGN KEY'"
+                 [Just table]
+  pure [ n | [Just n] <- rows ]
+
+-- | DDL to add one table's declared FK constraints that are not already live.
+-- Empty if the table has no FKs or does not exist yet (reconciled after creation).
+-- CREATE-ONLY — never drops (consistent with the index policy).
+foreignKeysForTable :: ManagedTable -> Db [ByteString]
+foreignKeysForTable mt
+  | null (mtForeignKeys mt) = pure []
+  | otherwise = do
+      exists <- tableExists (mtName mt)
+      if not exists then pure [] else do
+        live <- liveForeignKeys (mtName mt)
+        pure [ renderAddForeignKey (mtName mt) fk
+             | fk <- mtForeignKeys mt
+             , (mtName mt <> "_" <> fkColumn fk <> "_fkey") `notElem` live ]
+
+-- | The FK reconciliation DDL across all managed tables.
+foreignKeyPlan :: [ManagedTable] -> Db [ByteString]
+foreignKeyPlan = fmap concat . mapM foreignKeysForTable
+
 -- | The pending plan across all managed tables: additive DDL to apply,
 -- destructive issues that need human review (NEVER auto-applied), and the RLS
 -- reconciliation DDL.
@@ -243,6 +271,7 @@ data MigrationPlan = MigrationPlan
   , planDestructive :: [String]       -- "table.column type mismatch …" — review only
   , planRls         :: [ByteString]   -- ENABLE/FORCE RLS + CREATE/DROP POLICY, reconciled
   , planIndexes     :: [ByteString]   -- CREATE INDEX (create-if-absent only), reconciled
+  , planForeignKeys :: [ByteString]   -- ALTER TABLE ADD CONSTRAINT (create-if-absent), reconciled
   } deriving (Eq, Show)
 
 -- | Compute the additive plan + destructive issues for the managed tables.
@@ -253,10 +282,11 @@ migrate tables = do
       destr    = concatMap toDestr diffs
   rls  <- rlsPlan tables
   idxs <- indexPlan tables
-  pure (MigrationPlan additive destr rls idxs)
+  fks  <- foreignKeyPlan tables
+  pure (MigrationPlan additive destr rls idxs fks)
   where
     toAdditive (mt, CreateTable _)       = [renderCreateTable mt]
-    toAdditive (mt, AlterTable t adds _) = [renderAddColumn t (mtForeignKeys mt) c | c <- adds]
+    toAdditive (_,  AlterTable t adds _) = [renderAddColumn t c | c <- adds]
     toAdditive (_,  UpToDate)            = []
     toDestr (AlterTable _ _ d) = d
     toDestr _                  = []
@@ -270,12 +300,6 @@ ensureSchemaMigrations = void $ execDb
 -- | Apply the additive plan in a transaction; record a row in schema_migrations.
 -- Destructive diffs ABORT (never silently applied) — fix them by hand / a future
 -- destructive migration. Returns the plan that was (attempted to be) applied.
---
--- __Table ordering is load-bearing__: tables are created in the order supplied.
--- A table whose @References@ FK targets another must appear /after/ its target
--- in the @[ManagedTable]@ list, or Postgres will fail at migrate time with
--- @relation "…" does not exist@. A future follow-up will move FK emission to an
--- @ALTER TABLE … ADD CONSTRAINT@ post-pass to remove this ordering requirement.
 migrateUp :: [ManagedTable] -> Db MigrationPlan
 migrateUp tables = do
   ensureSchemaMigrations
@@ -284,17 +308,20 @@ migrateUp tables = do
     liftIO (throwIO (DbException (OtherError
       ("migrate up aborted: destructive changes need review: " <> show (planDestructive plan)))))
   let additive = planAdditive plan
-  rls0  <- rlsPlan tables                          -- for the empty-work guard (tables that already exist)
-  idxs0 <- indexPlan tables                        -- ditto for indexes
-  unless (null additive && null rls0 && null idxs0) $
+  rls0  <- rlsPlan tables
+  idxs0 <- indexPlan tables
+  fks0  <- foreignKeyPlan tables
+  unless (null additive && null rls0 && null idxs0 && null fks0) $
     withTransaction $ do
       forM_ additive $ \s -> void (execDb s [])
+      fks <- foreignKeyPlan tables                 -- recompute: all target tables now exist
+      forM_ fks $ \s -> void (execDb s [])
       rls <- rlsPlan tables                        -- recompute: any just-created table now exists
       forM_ rls $ \s -> void (execDb s [])
       idxs <- indexPlan tables                     -- recompute: index a just-created table
       forM_ idxs $ \s -> void (execDb s [])
       void $ execDb "INSERT INTO schema_migrations (statements) VALUES ($1)"
-                    [Just (BC.pack (show (length additive + length rls + length idxs)))]
+                    [Just (BC.pack (show (length additive + length fks + length rls + length idxs)))]
   pure plan
 
 -- | The CLI dispatcher: @diff@ prints the plan; @up@ applies it. @args@ is argv.
@@ -309,6 +336,9 @@ runMigrate tables pool args = case args of
     unless (null (planIndexes plan)) $ do
       BC.putStrLn "-- indexes:"
       mapM_ BC.putStrLn (planIndexes plan)
+    unless (null (planForeignKeys plan)) $ do
+      BC.putStrLn "-- foreign keys:"
+      mapM_ BC.putStrLn (planForeignKeys plan)
     unless (null (planDestructive plan)) $ do
       hPutStrLn stderr "-- destructive (review, not applied):"
       mapM_ (hPutStrLn stderr . ("--   " <>)) (planDestructive plan)
