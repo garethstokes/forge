@@ -17,7 +17,7 @@ import Manifest.Core.Query (Cond)
 import Manifest.Core.Relation (cascade)
 import Manifest.Core.Table (Field, Create, Update, Patch(..), Nullable, References, PrimaryKey, Serial)
 import Manifest.Entity (Entity(..), Table(..))
-import Manifest.Migrate (ManagedTable(..), managed, renderCreateTable, renderAddColumn, renderAddForeignKey, migrateUp, foreignKeyPlan)
+import Manifest.Migrate (ManagedTable(..), managed, renderCreateTable, renderAddColumn, renderAddForeignKey, migrateUp, foreignKeyPlan, MigrationPlan)
 import Manifest.Session (withSession, withTransaction, add, delete, selectWhere)
 import Fixtures (User, UserT(..), withEmptyDb)
 import Harness
@@ -120,10 +120,17 @@ tests = group "References"
             case (r :: Either SomeException Doc) of
               Left e  -> assertBool ("FK enforced: " <> show e) ("foreign key" `isInfixOf` show e)
               Right _ -> assertBool "FK constraint was not enforced" False
-  , test "FK post-pass is idempotent (second migrate adds no constraint)" $
+  , test "FK post-pass is idempotent (a second migrateUp is a clean no-op)" $
       withEmptyDb $ \pool -> do
-        pending <- withSession pool $ do
-          _ <- migrateUp [managed (Proxy @User), managed (Proxy @Doc)]
-          foreignKeyPlan [managed (Proxy @User), managed (Proxy @Doc)]   -- after: should be empty
-        assertEqual "no pending FK statements after first migrate" [] pending
+        let tables = [managed (Proxy @User), managed (Proxy @Doc)]
+        -- First migrate creates the tables + FK constraint.
+        _ <- withSession pool $ migrateUp tables
+        -- Second migrate must NOT raise (no duplicate-constraint error) ...
+        r <- try (withSession pool $ migrateUp tables)
+        case (r :: Either SomeException MigrationPlan) of
+          Left e  -> assertBool ("second migrateUp raised: " <> show e) False
+          Right _ -> pure ()
+        -- ... and there must be no pending FK work.
+        pending <- withSession pool $ foreignKeyPlan tables
+        assertEqual "no pending FK statements after migrate" [] pending
   ]
